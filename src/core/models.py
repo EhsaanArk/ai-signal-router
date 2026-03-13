@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +36,19 @@ class SubscriptionTier(str, Enum):
             SubscriptionTier.pro: 5,
             SubscriptionTier.elite: 15,
         }[self]
+
+
+# ---------------------------------------------------------------------------
+# Signal action types (webhook `type` field values)
+# ---------------------------------------------------------------------------
+
+class SignalAction(str, Enum):
+    """Webhook action types supported by the SageMaster API."""
+
+    start_long = "start_long_market_deal"
+    start_short = "start_short_market_deal"
+    partial_close = "partially_close_by_lot"
+    breakeven = "breakeven"
 
 
 # ---------------------------------------------------------------------------
@@ -103,9 +116,9 @@ class RoutingRule(BaseModel):
 # ---------------------------------------------------------------------------
 
 class WebhookPayloadV1(BaseModel):
-    """SageMaster V1 webhook payload."""
+    """SageMaster V1 webhook payload (static strategy trigger)."""
 
-    type: str
+    type: Literal["start_long_market_deal", "start_short_market_deal"]
     assetId: str
     source: str
     symbol: str
@@ -113,15 +126,28 @@ class WebhookPayloadV1(BaseModel):
 
 
 class WebhookPayloadV2(BaseModel):
-    """SageMaster V2 webhook payload — extends V1 with price/TP/SL."""
+    """SageMaster V2 webhook payload — supports trade signals and provider commands."""
 
-    type: str
+    type: SignalAction
     assetId: str
-    source: str
-    symbol: str
+    source: str | None = None
+    symbol: str | None = None
     price: str | None = None
     takeProfits: list[float] | None = None
     stopLoss: float | None = None
+    lots: str | None = None
+
+    @model_validator(mode="after")
+    def _check_required_fields_per_action(self) -> Self:
+        """Enforce field requirements based on action type."""
+        if self.type in (SignalAction.start_long, SignalAction.start_short):
+            if not self.symbol or not self.source:
+                raise ValueError(
+                    f"'symbol' and 'source' are required for {self.type.value}"
+                )
+        if self.type == SignalAction.partial_close and not self.lots:
+            raise ValueError("'lots' is required for partially_close_by_lot")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +157,7 @@ class WebhookPayloadV2(BaseModel):
 class DispatchResult(BaseModel):
     """Outcome of dispatching a parsed signal through a routing rule."""
 
-    routing_rule_id: UUID
+    routing_rule_id: UUID | None = None
     status: Literal["success", "failed", "ignored"]
     error_message: str | None = None
     webhook_payload: dict | None = None

@@ -1,0 +1,799 @@
+"""Comprehensive API endpoint tests expanding on test_routes.py.
+
+Covers auth login/me, Telegram send-code/verify-code/status, channels,
+routing-rule tier limits and partial updates, signal log pagination,
+and error cases (invalid email, invalid payload_version, unauthenticated access).
+
+Uses the same SQLite + aiosqlite infrastructure with PostgreSQL type compilation
+overrides as test_routes.py.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from passlib.context import CryptContext
+from sqlalchemy import JSON, String, event
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+
+from src.adapters.db.models import (
+    Base,
+    RoutingRuleModel,
+    SignalLogModel,
+    TelegramSessionModel,
+    UserModel,
+)
+from src.api.deps import (
+    Settings,
+    create_access_token,
+    get_current_user,
+    get_db,
+    get_settings,
+)
+from src.core.models import SubscriptionTier, User
+from src.main import create_app
+
+# ---------------------------------------------------------------------------
+# SQLite compat: compile PostgreSQL types for SQLite
+# ---------------------------------------------------------------------------
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
+@compiles(PG_UUID, "sqlite")
+def _compile_uuid_sqlite(type_, compiler, **kw):
+    return "VARCHAR(36)"
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+
+SAMPLE_USER_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+SAMPLE_USER_EMAIL = "test@example.com"
+SAMPLE_USER_PASSWORD = "securepass123"
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+SAMPLE_PASSWORD_HASH = pwd_context.hash(SAMPLE_USER_PASSWORD)
+
+SAMPLE_USER = User(
+    id=SAMPLE_USER_ID,
+    email=SAMPLE_USER_EMAIL,
+    password_hash=SAMPLE_PASSWORD_HASH,
+    subscription_tier=SubscriptionTier.free,
+    created_at=datetime.now(timezone.utc),
+)
+
+
+def _make_test_settings() -> Settings:
+    return Settings(
+        DATABASE_URL=TEST_DB_URL,
+        JWT_SECRET_KEY="test-secret",
+        LOCAL_MODE=False,
+        TELEGRAM_API_ID=12345,
+        TELEGRAM_API_HASH="fakehash",
+        ENCRYPTION_KEY="",  # overridden per-test when needed
+        REDIS_URL="redis://localhost:6379/0",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def test_app():
+    """Create a test app with SQLite-backed DB and the seeded test user."""
+    engine = create_async_engine(TEST_DB_URL, echo=False)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, _):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async_session_factory = sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        async with async_session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    def override_get_settings() -> Settings:
+        return _make_test_settings()
+
+    app = create_app()
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_settings] = override_get_settings
+
+    # Seed the test user with a real bcrypt hash so login tests work
+    async with async_session_factory() as session:
+        session.add(
+            UserModel(
+                id=SAMPLE_USER_ID,
+                email=SAMPLE_USER_EMAIL,
+                password_hash=SAMPLE_PASSWORD_HASH,
+            )
+        )
+        await session.commit()
+
+    yield app, async_session_factory
+
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def authed_app(test_app):
+    """App fixture that also overrides get_current_user (for protected endpoints)."""
+    app, session_factory = test_app
+
+    async def override_get_current_user() -> User:
+        return SAMPLE_USER
+
+    app.dependency_overrides[get_current_user] = override_get_current_user
+    yield app, session_factory
+
+
+@pytest_asyncio.fixture
+async def client(test_app):
+    """Unauthenticated client — no get_current_user override."""
+    app, _ = test_app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+
+@pytest_asyncio.fixture
+async def authed_client(authed_app):
+    """Client with get_current_user overridden (all protected endpoints work)."""
+    app, _ = authed_app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+
+@pytest_asyncio.fixture
+async def authed_client_with_session(authed_app):
+    """Authed client + session factory for direct DB manipulation."""
+    app, session_factory = authed_app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac, session_factory
+
+
+# ===========================================================================
+# Auth Tests
+# ===========================================================================
+
+
+class TestAuthLogin:
+    """POST /api/v1/auth/login — OAuth2 form-based login."""
+
+    async def test_login_success(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            data={"username": SAMPLE_USER_EMAIL, "password": SAMPLE_USER_PASSWORD},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    async def test_login_wrong_password(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            data={"username": SAMPLE_USER_EMAIL, "password": "wrongpassword"},
+        )
+        assert resp.status_code == 401
+        assert "Incorrect email or password" in resp.json()["detail"]
+
+    async def test_login_nonexistent_user(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            data={"username": "nobody@example.com", "password": "anything"},
+        )
+        assert resp.status_code == 401
+
+
+class TestAuthLoginJSON:
+    """POST /api/v1/auth/login-json — JSON-based login."""
+
+    async def test_login_json_success(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/login-json",
+            json={"email": SAMPLE_USER_EMAIL, "password": SAMPLE_USER_PASSWORD},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    async def test_login_json_wrong_password(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/login-json",
+            json={"email": SAMPLE_USER_EMAIL, "password": "wrongpassword"},
+        )
+        assert resp.status_code == 401
+
+
+class TestAuthMe:
+    """GET /api/v1/auth/me — current user profile."""
+
+    async def test_me_returns_profile(self, client: AsyncClient):
+        # First login to get a real token
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            data={"username": SAMPLE_USER_EMAIL, "password": SAMPLE_USER_PASSWORD},
+        )
+        token = login_resp.json()["access_token"]
+
+        resp = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == SAMPLE_USER_EMAIL
+        assert data["id"] == str(SAMPLE_USER_ID)
+        assert data["subscription_tier"] == "free"
+        assert "created_at" in data
+
+
+class TestUnauthenticatedAccess:
+    """Protected endpoints must return 401 without a valid bearer token."""
+
+    async def test_me_requires_auth(self, client: AsyncClient):
+        resp = await client.get("/api/v1/auth/me")
+        assert resp.status_code == 401
+
+    async def test_routing_rules_requires_auth(self, client: AsyncClient):
+        resp = await client.get("/api/v1/routing-rules")
+        assert resp.status_code == 401
+
+    async def test_create_routing_rule_requires_auth(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100999",
+                "destination_webhook_url": "https://example.com/hook",
+                "payload_version": "V1",
+            },
+        )
+        assert resp.status_code == 401
+
+    async def test_logs_requires_auth(self, client: AsyncClient):
+        resp = await client.get("/api/v1/logs")
+        assert resp.status_code == 401
+
+    async def test_telegram_status_requires_auth(self, client: AsyncClient):
+        resp = await client.get("/api/v1/telegram/status")
+        assert resp.status_code == 401
+
+    async def test_telegram_send_code_requires_auth(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/telegram/send-code",
+            json={"phone_number": "+15551234567"},
+        )
+        assert resp.status_code == 401
+
+    async def test_channels_requires_auth(self, client: AsyncClient):
+        resp = await client.get("/api/v1/channels")
+        assert resp.status_code == 401
+
+
+# ===========================================================================
+# Telegram Tests (mock Telethon)
+# ===========================================================================
+
+
+class TestTelegramSendCode:
+    """POST /api/v1/telegram/send-code — mock TelegramAuth."""
+
+    async def test_send_code_success(self, authed_client: AsyncClient):
+        mock_auth = AsyncMock()
+        mock_auth.send_code.return_value = {"phone_code_hash": "abc123hash"}
+
+        with patch("src.api.routes._get_telegram_auth", return_value=mock_auth):
+            resp = await authed_client.post(
+                "/api/v1/telegram/send-code",
+                json={"phone_number": "+15551234567"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["phone_code_hash"] == "abc123hash"
+        mock_auth.send_code.assert_awaited_once_with("+15551234567")
+
+
+class TestTelegramVerifyCode:
+    """POST /api/v1/telegram/verify-code — mock TelegramAuth + Redis."""
+
+    async def test_verify_code_success(self, authed_app):
+        app, session_factory = authed_app
+
+        # Need a valid ENCRYPTION_KEY for the Fernet encrypt step
+        from cryptography.fernet import Fernet
+
+        test_key = Fernet.generate_key().decode()
+
+        def override_settings() -> Settings:
+            return Settings(
+                DATABASE_URL=TEST_DB_URL,
+                JWT_SECRET_KEY="test-secret",
+                LOCAL_MODE=False,
+                TELEGRAM_API_ID=12345,
+                TELEGRAM_API_HASH="fakehash",
+                ENCRYPTION_KEY=test_key,
+                REDIS_URL="redis://localhost:6379/0",
+            )
+
+        app.dependency_overrides[get_settings] = override_settings
+
+        mock_auth = AsyncMock()
+        mock_auth.verify_code.return_value = "fake-session-string"
+
+        mock_redis_instance = AsyncMock()
+        mock_redis_instance.set = AsyncMock()
+        mock_redis_instance.aclose = AsyncMock()
+
+        with (
+            patch("src.api.routes._get_telegram_auth", return_value=mock_auth),
+            patch("redis.asyncio.from_url", return_value=mock_redis_instance),
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/api/v1/telegram/verify-code",
+                    json={
+                        "phone_number": "+15551234567",
+                        "code": "12345",
+                        "phone_code_hash": "abc123hash",
+                    },
+                )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["requires_2fa"] is False
+
+        # Verify session was stored in DB
+        async with session_factory() as session:
+            from sqlalchemy import select
+
+            result = await session.execute(
+                select(TelegramSessionModel).where(
+                    TelegramSessionModel.user_id == SAMPLE_USER_ID
+                )
+            )
+            row = result.scalar_one_or_none()
+            assert row is not None
+            assert row.phone_number == "+15551234567"
+            assert row.is_active is True
+
+        # Verify Redis was called
+        mock_redis_instance.set.assert_awaited_once()
+
+
+class TestTelegramStatus:
+    """GET /api/v1/telegram/status — with and without active session."""
+
+    async def test_status_no_session(self, authed_client: AsyncClient):
+        resp = await authed_client.get("/api/v1/telegram/status")
+        assert resp.status_code == 200
+        assert resp.json()["connected"] is False
+
+    async def test_status_with_active_session(self, authed_client_with_session):
+        ac, session_factory = authed_client_with_session
+
+        # Insert an active session into the DB
+        async with session_factory() as session:
+            session.add(
+                TelegramSessionModel(
+                    user_id=SAMPLE_USER_ID,
+                    phone_number="+15551234567",
+                    session_string_encrypted="encrypted_data_here",
+                    is_active=True,
+                )
+            )
+            await session.commit()
+
+        resp = await ac.get("/api/v1/telegram/status")
+        assert resp.status_code == 200
+        assert resp.json()["connected"] is True
+
+
+# ===========================================================================
+# Channels Tests
+# ===========================================================================
+
+
+class TestChannels:
+    """GET /api/v1/channels — mock get_user_channels."""
+
+    async def test_list_channels(self, authed_app):
+        app, session_factory = authed_app
+
+        from cryptography.fernet import Fernet
+
+        test_key = Fernet.generate_key().decode()
+        fernet = Fernet(test_key.encode())
+        encrypted_session = fernet.encrypt(b"fake-session-string").decode()
+
+        def override_settings() -> Settings:
+            return Settings(
+                DATABASE_URL=TEST_DB_URL,
+                JWT_SECRET_KEY="test-secret",
+                LOCAL_MODE=False,
+                TELEGRAM_API_ID=12345,
+                TELEGRAM_API_HASH="fakehash",
+                ENCRYPTION_KEY=test_key,
+                REDIS_URL="redis://localhost:6379/0",
+            )
+
+        app.dependency_overrides[get_settings] = override_settings
+
+        # Insert an active session
+        async with session_factory() as session:
+            session.add(
+                TelegramSessionModel(
+                    user_id=SAMPLE_USER_ID,
+                    phone_number="+15551234567",
+                    session_string_encrypted=encrypted_session,
+                    is_active=True,
+                )
+            )
+            await session.commit()
+
+        mock_channels = [
+            {"channel_id": "-1001111", "channel_name": "Signals VIP", "username": "signalsvip"},
+            {"channel_id": "-1002222", "channel_name": "Gold Room", "username": None},
+        ]
+
+        # Mock Redis to return None (fall back to DB) and mock get_user_channels
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=None)
+        mock_redis.aclose = AsyncMock()
+
+        with (
+            patch("redis.asyncio.from_url", return_value=mock_redis),
+            patch(
+                "src.adapters.telegram.get_user_channels",
+                new_callable=AsyncMock,
+                return_value=mock_channels,
+            ),
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.get("/api/v1/channels")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        assert data[0]["id"] == "-1001111"
+        assert data[0]["title"] == "Signals VIP"
+        assert data[0]["username"] == "signalsvip"
+        assert data[1]["username"] is None
+
+
+# ===========================================================================
+# Routing Rules Tests
+# ===========================================================================
+
+
+class TestRoutingRulesList:
+    """GET /api/v1/routing-rules — list all rules for user."""
+
+    async def test_list_empty(self, authed_client: AsyncClient):
+        resp = await authed_client.get("/api/v1/routing-rules")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_list_returns_created_rules(self, authed_client: AsyncClient):
+        # Create two rules
+        await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100111",
+                "destination_webhook_url": "https://example.com/hook1",
+                "payload_version": "V1",
+            },
+        )
+
+        resp = await authed_client.get("/api/v1/routing-rules")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["source_channel_id"] == "-100111"
+
+
+class TestRoutingRuleTierLimit:
+    """POST /api/v1/routing-rules — tier limit enforcement (403 when exceeded)."""
+
+    async def test_free_tier_allows_one_rule(self, authed_client: AsyncClient):
+        # Free tier allows 1 rule
+        resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100001",
+                "destination_webhook_url": "https://example.com/hook1",
+                "payload_version": "V1",
+            },
+        )
+        assert resp.status_code == 201
+
+    async def test_free_tier_blocks_second_rule(self, authed_client: AsyncClient):
+        # Create first rule (should succeed)
+        resp1 = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100001",
+                "destination_webhook_url": "https://example.com/hook1",
+                "payload_version": "V1",
+            },
+        )
+        assert resp1.status_code == 201
+
+        # Second rule should be blocked (free tier = 1 max)
+        resp2 = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100002",
+                "destination_webhook_url": "https://example.com/hook2",
+                "payload_version": "V1",
+            },
+        )
+        assert resp2.status_code == 403
+        assert "free" in resp2.json()["detail"].lower()
+        assert "upgrade" in resp2.json()["detail"].lower()
+
+
+class TestRoutingRuleUpdateWithSymbolMappings:
+    """PUT /api/v1/routing-rules/{id} — partial update with symbol_mappings."""
+
+    async def test_update_symbol_mappings(self, authed_client: AsyncClient):
+        # Create a rule first
+        create_resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100555",
+                "destination_webhook_url": "https://example.com/hook",
+                "payload_version": "V1",
+            },
+        )
+        rule_id = create_resp.json()["id"]
+
+        # Update only symbol_mappings
+        update_resp = await authed_client.put(
+            f"/api/v1/routing-rules/{rule_id}",
+            json={"symbol_mappings": {"GOLD": "XAUUSD", "SILVER": "XAGUSD"}},
+        )
+        assert update_resp.status_code == 200
+        data = update_resp.json()
+        assert data["symbol_mappings"] == {"GOLD": "XAUUSD", "SILVER": "XAGUSD"}
+        # Other fields unchanged
+        assert data["payload_version"] == "V1"
+        assert data["is_active"] is True
+
+    async def test_update_payload_version_to_v2(self, authed_client: AsyncClient):
+        create_resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100666",
+                "destination_webhook_url": "https://example.com/hook",
+                "payload_version": "V1",
+            },
+        )
+        rule_id = create_resp.json()["id"]
+
+        update_resp = await authed_client.put(
+            f"/api/v1/routing-rules/{rule_id}",
+            json={"payload_version": "V2"},
+        )
+        assert update_resp.status_code == 200
+        assert update_resp.json()["payload_version"] == "V2"
+
+
+# ===========================================================================
+# Signal Logs Tests
+# ===========================================================================
+
+
+class TestSignalLogs:
+    """GET /api/v1/logs — pagination and empty results."""
+
+    async def test_empty_logs(self, authed_client: AsyncClient):
+        resp = await authed_client.get("/api/v1/logs")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["items"] == []
+        assert data["limit"] == 50
+        assert data["offset"] == 0
+
+    async def test_logs_pagination(self, authed_client_with_session):
+        ac, session_factory = authed_client_with_session
+
+        # Insert 5 signal logs directly into the DB
+        async with session_factory() as session:
+            for i in range(5):
+                session.add(
+                    SignalLogModel(
+                        user_id=SAMPLE_USER_ID,
+                        raw_message=f"Signal message {i}",
+                        status="success",
+                        parsed_data={"symbol": "EURUSD"},
+                        webhook_payload={"action": "buy"},
+                    )
+                )
+            await session.commit()
+
+        # Fetch page 1 (limit=2, offset=0)
+        resp = await ac.get("/api/v1/logs", params={"limit": 2, "offset": 0})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 5
+        assert len(data["items"]) == 2
+        assert data["limit"] == 2
+        assert data["offset"] == 0
+
+        # Fetch page 2 (limit=2, offset=2)
+        resp2 = await ac.get("/api/v1/logs", params={"limit": 2, "offset": 2})
+        data2 = resp2.json()
+        assert data2["total"] == 5
+        assert len(data2["items"]) == 2
+        assert data2["offset"] == 2
+
+        # Fetch page 3 (limit=2, offset=4) — only 1 remaining
+        resp3 = await ac.get("/api/v1/logs", params={"limit": 2, "offset": 4})
+        data3 = resp3.json()
+        assert data3["total"] == 5
+        assert len(data3["items"]) == 1
+
+    async def test_logs_with_custom_limit(self, authed_client_with_session):
+        ac, session_factory = authed_client_with_session
+
+        async with session_factory() as session:
+            for i in range(3):
+                session.add(
+                    SignalLogModel(
+                        user_id=SAMPLE_USER_ID,
+                        raw_message=f"Log entry {i}",
+                        status="failed",
+                        error_message="parse error",
+                    )
+                )
+            await session.commit()
+
+        resp = await ac.get("/api/v1/logs", params={"limit": 100, "offset": 0})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 3
+        assert len(data["items"]) == 3
+        # Verify fields
+        item = data["items"][0]
+        assert "id" in item
+        assert "raw_message" in item
+        assert item["status"] == "failed"
+        assert item["error_message"] == "parse error"
+
+
+# ===========================================================================
+# Error Cases
+# ===========================================================================
+
+
+class TestErrorCases:
+    """Validation errors and bad payloads."""
+
+    async def test_register_invalid_email_format(self, client: AsyncClient):
+        """The register endpoint accepts a plain string for email.
+        FastAPI / Pydantic won't reject it at schema level since the field
+        is typed as `str`, but we verify the endpoint handles the request.
+        If additional email validation is added, this should return 422."""
+        resp = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "not-an-email", "password": "securepass123"},
+        )
+        # The endpoint currently accepts any string as email (str type).
+        # The test verifies the request is processed without server error.
+        assert resp.status_code in (201, 422)
+
+    async def test_register_missing_password(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "valid@example.com"},
+        )
+        assert resp.status_code == 422
+
+    async def test_register_missing_email(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/register",
+            json={"password": "something"},
+        )
+        assert resp.status_code == 422
+
+    async def test_create_routing_rule_invalid_payload_version(
+        self, authed_client: AsyncClient
+    ):
+        """payload_version must be 'V1' or 'V2' — anything else should be 422."""
+        resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100999",
+                "destination_webhook_url": "https://example.com/hook",
+                "payload_version": "V3",
+            },
+        )
+        assert resp.status_code == 422
+
+    async def test_update_routing_rule_invalid_payload_version(
+        self, authed_client: AsyncClient
+    ):
+        """PUT with invalid payload_version should be 422."""
+        # Create a valid rule first
+        create_resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100888",
+                "destination_webhook_url": "https://example.com/hook",
+                "payload_version": "V1",
+            },
+        )
+        rule_id = create_resp.json()["id"]
+
+        resp = await authed_client.put(
+            f"/api/v1/routing-rules/{rule_id}",
+            json={"payload_version": "INVALID"},
+        )
+        assert resp.status_code == 422
+
+    async def test_create_routing_rule_missing_required_fields(
+        self, authed_client: AsyncClient
+    ):
+        """source_channel_id and destination_webhook_url are required."""
+        resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={"payload_version": "V1"},
+        )
+        assert resp.status_code == 422
+
+    async def test_login_missing_fields(self, client: AsyncClient):
+        """OAuth2 form login without username should fail."""
+        resp = await client.post(
+            "/api/v1/auth/login",
+            data={"password": "something"},
+        )
+        assert resp.status_code == 422
+
+    async def test_invalid_bearer_token(self, client: AsyncClient):
+        """A garbage bearer token should return 401."""
+        resp = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer garbage-token-value"},
+        )
+        assert resp.status_code == 401

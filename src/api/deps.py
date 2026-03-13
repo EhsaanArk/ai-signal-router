@@ -13,6 +13,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic_settings import BaseSettings
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +23,12 @@ from src.adapters.db.session import get_async_session_factory
 from src.core.models import SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Rate limiter
+# ---------------------------------------------------------------------------
+
+limiter = Limiter(key_func=get_remote_address)
 
 # ---------------------------------------------------------------------------
 # OAuth2 scheme
@@ -49,6 +57,8 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = ""
     QSTASH_TOKEN: str = ""
     QSTASH_URL: str = ""
+    RESEND_API_KEY: str = ""
+    FRONTEND_URL: str = "http://localhost:5173"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

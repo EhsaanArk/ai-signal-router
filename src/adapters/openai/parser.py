@@ -117,13 +117,13 @@ class OpenAISignalParser:
             data = json.loads(content)
 
             return ParsedSignal(
-                symbol=data.get("symbol", "UNKNOWN"),
-                direction=data.get("direction", "long"),
-                order_type=data.get("order_type", "market"),
+                symbol=data.get("symbol") or "UNKNOWN",
+                direction=data.get("direction") or "long",
+                order_type=data.get("order_type") or "market",
                 entry_price=data.get("entry_price"),
                 stop_loss=data.get("stop_loss"),
-                take_profits=data.get("take_profits", []),
-                source_asset_class=data.get("source_asset_class", "forex"),
+                take_profits=data.get("take_profits") or [],
+                source_asset_class=data.get("source_asset_class") or "forex",
                 is_valid_signal=data.get("is_valid_signal", False),
                 ignore_reason=data.get("ignore_reason"),
             )

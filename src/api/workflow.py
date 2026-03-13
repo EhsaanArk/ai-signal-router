@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import RoutingRuleModel, SignalLogModel
 from src.api.deps import Settings, get_db, get_settings
-from src.core.mapper import apply_symbol_mapping, build_webhook_payload
 from src.core.models import DispatchResult, ParsedSignal, RawSignal
 
 logger = logging.getLogger(__name__)
@@ -91,7 +90,7 @@ async def process_signal(
         )
         return [
             DispatchResult(
-                routing_rule_id=raw_signal.user_id,  # placeholder — no rule
+                routing_rule_id=None,
                 status="ignored",
                 error_message=parsed.ignore_reason,
             )
@@ -148,23 +147,14 @@ async def process_signal(
             is_active=rule_row.is_active,
         )
 
-        # Apply symbol mapping
-        mapped_signal = apply_symbol_mapping(parsed, rule)
-
-        # Build payload
-        payload = build_webhook_payload(mapped_signal, rule)
-
-        # Dispatch
         try:
-            dispatch_result = await dispatcher.dispatch(mapped_signal, rule)
-            dispatch_result.webhook_payload = payload
+            dispatch_result = await dispatcher.dispatch(parsed, rule)
         except Exception as exc:
             logger.error("Webhook dispatch failed for rule %s: %s", rule.id, exc)
             dispatch_result = DispatchResult(
                 routing_rule_id=rule.id,
                 status="failed",
                 error_message=str(exc),
-                webhook_payload=payload,
             )
 
         results.append(dispatch_result)
@@ -178,7 +168,7 @@ async def process_signal(
                 routing_rule_id=rule.id,
                 raw_message=raw_signal.raw_message,
                 parsed_data=parsed.model_dump(),
-                webhook_payload=payload,
+                webhook_payload=dispatch_result.webhook_payload,
                 status=dispatch_result.status,
                 error_message=dispatch_result.error_message,
             )

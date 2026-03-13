@@ -42,7 +42,8 @@ class WebhookDispatcher:
             mapped_signal = apply_symbol_mapping(signal, rule)
 
             # 2. Build the webhook payload (V1 or V2) via core mapper
-            payload = build_webhook_payload(mapped_signal, rule)
+            payload_model = build_webhook_payload(mapped_signal, rule)
+            payload = payload_model.model_dump(exclude_none=True)
 
             # 3. POST to the destination webhook URL
             response = await self._client.post(

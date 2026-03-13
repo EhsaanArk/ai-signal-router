@@ -6,6 +6,10 @@ import logging
 import os
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,33 @@ def create_app() -> FastAPI:
         description="Intercepts trading signals from Telegram and routes them to SageMaster webhooks.",
         version="0.1.0",
     )
+
+    # ------------------------------------------------------------------
+    # Rate limiting
+    # ------------------------------------------------------------------
+    from src.api.deps import limiter
+
+    application.state.limiter = limiter
+    application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    application.add_middleware(SlowAPIMiddleware)
+
+    # ------------------------------------------------------------------
+    # CORS
+    # ------------------------------------------------------------------
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # ------------------------------------------------------------------
+    # Health check
+    # ------------------------------------------------------------------
+    @application.get("/health")
+    async def health_check():
+        return {"status": "ok"}
 
     # ------------------------------------------------------------------
     # Mount routers

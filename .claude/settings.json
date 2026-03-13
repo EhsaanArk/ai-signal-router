@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Edit",
+      "MultiEdit",
+      "Write",
+      "Bash(*)"
+    ]
+  }
+}

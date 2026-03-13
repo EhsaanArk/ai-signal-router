@@ -13,7 +13,14 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from src.core.models import ParsedSignal, RoutingRule, SubscriptionTier
+from src.core.models import (
+    ParsedSignal,
+    RoutingRule,
+    SignalAction,
+    SubscriptionTier,
+    WebhookPayloadV1,
+    WebhookPayloadV2,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -79,16 +86,19 @@ def apply_symbol_mapping(signal: ParsedSignal, rule: RoutingRule) -> ParsedSigna
 # Webhook payload builders
 # ---------------------------------------------------------------------------
 
-def _deal_type(direction: str, order_type: str) -> str:
-    """Build the SageMaster ``type`` field string.
+def _signal_action(direction: str) -> SignalAction:
+    """Map a ``ParsedSignal.direction`` to the corresponding ``SignalAction``."""
+    if direction == "long":
+        return SignalAction.start_long
+    elif direction == "short":
+        return SignalAction.start_short
+    raise ValueError(f"Unsupported direction: {direction}")
 
-    Examples: ``start_long_market_deal``, ``start_short_limit_deal``.
-    """
-    return f"start_{direction}_{order_type}_deal"
 
-
-def build_webhook_payload(signal: ParsedSignal, rule: RoutingRule) -> dict:
-    """Construct a V1 or V2 webhook payload dictionary.
+def build_webhook_payload(
+    signal: ParsedSignal, rule: RoutingRule
+) -> WebhookPayloadV1 | WebhookPayloadV2:
+    """Construct a validated V1 or V2 webhook payload model.
 
     Parameters
     ----------
@@ -100,30 +110,30 @@ def build_webhook_payload(signal: ParsedSignal, rule: RoutingRule) -> dict:
 
     Returns
     -------
-    dict
-        A JSON-serialisable dictionary ready to POST to SageMaster.
+    WebhookPayloadV1 | WebhookPayloadV2
+        A validated Pydantic model.  Call ``.model_dump()`` to serialise.
     """
     asset_id = extract_asset_id(rule.destination_webhook_url)
-    deal_type = _deal_type(signal.direction, signal.order_type)
-    now_iso = datetime.now(timezone.utc).isoformat()
-
-    payload: dict = {
-        "type": deal_type,
-        "assetId": asset_id,
-        "source": signal.source_asset_class,
-        "symbol": signal.symbol,
-        "date": now_iso,
-    }
+    action = _signal_action(signal.direction)
 
     if rule.payload_version == "V2":
-        if signal.entry_price is not None:
-            payload["price"] = str(signal.entry_price)
-        if signal.take_profits:
-            payload["takeProfits"] = signal.take_profits
-        if signal.stop_loss is not None:
-            payload["stopLoss"] = signal.stop_loss
+        return WebhookPayloadV2(
+            type=action,
+            assetId=asset_id,
+            source=signal.source_asset_class,
+            symbol=signal.symbol,
+            price=str(signal.entry_price) if signal.entry_price is not None else None,
+            takeProfits=signal.take_profits or None,
+            stopLoss=signal.stop_loss,
+        )
 
-    return payload
+    return WebhookPayloadV1(
+        type=action.value,
+        assetId=asset_id,
+        source=signal.source_asset_class,
+        symbol=signal.symbol,
+        date=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 # ---------------------------------------------------------------------------

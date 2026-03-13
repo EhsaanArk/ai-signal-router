@@ -6,7 +6,14 @@ from src.core.mapper import (
     check_tier_limit,
     extract_asset_id,
 )
-from src.core.models import ParsedSignal, RoutingRule, SubscriptionTier
+from src.core.models import (
+    ParsedSignal,
+    RoutingRule,
+    SignalAction,
+    SubscriptionTier,
+    WebhookPayloadV1,
+    WebhookPayloadV2,
+)
 
 
 # ---- apply_symbol_mapping ----
@@ -32,18 +39,20 @@ def test_apply_symbol_mapping_no_match(sample_routing_rule_v2):
 def test_build_webhook_payload_v1(sample_parsed_signal, sample_routing_rule_v1):
     """V1 payload must contain type, assetId, source, symbol, and date."""
     payload = build_webhook_payload(sample_parsed_signal, sample_routing_rule_v1)
-    assert payload["type"] == "start_long_market_deal"
-    assert payload["assetId"] == "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
-    assert payload["source"] == "forex"
-    assert payload["symbol"] == "EURUSD"
-    assert "date" in payload
+    assert isinstance(payload, WebhookPayloadV1)
+    assert payload.type == "start_long_market_deal"
+    assert payload.assetId == "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
+    assert payload.source == "forex"
+    assert payload.symbol == "EURUSD"
+    assert payload.date is not None
 
 
 def test_build_webhook_payload_v1_short(sample_routing_rule_v1):
     """Short direction should produce 'start_short_market_deal'."""
     signal = ParsedSignal(symbol="GBPUSD", direction="short")
     payload = build_webhook_payload(signal, sample_routing_rule_v1)
-    assert payload["type"] == "start_short_market_deal"
+    assert isinstance(payload, WebhookPayloadV1)
+    assert payload.type == "start_short_market_deal"
 
 
 # ---- build_webhook_payload V2 ----
@@ -52,13 +61,14 @@ def test_build_webhook_payload_v1_short(sample_routing_rule_v1):
 def test_build_webhook_payload_v2(sample_parsed_signal, sample_routing_rule_v2):
     """V2 payload must include price, takeProfits, and stopLoss."""
     payload = build_webhook_payload(sample_parsed_signal, sample_routing_rule_v2)
-    assert payload["type"] == "start_long_market_deal"
-    assert payload["assetId"] == "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
-    assert payload["source"] == "forex"
-    assert payload["symbol"] == "EURUSD"
-    assert payload["price"] == "1.1"
-    assert payload["takeProfits"] == [1.1050, 1.1100]
-    assert payload["stopLoss"] == 1.0950
+    assert isinstance(payload, WebhookPayloadV2)
+    assert payload.type == SignalAction.start_long
+    assert payload.assetId == "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
+    assert payload.source == "forex"
+    assert payload.symbol == "EURUSD"
+    assert payload.price == "1.1"
+    assert payload.takeProfits == [1.1050, 1.1100]
+    assert payload.stopLoss == 1.0950
 
 
 # ---- check_tier_limit ----
