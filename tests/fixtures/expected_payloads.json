@@ -1,0 +1,100 @@
+[
+  {
+    "id": "SIGNAL 1",
+    "parsed": {
+      "status": "success",
+      "symbol": "EURUSD",
+      "direction": "BUY",
+      "entry_price": 1.1000,
+      "stop_loss": 1.0950,
+      "take_profits": [1.1050, 1.1100]
+    }
+  },
+  {
+    "id": "SIGNAL 2",
+    "parsed": {
+      "status": "success",
+      "symbol": "GOLD",
+      "direction": "SELL",
+      "entry_price": null,
+      "stop_loss": 2020.0,
+      "take_profits": [2000.0]
+    }
+  },
+  {
+    "id": "SIGNAL 3",
+    "parsed": {
+      "status": "ignored",
+      "reason": "General chat/news, no trading parameters found."
+    }
+  },
+  {
+    "id": "SIGNAL 4",
+    "parsed": {
+      "status": "success",
+      "symbol": "BTCUSDT",
+      "direction": "SELL",
+      "entry_price": 65000.0,
+      "stop_loss": 66000.0,
+      "take_profits": [60000.0]
+    }
+  },
+  {
+    "id": "SIGNAL 5",
+    "parsed": {
+      "status": "ignored",
+      "reason": "Trade management update, not a new entry signal."
+    }
+  },
+  {
+    "id": "SIGNAL 6",
+    "parsed": {
+      "status": "success",
+      "symbol": "GBPJPY",
+      "direction": "BUY",
+      "entry_price": 190.50,
+      "stop_loss": 190.00,
+      "take_profits": [191.50]
+    }
+  },
+  {
+    "id": "SIGNAL 7",
+    "parsed": {
+      "status": "success",
+      "symbol": "AUDCAD",
+      "direction": "BUY",
+      "entry_price": 0.8900,
+      "stop_loss": 0.8850,
+      "take_profits": [0.8950, 0.9000]
+    }
+  },
+  {
+    "id": "SIGNAL 8",
+    "parsed": {
+      "status": "ignored",
+      "reason": "Market analysis, no specific trading parameters."
+    }
+  },
+  {
+    "id": "SIGNAL 9",
+    "parsed": {
+      "status": "success",
+      "symbol": "XAUUSD",
+      "direction": "SELL",
+      "entry_price": 2350.50,
+      "stop_loss": 2360.00,
+      "take_profits": [2330.00]
+    }
+  },
+  {
+    "id": "SIGNAL 10",
+    "parsed": {
+      "status": "success",
+      "symbol": "USDJPY",
+      "direction": "BUY",
+      "entry_price": 150.20,
+      "stop_loss": 149.80,
+      "take_profits": [151.00]
+    }
+  }
+]

@@ -1,0 +1,54 @@
+graph TD
+    subgraph "Telegram Ecosystem"
+        TC[Telegram Channels]
+    end
+
+    subgraph "Railway Hosting"
+        TL[Telegram Listener Worker<br/><i>Telethon MTProto</i>]
+        API[FastAPI Backend<br/><i>Dashboard & Workflows</i>]
+    end
+
+    subgraph "Upstash Serverless"
+        QS[QStash<br/><i>Message Queue</i>]
+        UW[Upstash Workflow<br/><i>Durable Execution</i>]
+        UR[(Upstash Redis<br/><i>Session Cache</i>)]
+    end
+
+    subgraph "Neon Serverless DB"
+        DB[(PostgreSQL<br/><i>Users, Configs, Logs</i>)]
+    end
+
+    subgraph "External APIs"
+        OAI[OpenAI API<br/><i>GPT-4o-mini</i>]
+        SGM[SageMaster Webhook API<br/><i>api.sagemaster.io</i>]
+    end
+
+    subgraph "Frontend"
+        UI[React Dashboard<br/><i>Vercel/Railway</i>]
+    end
+
+    %% Data Flow
+    TC -->|"New Message Event"| TL
+    TL -->|"HTTP POST (Raw Msg)"| QS
+    QS -->|"Trigger Endpoint"| API
+    API <-->|"Manage State"| UW
+    
+    %% Workflow Steps
+    API <-->|"Step 1: Parse"| OAI
+    API <-->|"Step 2: Get Config"| DB
+    API -->|"Step 3: Dispatch"| SGM
+    API -->|"Step 4: Log Result"| DB
+
+    %% Auth & Config Flow
+    UI <-->|"REST API"| API
+    API <-->|"Read/Write"| DB
+    TL <-->|"Cache Sessions"| UR
+    API <-->|"Cache Sessions"| UR
+
+    style TL fill:#e1f5fe,stroke:#333
+    style API fill:#e1f5fe,stroke:#333
+    style QS fill:#fff3e0,stroke:#333
+    style UW fill:#fff3e0,stroke:#333
+    style UR fill:#fff3e0,stroke:#333
+    style DB fill:#e8f5e9,stroke:#333
+    style UI fill:#f3e5f5,stroke:#333

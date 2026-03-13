@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: sgm-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+      - LOCAL_MODE=true
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/sgm_copier
+      - REDIS_URL=redis://redis:6379/0
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+
+  listener:
+    build: .
+    container_name: sgm-listener
+    env_file:
+      - .env
+    environment:
+      - LOCAL_MODE=true
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/sgm_copier
+      - REDIS_URL=redis://redis:6379/0
+    command: python -m src.adapters.telegram.listener
+    volumes:
+      - .:/app
+    depends_on:
+      - api
+      - db
+      - redis
+
+  db:
+    image: postgres:16-alpine
+    container_name: sgm-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=sgm_copier
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: sgm-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,43 @@
+--- SIGNAL 1 ---
+BUY EURUSD @ 1.1000
+SL: 1.0950
+TP1: 1.1050
+TP2: 1.1100
+--- SIGNAL 2 ---
+Selling GOLD now. 
+SL 2020. 
+TP 2000.
+--- SIGNAL 3 ---
+Good morning VIPs! Huge news coming out today, stay safe.
+--- SIGNAL 4 ---
+#BTCUSDT Short Setup
+Entry: 65000
+Stop Loss: 66000
+Take Profit: 60000
+Leverage: 10x
+--- SIGNAL 5 ---
+Close half of EURUSD position now and move SL to breakeven.
+--- SIGNAL 6 ---
+Buy GBPJPY
+Entry: 190.50
+SL: 190.00
+TP: 191.50
+--- SIGNAL 7 ---
+🔥 NEW SIGNAL 🔥
+Pair: AUDCAD
+Direction: LONG
+Entry: 0.8900
+SL: 0.8850
+TP: 0.8950
+TP2: 0.9000
+--- SIGNAL 8 ---
+Market update: DXY is pushing higher, expect some downside on majors.
+--- SIGNAL 9 ---
+SELL XAUUSD
+Entry: 2350.50
+SL: 2360.00
+TP: 2330.00
+--- SIGNAL 10 ---
+Buy USDJPY @ 150.20
+SL: 149.80
+TP: 151.00

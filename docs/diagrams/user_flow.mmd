@@ -1,0 +1,30 @@
+graph TD
+    A[User Logs into Dashboard] --> B{Has Active Telegram Session?}
+    B -->|No| C[Enter Phone Number]
+    C --> D[Receive Telegram Code]
+    D --> E[Enter Code & 2FA]
+    E --> F[Session Encrypted & Saved]
+    F --> G
+    B -->|Yes| G[View Subscribed Channels]
+    
+    G --> H[Toggle Channel ON]
+    H --> I[Paste SageMaster Webhook URL]
+    I --> J[Select Payload Version V1/V2]
+    J --> K[Optional: Add Symbol Mappings]
+    K --> L[Save Configuration]
+    
+    L --> M((System Listens for Signals))
+    
+    style A fill:#e8f5e9,stroke:#333
+    style B fill:#fff3e0,stroke:#333
+    style C fill:#e1f5fe,stroke:#333
+    style D fill:#e1f5fe,stroke:#333
+    style E fill:#e1f5fe,stroke:#333
+    style F fill:#e1f5fe,stroke:#333
+    style G fill:#e8f5e9,stroke:#333
+    style H fill:#e8f5e9,stroke:#333
+    style I fill:#e8f5e9,stroke:#333
+    style J fill:#e8f5e9,stroke:#333
+    style K fill:#e8f5e9,stroke:#333
+    style L fill:#e8f5e9,stroke:#333
+    style M fill:#f3e5f5,stroke:#333
