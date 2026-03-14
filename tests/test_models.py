@@ -51,3 +51,26 @@ def test_raw_signal_creation(sample_raw_signal):
     assert sample_raw_signal.message_id == 42
     assert "EURUSD" in sample_raw_signal.raw_message
     assert sample_raw_signal.timestamp is not None
+
+
+def test_raw_signal_reply_to_msg_id_default():
+    """RawSignal.reply_to_msg_id should default to None."""
+    signal = RawSignal(
+        user_id=UUID("11111111-1111-1111-1111-111111111111"),
+        channel_id="-1001234567890",
+        raw_message="Close half",
+        message_id=99,
+    )
+    assert signal.reply_to_msg_id is None
+
+
+def test_raw_signal_reply_to_msg_id_set():
+    """RawSignal should accept an explicit reply_to_msg_id."""
+    signal = RawSignal(
+        user_id=UUID("11111111-1111-1111-1111-111111111111"),
+        channel_id="-1001234567890",
+        raw_message="Close half",
+        message_id=99,
+        reply_to_msg_id=42,
+    )
+    assert signal.reply_to_msg_id == 42

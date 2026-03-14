@@ -57,8 +57,8 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             get_database_url(),
             echo=os.environ.get("SQL_ECHO", "false").lower() == "true",
-            pool_size=5,
-            max_overflow=10,
+            pool_size=int(os.environ.get("DB_POOL_SIZE", "5")),
+            max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "10")),
         )
     return _engine
 

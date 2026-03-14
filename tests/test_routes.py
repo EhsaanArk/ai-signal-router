@@ -100,6 +100,12 @@ async def test_app():
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[get_settings] = override_get_settings
 
+    # Set up in-memory cache and session store for tests
+    from src.adapters.redis.client import InMemoryCacheAdapter, InMemorySessionStore
+
+    app.state.cache = InMemoryCacheAdapter()
+    app.state.session_store = InMemorySessionStore()
+
     # Seed a test user for duplicate-email checks
     async with async_session_factory() as session:
         session.add(
@@ -132,7 +138,7 @@ async def client(test_app):
 async def test_health_check(client: AsyncClient):
     resp = await client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json()["status"] == "ok"
 
 
 async def test_register_success(client: AsyncClient):
@@ -154,6 +160,15 @@ async def test_register_duplicate_email(client: AsyncClient):
     assert resp.status_code == 409
 
 
+_DEFAULT_TEMPLATE = {
+    "type": "",
+    "assistId": "test-assist-id",
+    "source": "",
+    "symbol": "",
+    "date": "",
+}
+
+
 async def test_create_and_get_routing_rule(client: AsyncClient):
     create_resp = await client.post(
         "/api/v1/routing-rules",
@@ -162,6 +177,7 @@ async def test_create_and_get_routing_rule(client: AsyncClient):
             "source_channel_name": "Test Channel",
             "destination_webhook_url": "https://api.sagemaster.io/deals_idea/eec79d52-1ab9-4d3b-a7ca-125b2f5e0307",
             "payload_version": "V1",
+            "webhook_body_template": _DEFAULT_TEMPLATE,
         },
     )
     assert create_resp.status_code == 201
@@ -187,6 +203,7 @@ async def test_update_routing_rule(client: AsyncClient):
             "source_channel_id": "-100888",
             "destination_webhook_url": "https://api.sagemaster.io/deals_idea/aac79d52-1ab9-4d3b-a7ca-125b2f5e0307",
             "payload_version": "V1",
+            "webhook_body_template": _DEFAULT_TEMPLATE,
         },
     )
     rule_id = create_resp.json()["id"]
@@ -207,6 +224,7 @@ async def test_delete_routing_rule(client: AsyncClient):
             "source_channel_id": "-100777",
             "destination_webhook_url": "https://api.sagemaster.io/deals_idea/bbc79d52-1ab9-4d3b-a7ca-125b2f5e0307",
             "payload_version": "V1",
+            "webhook_body_template": _DEFAULT_TEMPLATE,
         },
     )
     rule_id = create_resp.json()["id"]

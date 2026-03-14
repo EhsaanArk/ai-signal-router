@@ -1,17 +1,22 @@
 import { useState } from "react";
-import { Plus, X } from "lucide-react";
+import { ArrowRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 interface Props {
+  initialData?: { symbol_mappings?: Record<string, string> };
   onFinish: (mappings: Record<string, string>) => void;
   onBack: () => void;
   isSubmitting: boolean;
 }
 
-export function StepSymbolMappings({ onFinish, onBack, isSubmitting }: Props) {
-  const [pairs, setPairs] = useState<{ from: string; to: string }[]>([]);
+export function StepSymbolMappings({ initialData, onFinish, onBack, isSubmitting }: Props) {
+  const [pairs, setPairs] = useState<{ from: string; to: string }[]>(() => {
+    const mappings = initialData?.symbol_mappings;
+    if (!mappings || Object.keys(mappings).length === 0) return [];
+    return Object.entries(mappings).map(([from, to]) => ({ from, to }));
+  });
 
   function addPair() {
     setPairs((prev) => [...prev, { from: "", to: "" }]);
@@ -38,47 +43,62 @@ export function StepSymbolMappings({ onFinish, onBack, isSubmitting }: Props) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div>
-        <Label>Symbol Mappings (optional)</Label>
-        <p className="text-xs text-muted-foreground mt-1">
-          Map signal symbols to your broker's symbol names.
+        <Label className="text-xs">Symbol Mappings</Label>
+        <p className="text-[10px] text-muted-foreground mt-0.5">
+          Optional. Map signal symbols to your broker's names (e.g., GOLD → XAUUSD).
         </p>
       </div>
 
-      {pairs.map((pair, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <Input
-            placeholder="Signal symbol (e.g., GOLD)"
-            value={pair.from}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updatePair(i, "from", e.target.value)}
-          />
-          <span className="text-muted-foreground">→</span>
-          <Input
-            placeholder="Broker symbol (e.g., XAUUSD)"
-            value={pair.to}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updatePair(i, "to", e.target.value)}
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => removePair(i)}
-          >
-            <X className="h-4 w-4" />
-          </Button>
+      {pairs.length > 0 && (
+        <div className="space-y-1.5">
+          {pairs.map((pair, i) => (
+            <div key={i} className="flex items-center gap-1.5 rounded-md bg-muted/30 px-2 py-1">
+              <Input
+                placeholder="GOLD"
+                value={pair.from}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updatePair(i, "from", e.target.value)}
+                className="h-7 text-xs font-mono flex-1"
+              />
+              <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+              <Input
+                placeholder="XAUUSD"
+                value={pair.to}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updatePair(i, "to", e.target.value)}
+                className="h-7 text-xs font-mono flex-1"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0"
+                onClick={() => removePair(i)}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
 
-      <Button variant="outline" size="sm" onClick={addPair}>
-        <Plus className="mr-2 h-4 w-4" />
+      {pairs.length === 0 && (
+        <div className="rounded-md border border-dashed p-4 text-center">
+          <p className="text-[11px] text-muted-foreground">
+            No mappings configured. Most users don't need this.
+          </p>
+        </div>
+      )}
+
+      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={addPair}>
+        <Plus className="mr-1 h-3 w-3" />
         Add Mapping
       </Button>
 
-      <div className="flex gap-2 pt-4">
-        <Button variant="outline" onClick={onBack}>
+      <div className="flex gap-2 pt-2">
+        <Button variant="outline" size="sm" onClick={onBack}>
           Back
         </Button>
-        <Button onClick={handleSubmit} disabled={isSubmitting}>
+        <Button size="sm" onClick={handleSubmit} disabled={isSubmitting}>
           {isSubmitting ? "Creating..." : "Create Rule"}
         </Button>
       </div>

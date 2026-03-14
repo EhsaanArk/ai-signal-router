@@ -9,7 +9,7 @@ from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic_settings import BaseSettings
@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     QSTASH_URL: str = ""
     RESEND_API_KEY: str = ""
     FRONTEND_URL: str = "http://localhost:5173"
+    ALLOWED_ORIGINS: str = ""
+    QSTASH_CURRENT_SIGNING_KEY: str = ""
+    QSTASH_NEXT_SIGNING_KEY: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -91,6 +95,26 @@ async def get_db(
         except Exception:
             await session.rollback()
             raise
+
+
+# ---------------------------------------------------------------------------
+# Cache and session store dependencies
+# ---------------------------------------------------------------------------
+
+
+def get_cache(request: Request):
+    """Return the shared CachePort instance from app state."""
+    return request.app.state.cache
+
+
+def get_session_store(request: Request):
+    """Return the shared SessionStore instance from app state."""
+    return request.app.state.session_store
+
+
+def get_dispatcher(request: Request):
+    """Return the shared WebhookDispatcher instance from app state."""
+    return request.app.state.dispatcher
 
 
 # ---------------------------------------------------------------------------

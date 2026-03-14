@@ -24,20 +24,57 @@ Respond ONLY with a JSON object — no markdown, no commentary.
 ## Output Schema
 
 {
-  "symbol": "<string — normalised trading symbol, e.g. EURUSD, XAUUSD, BTCUSD, US30>",
+  "action": "<'entry' | 'partial_close' | 'breakeven' | 'close_position' | 'modify_sl' | 'modify_tp' | 'trailing_sl'>",
+  "symbol": "<string — normalised trading symbol, e.g. EURUSD, XAUUSD, BTC/USDT, US30>",
   "direction": "<'long' | 'short'>",
   "order_type": "<'market' | 'limit' | 'stop'>",
   "entry_price": <number | null>,
   "stop_loss": <number | null>,
   "take_profits": [<number>, ...],
+  "lots": "<string | null — lot size for partial close by lot, e.g. '0.5'>",
+  "percentage": "<integer | null — percentage for partial close, e.g. 50>",
+  "new_sl": <number | null>,
+  "new_tp": <number | null>,
+  "trailing_sl_pips": <integer | null>,
   "source_asset_class": "<'forex' | 'crypto' | 'indices' | 'commodities'>",
   "is_valid_signal": <true | false>,
   "ignore_reason": "<string | null — reason if is_valid_signal is false>"
 }
 
+## Action Classification
+
+Determine the **action** type from the message intent:
+
+- **entry**: A new trade signal with a direction (buy/sell/long/short). This is the default.
+- **partial_close**: Close a portion of an existing position. Keywords: "close half", "close 50%", "partial close", "close X lots", "TP1 hit close 50%".
+  If the message specifies a percentage (e.g. "close half", "close 50%"), set `percentage` to the integer value (e.g. 50). "Half" = 50.
+  If the message specifies a lot size (e.g. "close 0.3 lots"), set `lots` to the amount (e.g. "0.3").
+  If ambiguous, prefer `percentage` over `lots`. Default to `percentage: 50` if neither is clear.
+- **breakeven**: Move stop loss to entry/breakeven. Keywords: "move SL to breakeven", "move SL to BE", "breakeven", "BE".
+- **close_position**: Fully close an existing position. Keywords: "close all", "close position", "exit", "close trade", "market has reversed".
+- **modify_sl**: Update stop loss to a specific price on an existing position. Keywords: "update SL to", "move SL to [price]", "new SL [price]". Set `new_sl` to the target price.
+- **modify_tp**: Update take profit to a specific price on an existing position. Keywords: "update TP to", "move TP to [price]", "new TP [price]". Set `new_tp` to the target price.
+- **trailing_sl**: Set a trailing stop loss. Keywords: "trailing stop", "trail SL", "trailing SL X pips". Set `trailing_sl_pips` to the pip distance (e.g. 30).
+
+**Follow-up actions** (`partial_close`, `breakeven`, `close_position`, `modify_sl`, `modify_tp`, `trailing_sl`) are VALID signals — set `is_valid_signal` to `true`. They only need a `symbol`; `direction` can default to `"long"`.
+
+## Priority Rule
+
+If a message contains **multiple actions**, pick the single highest-priority one:
+
+1. `close_position` (highest — irreversible)
+2. `partial_close` (reduces exposure)
+3. `breakeven` (protects capital)
+4. `trailing_sl` (dynamic risk)
+5. `modify_sl` (risk adjustment)
+6. `modify_tp` (lowest priority)
+
+Entry signals are never combined with follow-up actions — if the message is clearly a new trade, use `entry`.
+
 ## Classification Rules
 
-1. **Valid signals** contain at least a symbol and a direction (buy/sell/long/short).
+1. **Valid signals** contain at least a symbol and a direction (buy/sell/long/short),
+   OR are a follow-up action (partial_close, breakeven, close_position, modify_sl, modify_tp) with at least a symbol.
 2. **Invalid messages** include: greetings, news, commentary, admin messages,
    motivational posts, and anything that is not an actionable trade signal.
    Set `is_valid_signal` to false and provide a concise `ignore_reason`.
@@ -46,8 +83,10 @@ Respond ONLY with a JSON object — no markdown, no commentary.
 
 - "GOLD", "XAUUSD", "Gold" → symbol "XAUUSD", source_asset_class "commodities"
 - "SILVER", "XAGUSD" → symbol "XAGUSD", source_asset_class "commodities"
-- "BTC", "BTCUSD", "Bitcoin" → symbol "BTCUSD", source_asset_class "crypto"
-- "ETH", "ETHUSD", "Ethereum" → symbol "ETHUSD", source_asset_class "crypto"
+- "BTC", "BTCUSD", "BTC/USD", "Bitcoin" → symbol "BTC/USD", source_asset_class "crypto"
+- "ETH", "ETHUSD", "ETH/USD", "Ethereum" → symbol "ETH/USD", source_asset_class "crypto"
+- Crypto pairs use BASE/QUOTE format with a "/" separator (e.g. PAXG/USDT, SOL/USDT, BTC/USDT).
+  Preserve the quote currency from the original message (USD vs USDT vs USDC).
 - Forex pairs (e.g. EURUSD, GBPJPY) → source_asset_class "forex"
 - Indices (US30, NAS100, SPX500, DAX, USTEC) → source_asset_class "indices"
 - If unclear, default source_asset_class to "forex".
@@ -78,6 +117,12 @@ Respond ONLY with a JSON object — no markdown, no commentary.
 - Ignore decorative emojis (🔥, 💰, ✅, 📊, 🚀) — they are not signal data.
 - Treat 🟢/🔵 as BUY and 🔴 as SELL only when they appear next to a symbol.
 - Messages that are ONLY emojis or stickers are not valid signals.
+
+## Reply Context
+
+If the message is prefixed with [ORIGINAL SIGNAL] and [FOLLOW-UP MESSAGE], the follow-up
+is a reply to the original. Inherit the symbol, direction, and asset class from the original
+signal when the follow-up message omits them.
 """
 
 
@@ -100,14 +145,39 @@ class OpenAISignalParser:
         self._client = AsyncOpenAI(api_key=api_key)
         self._model = model
 
-    async def parse(self, raw: RawSignal) -> ParsedSignal:
-        """Send *raw.raw_message* to GPT and return a ``ParsedSignal``."""
+    async def parse(
+        self,
+        raw: RawSignal,
+        original_context: str | None = None,
+        custom_instructions: str | None = None,
+    ) -> ParsedSignal:
+        """Send *raw.raw_message* to GPT and return a ``ParsedSignal``.
+
+        Parameters
+        ----------
+        original_context:
+            If the message is a reply, the raw text of the original signal.
+            When provided, it is prepended to the user message so GPT can
+            inherit symbol/direction from the original trade.
+        """
+        if original_context:
+            user_content = (
+                f"[ORIGINAL SIGNAL]\n{original_context}\n\n"
+                f"[FOLLOW-UP MESSAGE]\n{raw.raw_message}"
+            )
+        else:
+            user_content = raw.raw_message
+
+        system_content = _SYSTEM_PROMPT
+        if custom_instructions:
+            system_content += f"\n\n## Custom Instructions\n{custom_instructions}"
+
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": raw.raw_message},
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_content},
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.0,
@@ -117,12 +187,18 @@ class OpenAISignalParser:
             data = json.loads(content)
 
             return ParsedSignal(
+                action=data.get("action") or "entry",
                 symbol=data.get("symbol") or "UNKNOWN",
                 direction=data.get("direction") or "long",
                 order_type=data.get("order_type") or "market",
                 entry_price=data.get("entry_price"),
                 stop_loss=data.get("stop_loss"),
                 take_profits=data.get("take_profits") or [],
+                lots=data.get("lots"),
+                percentage=data.get("percentage"),
+                new_sl=data.get("new_sl"),
+                new_tp=data.get("new_tp"),
+                trailing_sl_pips=data.get("trailing_sl_pips"),
                 source_asset_class=data.get("source_asset_class") or "forex",
                 is_valid_signal=data.get("is_valid_signal", False),
                 ignore_reason=data.get("ignore_reason"),

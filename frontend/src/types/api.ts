@@ -12,6 +12,8 @@ export interface UserMe {
 
 export interface TelegramStatusResponse {
   connected: boolean;
+  phone_number: string | null;
+  connected_at: string | null;
 }
 
 export interface SendCodeResponse {
@@ -29,6 +31,8 @@ export interface ChannelInfo {
   username: string | null;
 }
 
+export type DestinationType = "sagemaster_forex" | "sagemaster_crypto" | "custom";
+
 export interface RoutingRuleCreate {
   source_channel_id: string;
   source_channel_name?: string;
@@ -36,6 +40,13 @@ export interface RoutingRuleCreate {
   payload_version: "V1" | "V2";
   symbol_mappings: Record<string, string>;
   risk_overrides: Record<string, unknown>;
+  webhook_body_template?: Record<string, unknown> | null;
+  rule_name?: string | null;
+  destination_label?: string | null;
+  destination_type?: DestinationType;
+  custom_ai_instructions?: string | null;
+  enabled_actions?: string[] | null;
+  keyword_blacklist?: string[];
 }
 
 export interface RoutingRuleUpdate {
@@ -44,6 +55,13 @@ export interface RoutingRuleUpdate {
   payload_version?: "V1" | "V2";
   symbol_mappings?: Record<string, string>;
   risk_overrides?: Record<string, unknown>;
+  webhook_body_template?: Record<string, unknown> | null;
+  rule_name?: string | null;
+  destination_label?: string | null;
+  destination_type?: DestinationType;
+  custom_ai_instructions?: string | null;
+  enabled_actions?: string[] | null;
+  keyword_blacklist?: string[];
   is_active?: boolean;
 }
 
@@ -56,7 +74,32 @@ export interface RoutingRuleResponse {
   payload_version: string;
   symbol_mappings: Record<string, string>;
   risk_overrides: Record<string, unknown>;
+  webhook_body_template: Record<string, unknown> | null;
+  rule_name: string | null;
+  destination_label: string | null;
+  destination_type: DestinationType;
+  custom_ai_instructions: string | null;
+  enabled_actions: string[] | null;
+  keyword_blacklist: string[];
   is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface NotificationPreferences {
+  email_on_success: boolean;
+  email_on_failure: boolean;
+  telegram_on_success: boolean;
+  telegram_on_failure: boolean;
+  telegram_bot_chat_id: number | null;
+}
+
+export interface TelegramBotLinkResponse {
+  bot_link: string;
+}
+
+export interface KeywordBlacklistUpdate {
+  keyword_blacklist: string[];
 }
 
 export interface SignalLogResponse {
@@ -69,6 +112,9 @@ export interface SignalLogResponse {
   status: string;
   error_message: string | null;
   processed_at: string;
+  message_id: number | null;
+  channel_id: string | null;
+  reply_to_msg_id: number | null;
 }
 
 export interface PaginatedLogs {
@@ -76,6 +122,19 @@ export interface PaginatedLogs {
   limit: number;
   offset: number;
   items: SignalLogResponse[];
+}
+
+export interface LogStatsResponse {
+  total: number;
+  success: number;
+  failed: number;
+  ignored: number;
+}
+
+export interface TestWebhookResponse {
+  success: boolean;
+  status_code: number | null;
+  error: string | null;
 }
 
 export interface ForgotPasswordRequest {

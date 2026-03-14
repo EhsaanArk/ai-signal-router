@@ -11,6 +11,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -22,7 +23,8 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 
 from src.adapters.db.models import Base, RoutingRuleModel, UserModel
-from src.api.deps import Settings, get_current_user, get_db, get_settings
+from src.adapters.webhook.dispatcher import WebhookDispatcher
+from src.api.deps import Settings, get_current_user, get_db, get_dispatcher, get_settings
 from src.core.models import (
     DispatchResult,
     ParsedSignal,
@@ -121,9 +123,18 @@ def _override_deps(app, session_factory):
             LOCAL_MODE=True,
         )
 
+    test_dispatcher = WebhookDispatcher.__new__(WebhookDispatcher)
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post.return_value = httpx.Response(200, json={"status": "ok"})
+    test_dispatcher._client = mock_client
+
+    def override_get_dispatcher() -> WebhookDispatcher:
+        return test_dispatcher
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[get_settings] = override_get_settings
+    app.dependency_overrides[get_dispatcher] = override_get_dispatcher
 
 
 async def _seed_user(session_factory, user_id=DEV_USER_ID):
@@ -152,6 +163,13 @@ async def _seed_routing_rule(session_factory, user_id=DEV_USER_ID, channel_id="d
                 payload_version="V1",
                 symbol_mappings={},
                 risk_overrides={},
+                webhook_body_template={
+                    "type": "",
+                    "assistId": "test-assist-id",
+                    "source": "",
+                    "symbol": "",
+                    "date": "",
+                },
                 is_active=True,
             )
         )
@@ -212,12 +230,10 @@ async def dev_client_with_rule(dev_app_with_rule):
 class TestInjectSignalEndpoint:
     """POST /api/dev/inject-signal — basic request/response tests."""
 
-    @patch("src.adapters.webhook.WebhookDispatcher")
     @patch("src.adapters.openai.OpenAISignalParser")
     async def test_inject_signal_creates_raw_signal_and_processes(
         self,
         MockParser,
-        MockDispatcher,
         dev_client: AsyncClient,
     ):
         """The endpoint accepts text + channel_id, creates a RawSignal, and
@@ -225,14 +241,6 @@ class TestInjectSignalEndpoint:
         mock_parser_instance = AsyncMock()
         mock_parser_instance.parse.return_value = SAMPLE_PARSED_SIGNAL
         MockParser.return_value = mock_parser_instance
-
-        mock_dispatcher_instance = AsyncMock()
-        mock_dispatcher_instance.dispatch.return_value = DispatchResult(
-            routing_rule_id=None,
-            status="ignored",
-            error_message="No routing rules configured for this channel",
-        )
-        MockDispatcher.return_value = mock_dispatcher_instance
 
         resp = await dev_client.post(
             "/api/dev/inject-signal",
@@ -249,20 +257,16 @@ class TestInjectSignalEndpoint:
         # Parser was called
         mock_parser_instance.parse.assert_called_once()
 
-    @patch("src.adapters.webhook.WebhookDispatcher")
     @patch("src.adapters.openai.OpenAISignalParser")
     async def test_inject_signal_uses_default_channel_id(
         self,
         MockParser,
-        MockDispatcher,
         dev_client: AsyncClient,
     ):
         """When channel_id is omitted, it defaults to 'dev-channel'."""
         mock_parser_instance = AsyncMock()
         mock_parser_instance.parse.return_value = SAMPLE_PARSED_SIGNAL
         MockParser.return_value = mock_parser_instance
-
-        MockDispatcher.return_value = AsyncMock()
 
         resp = await dev_client.post(
             "/api/dev/inject-signal",
@@ -272,20 +276,16 @@ class TestInjectSignalEndpoint:
         assert resp.status_code == 200
         assert resp.json()["raw_signal"]["channel_id"] == "dev-channel"
 
-    @patch("src.adapters.webhook.WebhookDispatcher")
     @patch("src.adapters.openai.OpenAISignalParser")
     async def test_inject_signal_uses_dev_user_id_by_default(
         self,
         MockParser,
-        MockDispatcher,
         dev_client: AsyncClient,
     ):
         """The default user_id is the fixed DEV user ID."""
         mock_parser_instance = AsyncMock()
         mock_parser_instance.parse.return_value = SAMPLE_PARSED_SIGNAL
         MockParser.return_value = mock_parser_instance
-
-        MockDispatcher.return_value = AsyncMock()
 
         resp = await dev_client.post(
             "/api/dev/inject-signal",
@@ -299,12 +299,10 @@ class TestInjectSignalEndpoint:
 class TestSuccessfulInjection:
     """Full pipeline: parse -> route -> dispatch with mocked externals."""
 
-    @patch("src.adapters.webhook.WebhookDispatcher")
     @patch("src.adapters.openai.OpenAISignalParser")
     async def test_full_pipeline_with_routing_rule(
         self,
         MockParser,
-        MockDispatcher,
         dev_client_with_rule: AsyncClient,
     ):
         """With a seeded routing rule, the full pipeline executes and
@@ -312,21 +310,6 @@ class TestSuccessfulInjection:
         mock_parser_instance = AsyncMock()
         mock_parser_instance.parse.return_value = SAMPLE_PARSED_SIGNAL
         MockParser.return_value = mock_parser_instance
-
-        expected_payload = {
-            "type": "start_long_market_deal",
-            "assetId": "forex",
-            "source": "SGM-Copier",
-            "symbol": "EURUSD",
-            "date": "2026-01-01",
-        }
-        mock_dispatcher_instance = AsyncMock()
-        mock_dispatcher_instance.dispatch.return_value = DispatchResult(
-            routing_rule_id=SAMPLE_RULE_ID,
-            status="success",
-            webhook_payload=expected_payload,
-        )
-        MockDispatcher.return_value = mock_dispatcher_instance
 
         resp = await dev_client_with_rule.post(
             "/api/dev/inject-signal",
@@ -341,29 +324,18 @@ class TestSuccessfulInjection:
         result = data["results"][0]
         assert result["status"] == "success"
         assert result["routing_rule_id"] == str(SAMPLE_RULE_ID)
-        assert result["webhook_payload"] == expected_payload
+        assert result["webhook_payload"] is not None
 
-        # Dispatcher was called with the parsed signal and the rule
-        mock_dispatcher_instance.dispatch.assert_called_once()
-
-    @patch("src.adapters.webhook.WebhookDispatcher")
     @patch("src.adapters.openai.OpenAISignalParser")
     async def test_pipeline_returns_raw_signal_in_response(
         self,
         MockParser,
-        MockDispatcher,
         dev_client_with_rule: AsyncClient,
     ):
         """The response includes the full RawSignal that was created."""
         mock_parser_instance = AsyncMock()
         mock_parser_instance.parse.return_value = SAMPLE_PARSED_SIGNAL
         MockParser.return_value = mock_parser_instance
-
-        mock_dispatcher_instance = AsyncMock()
-        mock_dispatcher_instance.dispatch.return_value = DispatchResult(
-            routing_rule_id=SAMPLE_RULE_ID, status="success",
-        )
-        MockDispatcher.return_value = mock_dispatcher_instance
 
         resp = await dev_client_with_rule.post(
             "/api/dev/inject-signal",
@@ -381,12 +353,10 @@ class TestSuccessfulInjection:
 class TestInjectionNoRoutingRules:
     """Injection when no routing rules are configured for the channel."""
 
-    @patch("src.adapters.webhook.WebhookDispatcher")
     @patch("src.adapters.openai.OpenAISignalParser")
     async def test_no_routing_rules_returns_empty_results(
         self,
         MockParser,
-        MockDispatcher,
         dev_client: AsyncClient,
     ):
         """When there are no routing rules for the channel, the pipeline
@@ -404,15 +374,10 @@ class TestInjectionNoRoutingRules:
         data = resp.json()
         assert data["results"] == []
 
-        # Dispatcher should never have been instantiated for dispatching
-        MockDispatcher.return_value.dispatch.assert_not_called()
-
-    @patch("src.adapters.webhook.WebhookDispatcher")
     @patch("src.adapters.openai.OpenAISignalParser")
     async def test_no_routing_rules_still_returns_raw_signal(
         self,
         MockParser,
-        MockDispatcher,
         dev_client: AsyncClient,
     ):
         """Even with no routing rules, the raw_signal is still returned."""

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import type {
+  MessageResponse,
   SendCodeResponse,
   TelegramStatusResponse,
   VerifyCodeResponse,
@@ -35,6 +36,19 @@ export function useVerifyCode() {
       apiFetch<VerifyCodeResponse>("/telegram/verify-code", {
         method: "POST",
         body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["telegram-status"] });
+    },
+  });
+}
+
+export function useDisconnectTelegram() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<MessageResponse>("/telegram/disconnect", {
+        method: "POST",
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["telegram-status"] });

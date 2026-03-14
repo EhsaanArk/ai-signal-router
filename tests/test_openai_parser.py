@@ -108,7 +108,8 @@ def _expected_to_openai_json(expected: dict) -> str:
     # Determine asset class using the same heuristics as the system prompt.
     if symbol in ("GOLD", "XAUUSD", "XAGUSD", "SILVER"):
         asset_class = "commodities"
-    elif symbol in ("BTCUSD", "BTCUSDT", "ETHUSD", "ETHUSDT"):
+    elif symbol in ("BTCUSD", "BTCUSDT", "ETHUSD", "ETHUSDT",
+                     "BTC/USD", "BTC/USDT", "ETH/USD", "ETH/USDT") or "/" in symbol:
         asset_class = "crypto"
     elif symbol in ("US30", "NAS100", "SPX500", "DAX", "USTEC"):
         asset_class = "indices"
@@ -301,7 +302,82 @@ async def test_system_prompt_included_in_api_call():
 
 
 # ---------------------------------------------------------------------------
-# 7. Parametrised fixture signals (all 10)
+# 7. original_context prepends correctly
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_parse_with_original_context():
+    """When original_context is provided, the user message should contain both
+    [ORIGINAL SIGNAL] and [FOLLOW-UP MESSAGE] sections."""
+    parser, mock_create = _build_parser_with_mock()
+
+    openai_json = json.dumps({
+        "action": "partial_close",
+        "symbol": "EURUSD",
+        "direction": "long",
+        "order_type": "market",
+        "entry_price": None,
+        "stop_loss": None,
+        "take_profits": [],
+        "lots": "0.5",
+        "source_asset_class": "forex",
+        "is_valid_signal": True,
+        "ignore_reason": None,
+    })
+    mock_create.return_value = _mock_openai_response(openai_json)
+
+    raw = _make_raw_signal("Close half")
+    original_text = "BUY EURUSD @ 1.1000\nSL: 1.0950\nTP1: 1.1050"
+    result = await parser.parse(raw, original_context=original_text)
+
+    # Verify the user message was constructed with context
+    call_kwargs = mock_create.call_args
+    messages = call_kwargs.kwargs.get("messages") or call_kwargs[1].get("messages")
+    user_msg = messages[1]["content"]
+    assert "[ORIGINAL SIGNAL]" in user_msg
+    assert original_text in user_msg
+    assert "[FOLLOW-UP MESSAGE]" in user_msg
+    assert "Close half" in user_msg
+
+    # Verify the parsed result
+    assert result.action == "partial_close"
+    assert result.symbol == "EURUSD"
+    assert result.is_valid_signal is True
+
+
+@pytest.mark.asyncio
+async def test_parse_without_original_context():
+    """When original_context is None, the user message should be the raw message only."""
+    parser, mock_create = _build_parser_with_mock()
+
+    openai_json = json.dumps({
+        "symbol": "EURUSD",
+        "direction": "long",
+        "order_type": "market",
+        "entry_price": 1.1000,
+        "stop_loss": 1.0950,
+        "take_profits": [1.1050],
+        "source_asset_class": "forex",
+        "is_valid_signal": True,
+        "ignore_reason": None,
+    })
+    mock_create.return_value = _mock_openai_response(openai_json)
+
+    raw = _make_raw_signal("BUY EURUSD @ 1.1000\nSL: 1.0950\nTP1: 1.1050")
+    result = await parser.parse(raw, original_context=None)
+
+    call_kwargs = mock_create.call_args
+    messages = call_kwargs.kwargs.get("messages") or call_kwargs[1].get("messages")
+    user_msg = messages[1]["content"]
+    assert "[ORIGINAL SIGNAL]" not in user_msg
+    assert user_msg == "BUY EURUSD @ 1.1000\nSL: 1.0950\nTP1: 1.1050"
+
+    assert result.is_valid_signal is True
+    assert result.symbol == "EURUSD"
+
+
+# ---------------------------------------------------------------------------
+# 9. Parametrised fixture signals (all 10)
 # ---------------------------------------------------------------------------
 
 _FIXTURE_IDS = [p["id"] for p in _EXPECTED_PAYLOADS]

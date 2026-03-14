@@ -87,8 +87,12 @@ class TelegramListener:
             self._on_new_message,
             events.NewMessage(),
         )
+        self._client.add_event_handler(
+            self._on_new_message,
+            events.MessageEdited(),
+        )
 
-        logger.info("Telegram listener started for user %s", user_id)
+        logger.info("Telegram listener started for user %s (new messages + edits)", user_id)
 
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         """Handle an incoming Telegram message."""
@@ -114,11 +118,16 @@ class TelegramListener:
             return
         logger.info("Message from monitored channel %s: %.50s", channel_id, message.text)
 
+        reply_to_id = None
+        if message.reply_to:
+            reply_to_id = message.reply_to.reply_to_msg_id
+
         raw_signal = RawSignal(
             user_id=self._user_id,
             channel_id=channel_id,
             raw_message=message.text,
             message_id=message.id,
+            reply_to_msg_id=reply_to_id,
             timestamp=datetime.now(timezone.utc),
         )
 

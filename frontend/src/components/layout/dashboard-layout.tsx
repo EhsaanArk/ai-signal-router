@@ -13,7 +13,7 @@ export function DashboardLayout() {
       <MobileNav open={mobileOpen} onOpenChange={setMobileOpen} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header onMenuClick={() => setMobileOpen(true)} />
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">
+        <main className="flex-1 overflow-y-auto p-3 md:p-4 lg:p-5">
           <Outlet />
         </main>
       </div>

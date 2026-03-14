@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -15,7 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSON, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -41,6 +42,9 @@ class UserModel(Base):
     subscription_tier: Mapped[str] = mapped_column(
         String(50), nullable=False, server_default="free"
     )
+    notification_preferences: Mapped[dict] = mapped_column(
+        JSONB, server_default='{}', nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -65,6 +69,7 @@ class TelegramSessionModel(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "phone_number", name="uq_session_user_phone"),
         Index("idx_telegram_sessions_active", "is_active"),
+        Index("idx_telegram_sessions_user_active", "user_id", "is_active"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -111,6 +116,7 @@ class RoutingRuleModel(Base):
             "source_channel_id",
             postgresql_where="is_active = TRUE",
         ),
+        Index("idx_routing_rules_user_created", "user_id", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -139,6 +145,27 @@ class RoutingRuleModel(Base):
     risk_overrides: Mapped[dict] = mapped_column(
         JSONB, server_default="{}"
     )
+    webhook_body_template: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )
+    rule_name: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    destination_label: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    destination_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="sagemaster_forex"
+    )
+    custom_ai_instructions: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    enabled_actions: Mapped[list | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    keyword_blacklist: Mapped[list] = mapped_column(
+        JSONB, server_default="[]", nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default="true"
     )
@@ -164,6 +191,8 @@ class SignalLogModel(Base):
             name="ck_signal_logs_status",
         ),
         Index("idx_signal_logs_user_date", "user_id", "processed_at"),
+        Index("idx_signal_logs_channel_message", "channel_id", "message_id"),
+        Index("idx_signal_logs_user_status_date", "user_id", "status", "processed_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -178,6 +207,15 @@ class SignalLogModel(Base):
         UUID(as_uuid=True),
         ForeignKey("routing_rules.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    message_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    channel_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    reply_to_msg_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
     )
     raw_message: Mapped[str] = mapped_column(
         Text, nullable=False

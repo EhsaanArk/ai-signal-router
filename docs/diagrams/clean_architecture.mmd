@@ -1,0 +1,115 @@
+graph TD
+    %% ═══════════════════════════════════════════
+    %% SGM Telegram Copier — Clean Architecture
+    %% ═══════════════════════════════════════════
+
+    subgraph FRONTEND ["Frontend — React + TypeScript (71 files, ~8k LOC)"]
+        direction TB
+        Pages["pages/<br/><i>dashboard, logs, routing-rules,<br/>telegram, settings, setup</i>"]
+        Forms["components/forms/<br/><i>routing-rule-wizard,<br/>template-builder, telegram-connect</i>"]
+        Tables["components/tables/<br/><i>signal-logs-table,<br/>routing-rules-table</i>"]
+        Shared["components/shared/<br/><i>status-badge, tier-gate,<br/>empty-state, loading-spinner</i>"]
+        Layout["components/layout/<br/><i>dashboard-layout, sidebar,<br/>header, mobile-nav</i>"]
+        UILib["components/ui/<br/><i>button, card, input, dialog,<br/>tabs, select, textarea …</i>"]
+        Hooks["hooks/<br/><i>use-telegram, use-logs,<br/>use-routing-rules, use-notifications</i>"]
+        Lib["lib/<br/><i>api (fetch), utils, constants, tier</i>"]
+        Types["types/api.ts"]
+
+        Pages --> Layout
+        Pages --> Forms
+        Pages --> Tables
+        Pages --> Shared
+        Forms --> UILib
+        Tables --> UILib
+        Shared --> UILib
+        Layout --> UILib
+        Pages --> Hooks
+        Forms --> Hooks
+        Hooks --> Lib
+        Lib --> Types
+    end
+
+    subgraph API ["API Layer — FastAPI Composition Root"]
+        direction TB
+        Routes["api/routes.py<br/><i>REST endpoints</i>"]
+        Workflow["api/workflow.py<br/><i>Signal processing pipeline</i>"]
+        Deps["api/deps.py<br/><i>Dependency injection</i>"]
+        QAuth["api/qstash_auth.py<br/><i>QStash signature verification</i>"]
+        Main["main.py<br/><i>App factory, LOCAL_MODE wiring</i>"]
+        Dev["api/dev.py<br/><i>Dev-only endpoints</i>"]
+
+        Main --> Routes
+        Main --> Deps
+        Routes --> Deps
+        Routes --> Workflow
+        Workflow --> Deps
+    end
+
+    subgraph ADAPTERS ["Adapter Layer — Infrastructure Implementations"]
+        direction TB
+        DBAdapter["adapters/db/<br/><i>SQLAlchemy models,<br/>repositories</i>"]
+        RedisAdapter["adapters/redis/<br/><i>CachePort, SessionStore<br/>+ InMemory fallbacks</i>"]
+        OpenAIAdapter["adapters/openai/<br/><i>SignalParser<br/>(GPT-4o-mini)</i>"]
+        TelegramAdapter["adapters/telegram/<br/><i>SignalSource<br/>(Telethon MTProto)</i>"]
+        WebhookAdapter["adapters/webhook/<br/><i>SignalDispatcher<br/>(HTTP POST)</i>"]
+        QStashAdapter["adapters/qstash/<br/><i>QueuePort<br/>(message queue)</i>"]
+        EmailAdapter["adapters/email/<br/><i>NotificationPort<br/>(email sender)</i>"]
+    end
+
+    subgraph CORE ["Core Domain — Pure Python, Zero Dependencies (7 files)"]
+        direction TB
+        Models["core/models.py<br/><i>ParsedSignal, RoutingRule,<br/>User, DispatchResult, Enums</i>"]
+        Interfaces["core/interfaces.py<br/><i>Protocols: SignalSource, SignalParser,<br/>SignalDispatcher, QueuePort, CachePort,<br/>SessionStore, Repositories</i>"]
+        Mapper["core/mapper.py<br/><i>build_webhook_payload(),<br/>apply_symbol_mapping(),<br/>check_tier_limit()</i>"]
+        Parser["core/parser.py<br/><i>Parsing orchestration</i>"]
+        Notifications["core/notifications.py<br/><i>NotificationPort protocol,<br/>NotificationPreference model</i>"]
+        Security["core/security.py<br/><i>Encryption utilities</i>"]
+
+        Mapper --> Models
+        Parser --> Models
+        Parser --> Interfaces
+        Notifications --> Models
+    end
+
+    %% Cross-layer dependencies (arrows = "depends on")
+    Lib -->|"HTTP REST"| Routes
+    Deps --> DBAdapter
+    Deps --> RedisAdapter
+    Deps --> OpenAIAdapter
+    Deps --> QStashAdapter
+    Workflow --> OpenAIAdapter
+    Workflow --> WebhookAdapter
+    Workflow --> DBAdapter
+    Main --> TelegramAdapter
+    Main --> EmailAdapter
+
+    %% Adapters depend on Core (the key Clean Architecture rule)
+    DBAdapter -->|"implements"| Interfaces
+    DBAdapter --> Models
+    RedisAdapter -->|"implements"| Interfaces
+    OpenAIAdapter -->|"implements"| Interfaces
+    OpenAIAdapter --> Models
+    TelegramAdapter -->|"implements"| Interfaces
+    TelegramAdapter --> Models
+    WebhookAdapter --> Mapper
+    WebhookAdapter --> Models
+    QStashAdapter -->|"implements"| Interfaces
+    QStashAdapter --> Models
+    EmailAdapter -->|"implements"| Notifications
+
+    Routes --> Models
+    Workflow --> Models
+    Workflow --> Mapper
+
+    %% Styling
+    style CORE fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    style ADAPTERS fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style API fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    style FRONTEND fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+
+    style Models fill:#c8e6c9,stroke:#333
+    style Interfaces fill:#c8e6c9,stroke:#333
+    style Mapper fill:#c8e6c9,stroke:#333
+    style Parser fill:#c8e6c9,stroke:#333
+    style Notifications fill:#c8e6c9,stroke:#333
+    style Security fill:#c8e6c9,stroke:#333

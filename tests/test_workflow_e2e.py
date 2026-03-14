@@ -31,7 +31,9 @@ from src.adapters.db.models import (
     SignalLogModel,
     UserModel,
 )
-from src.api.deps import Settings, get_current_user, get_db, get_settings
+from src.adapters.webhook.dispatcher import WebhookDispatcher
+from src.api.deps import Settings, get_current_user, get_db, get_dispatcher, get_settings
+from src.api.qstash_auth import verify_qstash_signature
 from src.core.models import ParsedSignal, SubscriptionTier, User
 from src.main import create_app
 
@@ -66,10 +68,17 @@ SAMPLE_USER = User(
 
 CHANNEL_ID = "-1001234567890"
 
-# Webhook URLs with embedded UUIDs (required by extract_asset_id)
 WEBHOOK_URL_1 = "https://app.sagemaster.com/api/webhook/aaa11111-1111-1111-1111-111111111111"
 WEBHOOK_URL_2 = "https://app.sagemaster.com/api/webhook/bbb22222-2222-2222-2222-222222222222"
 WEBHOOK_URL_3 = "https://app.sagemaster.com/api/webhook/ccc33333-3333-3333-3333-333333333333"
+
+DEFAULT_TEMPLATE = {
+    "type": "",
+    "assistId": "test-assist-id",
+    "source": "",
+    "symbol": "",
+    "date": "",
+}
 
 
 def _make_valid_parsed_signal(
@@ -159,10 +168,21 @@ async def test_app():
             OPENAI_API_KEY="sk-test-fake-key",
         )
 
+    async def override_qstash_auth():
+        return None  # skip signature validation in tests
+
+    # Create a shared mock dispatcher for the test
+    test_dispatcher = WebhookDispatcher(timeout=15.0)
+
+    def override_get_dispatcher() -> WebhookDispatcher:
+        return test_dispatcher
+
     app = create_app()
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[get_settings] = override_get_settings
+    app.dependency_overrides[verify_qstash_signature] = override_qstash_auth
+    app.dependency_overrides[get_dispatcher] = override_get_dispatcher
 
     # Seed the test user
     async with async_session_factory() as session:
@@ -176,14 +196,15 @@ async def test_app():
         )
         await session.commit()
 
-    yield app, async_session_factory
+    yield app, async_session_factory, test_dispatcher
 
+    await test_dispatcher.close()
     await engine.dispose()
 
 
 @pytest_asyncio.fixture
 async def client(test_app):
-    app, _ = test_app
+    app, _, _ = test_app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
@@ -191,8 +212,14 @@ async def client(test_app):
 
 @pytest_asyncio.fixture
 async def session_factory(test_app):
-    _, factory = test_app
+    _, factory, _ = test_app
     return factory
+
+
+@pytest_asyncio.fixture
+async def test_dispatcher(test_app):
+    _, _, dispatcher = test_app
+    return dispatcher
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +234,7 @@ async def _seed_routing_rule(
     webhook_url: str = WEBHOOK_URL_1,
     symbol_mappings: dict | None = None,
     payload_version: str = "V1",
+    webhook_body_template: dict | None = None,
 ) -> uuid.UUID:
     """Insert a routing rule and return its id."""
     rule_id = uuid.uuid4()
@@ -220,6 +248,7 @@ async def _seed_routing_rule(
                 payload_version=payload_version,
                 symbol_mappings=symbol_mappings or {},
                 risk_overrides={},
+                webhook_body_template=webhook_body_template or DEFAULT_TEMPLATE.copy(),
                 is_active=True,
             )
         )
@@ -251,8 +280,58 @@ def _mock_openai_parser(parsed_signal: ParsedSignal):
     )
 
 
-def _mock_httpx_post(responses: dict[str, httpx.Response] | httpx.Response | None = None):
-    """Return a context manager that patches httpx.AsyncClient.post.
+class _MockHttpxPost:
+    """Context manager that patches a WebhookDispatcher's HTTP client.
+
+    The ``as`` value supports ``assert_not_called()`` and ``assert_called()``
+    by delegating to the underlying ``AsyncMock``.
+    """
+
+    def __init__(self, responses, dispatcher=None):
+        if responses is None:
+            responses = httpx.Response(200, json={"status": "ok"})
+
+        if isinstance(responses, httpx.Response):
+            default_response = responses
+
+            async def _side_effect(url, **kwargs):
+                return default_response
+        else:
+            url_map = responses
+
+            async def _side_effect(url, **kwargs):
+                url_str = str(url)
+                for key, resp in url_map.items():
+                    if key in url_str:
+                        return resp
+                return httpx.Response(200, json={"status": "ok"})
+
+        self._side_effect = _side_effect
+        self._mock_post = AsyncMock(side_effect=_side_effect)
+        self._dispatcher = dispatcher
+        self._original_client = None
+
+    def __enter__(self):
+        if self._dispatcher is not None:
+            self._original_client = self._dispatcher._client
+            self._dispatcher._client = AsyncMock(spec=httpx.AsyncClient)
+            self._dispatcher._client.post = self._mock_post
+        return self._mock_post
+
+    def __exit__(self, *args):
+        if self._dispatcher is not None and self._original_client is not None:
+            self._dispatcher._client = self._original_client
+
+
+def _mock_httpx_post(
+    responses: dict[str, httpx.Response] | httpx.Response | None = None,
+    dispatcher: WebhookDispatcher | None = None,
+):
+    """Return a context manager that patches the WebhookDispatcher so its
+    internal httpx client returns canned responses.
+
+    The ``as`` value is an ``AsyncMock`` tracking all POST calls, so tests
+    can call ``mock_post.assert_not_called()`` etc.
 
     Parameters
     ----------
@@ -260,29 +339,11 @@ def _mock_httpx_post(responses: dict[str, httpx.Response] | httpx.Response | Non
         - If a dict, maps URL -> httpx.Response.
         - If a single Response, all POSTs return that response.
         - If None, returns a 200 for all URLs.
+    dispatcher:
+        The WebhookDispatcher instance to patch. When provided, the mock
+        replaces its internal HTTP client.
     """
-    if responses is None:
-        responses = httpx.Response(200, json={"status": "ok"})
-
-    if isinstance(responses, httpx.Response):
-        default_response = responses
-
-        async def _side_effect(url, **kwargs):
-            return default_response
-    else:
-        url_map = responses
-
-        async def _side_effect(url, **kwargs):
-            url_str = str(url)
-            for key, resp in url_map.items():
-                if key in url_str:
-                    return resp
-            return httpx.Response(200, json={"status": "ok"})
-
-    return patch(
-        "src.adapters.webhook.dispatcher.httpx.AsyncClient.post",
-        side_effect=_side_effect,
-    )
+    return _MockHttpxPost(responses, dispatcher=dispatcher)
 
 
 # ===========================================================================
@@ -290,13 +351,13 @@ def _mock_httpx_post(responses: dict[str, httpx.Response] | httpx.Response | Non
 # ===========================================================================
 
 
-async def test_single_destination_dispatch(client, session_factory):
+async def test_single_destination_dispatch(client, session_factory, test_dispatcher):
     """Full pipeline: parse -> route to 1 webhook -> log success."""
     rule_id = await _seed_routing_rule(session_factory, webhook_url=WEBHOOK_URL_1)
 
     parsed = _make_valid_parsed_signal()
 
-    with _mock_openai_parser(parsed), _mock_httpx_post():
+    with _mock_openai_parser(parsed), _mock_httpx_post(dispatcher=test_dispatcher):
         resp = await client.post(
             "/api/workflow/process-signal",
             json=_raw_signal_payload(),
@@ -322,7 +383,7 @@ async def test_single_destination_dispatch(client, session_factory):
 # ===========================================================================
 
 
-async def test_multi_destination_dispatch(client, session_factory):
+async def test_multi_destination_dispatch(client, session_factory, test_dispatcher):
     """Route 1 signal to 3 different webhook destinations."""
     rule_id_1 = await _seed_routing_rule(
         session_factory, webhook_url=WEBHOOK_URL_1
@@ -336,7 +397,7 @@ async def test_multi_destination_dispatch(client, session_factory):
 
     parsed = _make_valid_parsed_signal()
 
-    with _mock_openai_parser(parsed), _mock_httpx_post():
+    with _mock_openai_parser(parsed), _mock_httpx_post(dispatcher=test_dispatcher):
         resp = await client.post(
             "/api/workflow/process-signal",
             json=_raw_signal_payload(),
@@ -371,14 +432,14 @@ async def test_multi_destination_dispatch(client, session_factory):
 # ===========================================================================
 
 
-async def test_ignored_signal_flow(client, session_factory):
+async def test_ignored_signal_flow(client, session_factory, test_dispatcher):
     """News/invalid messages should be logged as 'ignored' with no webhook dispatch."""
     await _seed_routing_rule(session_factory)
 
     parsed = _make_ignored_parsed_signal()
 
     with _mock_openai_parser(parsed) as mock_parser, \
-         _mock_httpx_post() as mock_post:
+         _mock_httpx_post(dispatcher=test_dispatcher) as mock_post:
         resp = await client.post(
             "/api/workflow/process-signal",
             json=_raw_signal_payload(
@@ -409,7 +470,7 @@ async def test_ignored_signal_flow(client, session_factory):
 # ===========================================================================
 
 
-async def test_webhook_failure_handling(client, session_factory):
+async def test_webhook_failure_handling(client, session_factory, test_dispatcher):
     """When webhook returns 500, signal_log should have status='failed'."""
     rule_id = await _seed_routing_rule(session_factory, webhook_url=WEBHOOK_URL_1)
 
@@ -421,7 +482,7 @@ async def test_webhook_failure_handling(client, session_factory):
         request=httpx.Request("POST", WEBHOOK_URL_1),
     )
 
-    with _mock_openai_parser(parsed), _mock_httpx_post(error_response):
+    with _mock_openai_parser(parsed), _mock_httpx_post(error_response, dispatcher=test_dispatcher):
         resp = await client.post(
             "/api/workflow/process-signal",
             json=_raw_signal_payload(),
@@ -447,7 +508,7 @@ async def test_webhook_failure_handling(client, session_factory):
 # ===========================================================================
 
 
-async def test_symbol_mapping_in_multi_destination(client, session_factory):
+async def test_symbol_mapping_in_multi_destination(client, session_factory, test_dispatcher):
     """Rule 1 has no mapping (symbol stays GOLD), Rule 2 maps GOLD -> XAUUSD.
 
     Each webhook should receive the correctly mapped symbol in its payload.
@@ -476,11 +537,12 @@ async def test_symbol_mapping_in_multi_destination(client, session_factory):
         captured_payloads[url_str] = kwargs.get("json", {})
         return httpx.Response(200, json={"status": "ok"})
 
-    with _mock_openai_parser(parsed), \
-         patch(
-             "src.adapters.webhook.dispatcher.httpx.AsyncClient.post",
-             side_effect=_capture_post,
-         ):
+    # Patch the test dispatcher's client to capture payloads
+    original_client = test_dispatcher._client
+    test_dispatcher._client = AsyncMock(spec=httpx.AsyncClient)
+    test_dispatcher._client.post = AsyncMock(side_effect=_capture_post)
+
+    with _mock_openai_parser(parsed):
         resp = await client.post(
             "/api/workflow/process-signal",
             json=_raw_signal_payload(raw_message="GOLD BUY now"),
@@ -512,18 +574,21 @@ async def test_symbol_mapping_in_multi_destination(client, session_factory):
     assert log_by_rule[rule_id_1].webhook_payload["symbol"] == "GOLD"
     assert log_by_rule[rule_id_2].webhook_payload["symbol"] == "XAUUSD"
 
+    # Restore original client
+    test_dispatcher._client = original_client
+
 
 # ===========================================================================
 # Test 6: No routing rules configured
 # ===========================================================================
 
 
-async def test_no_routing_rules_returns_empty(client, session_factory):
+async def test_no_routing_rules_returns_empty(client, session_factory, test_dispatcher):
     """When no routing rules match the channel, return empty list and log as ignored."""
     # Don't seed any routing rules
     parsed = _make_valid_parsed_signal()
 
-    with _mock_openai_parser(parsed), _mock_httpx_post() as mock_post:
+    with _mock_openai_parser(parsed), _mock_httpx_post(dispatcher=test_dispatcher) as mock_post:
         resp = await client.post(
             "/api/workflow/process-signal",
             json=_raw_signal_payload(),
@@ -540,3 +605,87 @@ async def test_no_routing_rules_returns_empty(client, session_factory):
     assert len(logs) == 1
     assert logs[0].status == "ignored"
     assert "No routing rules" in logs[0].error_message
+
+
+# ===========================================================================
+# Test 7: enabled_actions filtering
+# ===========================================================================
+
+
+async def test_enabled_actions_filters_disabled_action(client, session_factory, test_dispatcher):
+    """When enabled_actions excludes the signal's action, dispatch should be ignored."""
+    # Create rule that only allows entry actions (no close_position)
+    await _seed_routing_rule(
+        session_factory,
+        webhook_url=WEBHOOK_URL_1,
+        webhook_body_template={
+            "type": "",
+            "assistId": "test-assist",
+            "source": "",
+            "symbol": "",
+            "date": "",
+        },
+    )
+    # Update the rule to set enabled_actions (excluding close)
+    async with session_factory() as session:
+        from sqlalchemy import update
+        await session.execute(
+            update(RoutingRuleModel)
+            .where(RoutingRuleModel.user_id == SAMPLE_USER_ID)
+            .values(enabled_actions=[
+                "start_long_market_deal",
+                "start_short_market_deal",
+            ])
+        )
+        await session.commit()
+
+    # Send a close_position signal
+    parsed = ParsedSignal(
+        action="close_position",
+        symbol="EURUSD",
+        direction="long",
+        order_type="market",
+        source_asset_class="forex",
+        is_valid_signal=True,
+    )
+
+    with _mock_openai_parser(parsed), _mock_httpx_post(dispatcher=test_dispatcher) as mock_post:
+        resp = await client.post(
+            "/api/workflow/process-signal",
+            json=_raw_signal_payload(),
+        )
+
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["status"] == "ignored"
+    assert "disabled" in results[0]["error_message"]
+
+    # No webhook should have been dispatched
+    mock_post.assert_not_called()
+
+    logs = await _get_signal_logs(session_factory)
+    assert len(logs) == 1
+    assert logs[0].status == "ignored"
+
+
+async def test_enabled_actions_null_allows_all(client, session_factory, test_dispatcher):
+    """When enabled_actions is None (default), all actions should dispatch normally."""
+    await _seed_routing_rule(
+        session_factory,
+        webhook_url=WEBHOOK_URL_1,
+        # Default template, enabled_actions defaults to None
+    )
+
+    parsed = _make_valid_parsed_signal()
+
+    with _mock_openai_parser(parsed), _mock_httpx_post(dispatcher=test_dispatcher):
+        resp = await client.post(
+            "/api/workflow/process-signal",
+            json=_raw_signal_payload(),
+        )
+
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["status"] == "success"

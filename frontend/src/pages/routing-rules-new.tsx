@@ -9,17 +9,16 @@ import { RoutingRuleWizard } from "@/components/forms/routing-rule-wizard";
 import { usePageTitle } from "@/hooks/use-page-title";
 
 export function RoutingRulesNewPage() {
-  usePageTitle("New Rule");
+  usePageTitle("New Route");
   const navigate = useNavigate();
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Create Routing Rule</h1>
-      <Card className="max-w-2xl">
-        <CardHeader>
-          <CardTitle>New Rule</CardTitle>
+    <div className="max-w-xl">
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-medium">Create Route</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-4 pb-4">
           <RoutingRuleWizard onComplete={() => navigate("/routing-rules")} />
         </CardContent>
       </Card>

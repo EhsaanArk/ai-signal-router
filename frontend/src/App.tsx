@@ -12,6 +12,7 @@ import { RoutingRulesNewPage } from "@/pages/routing-rules-new";
 import { RoutingRulesEditPage } from "@/pages/routing-rules-edit";
 import { LogsPage } from "@/pages/logs";
 import { SettingsPage } from "@/pages/settings";
+import { SetupPage } from "@/pages/setup";
 import { NotFound } from "@/components/shared/not-found";
 
 const router = createBrowserRouter([
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
   {
     element: <ProtectedRoute />,
     children: [
+      { path: "/setup", element: <SetupPage /> },
       {
         element: <DashboardLayout />,
         children: [

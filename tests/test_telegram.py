@@ -395,8 +395,9 @@ class TestTelegramListenerStart:
     """Tests for ``TelegramListener.start()``."""
 
     @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
-    async def test_start_registers_event_handler(self, mock_client_cls):
+    async def test_start_registers_event_handler(self, mock_client_cls, _mock_ss):
         """start() should connect, verify auth, and register a NewMessage handler."""
         mock_client = _make_mock_client()
         mock_client_cls.return_value = mock_client
@@ -412,15 +413,17 @@ class TestTelegramListenerStart:
 
         mock_client.connect.assert_awaited_once()
         mock_client.is_user_authorized.assert_awaited_once()
-        mock_client.add_event_handler.assert_called_once()
+        # Should register both NewMessage and MessageEdited handlers
+        assert mock_client.add_event_handler.call_count == 2
 
-        # Verify the handler is the listener's _on_new_message
-        handler_arg = mock_client.add_event_handler.call_args[0][0]
-        assert handler_arg == listener._on_new_message
+        # Verify both handlers point to _on_new_message
+        for call in mock_client.add_event_handler.call_args_list:
+            assert call[0][0] == listener._on_new_message
 
     @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
-    async def test_start_unauthorized_raises(self, mock_client_cls):
+    async def test_start_unauthorized_raises(self, mock_client_cls, _mock_ss):
         """start() should raise RuntimeError if the session is not authorised."""
         mock_client = _make_mock_client()
         mock_client.is_user_authorized = AsyncMock(return_value=False)
@@ -443,8 +446,9 @@ class TestTelegramListenerOnNewMessage:
     """Tests for ``TelegramListener._on_new_message()``."""
 
     @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
-    async def test_on_new_message_enqueues_raw_signal(self, mock_client_cls):
+    async def test_on_new_message_enqueues_raw_signal(self, mock_client_cls, _mock_ss):
         """_on_new_message should build a RawSignal and enqueue it via QueuePort."""
         mock_client = _make_mock_client()
         mock_client_cls.return_value = mock_client
@@ -480,8 +484,9 @@ class TestTelegramListenerOnNewMessage:
         assert enqueued_signal.message_id == 42
 
     @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
-    async def test_on_new_message_skips_empty_text(self, mock_client_cls):
+    async def test_on_new_message_skips_empty_text(self, mock_client_cls, _mock_ss):
         """Messages with no text (e.g. images) should be silently skipped."""
         mock_client = _make_mock_client()
         mock_client_cls.return_value = mock_client
@@ -503,8 +508,9 @@ class TestTelegramListenerOnNewMessage:
         queue_port.enqueue.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
-    async def test_on_new_message_uses_chat_id_fallback(self, mock_client_cls):
+    async def test_on_new_message_uses_chat_id_fallback(self, mock_client_cls, _mock_ss):
         """When get_chat() returns None, event.chat_id should be used as fallback."""
         mock_client = _make_mock_client()
         mock_client_cls.return_value = mock_client
@@ -527,11 +533,14 @@ class TestTelegramListenerOnNewMessage:
         await listener._on_new_message(event)
 
         enqueued_signal: RawSignal = queue_port.enqueue.call_args[0][0]
-        assert enqueued_signal.channel_id == str(-1009876543210)
+        # When get_chat() returns None, the listener uses abs(event.chat_id)
+        # to strip the -100 prefix and match channels.py format
+        assert enqueued_signal.channel_id == str(abs(-1009876543210))
 
     @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
-    async def test_on_new_message_handles_enqueue_failure(self, mock_client_cls):
+    async def test_on_new_message_handles_enqueue_failure(self, mock_client_cls, _mock_ss):
         """If enqueue raises, the error should be caught (not crash the listener)."""
         mock_client = _make_mock_client()
         mock_client_cls.return_value = mock_client
@@ -564,8 +573,9 @@ class TestTelegramListenerStop:
     """Tests for ``TelegramListener.stop()``."""
 
     @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
-    async def test_stop_disconnects_client(self, mock_client_cls):
+    async def test_stop_disconnects_client(self, mock_client_cls, _mock_ss):
         """stop() should disconnect the underlying TelegramClient."""
         mock_client = _make_mock_client()
         mock_client_cls.return_value = mock_client

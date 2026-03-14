@@ -1,59 +1,64 @@
+import { useLocation } from "react-router-dom";
 import { Menu, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useTheme } from "@/hooks/use-theme";
-import { useTelegramStatus } from "@/hooks/use-telegram";
+import { useAuth } from "@/contexts/auth-context";
 
 interface HeaderProps {
   onMenuClick: () => void;
 }
 
+const routeNames: Record<string, string> = {
+  "/": "Dashboard",
+  "/telegram": "Telegram",
+  "/routing-rules": "Signal Routes",
+  "/routing-rules/new": "New Route",
+  "/logs": "Signal Logs",
+  "/settings": "Settings",
+};
+
 export function Header({ onMenuClick }: HeaderProps) {
   const { theme, toggleTheme } = useTheme();
-  const { data: telegramStatus } = useTelegramStatus();
+  const { user } = useAuth();
+  const location = useLocation();
 
-  const connected = telegramStatus?.connected ?? false;
+  const pageName =
+    routeNames[location.pathname] ||
+    (location.pathname.includes("/routing-rules/") && location.pathname.includes("/edit")
+      ? "Edit Route"
+      : "");
 
   return (
-    <header className="flex h-14 items-center justify-between border-b px-4 lg:justify-end">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="lg:hidden"
-        onClick={onMenuClick}
-        aria-label="Open menu"
-      >
-        <Menu className="h-5 w-5" />
-      </Button>
-      <div className="flex items-center gap-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="flex items-center justify-center h-9 w-9">
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${
-                  connected ? "bg-green-500" : "bg-red-500"
-                }`}
-              />
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            Telegram: {connected ? "Connected" : "Disconnected"}
-          </TooltipContent>
-        </Tooltip>
+    <header className="flex h-12 items-center justify-between border-b px-4">
+      <div className="flex items-center gap-3">
         <Button
           variant="ghost"
           size="icon"
+          className="lg:hidden h-8 w-8"
+          onClick={onMenuClick}
+          aria-label="Open menu"
+        >
+          <Menu className="h-4 w-4" />
+        </Button>
+        <span className="text-sm font-medium">{pageName}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        {user?.email && (
+          <span className="hidden md:inline text-xs text-muted-foreground mr-2">
+            {user.email}
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
           onClick={toggleTheme}
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         >
           {theme === "dark" ? (
-            <Sun className="h-5 w-5" />
+            <Sun className="h-4 w-4" />
           ) : (
-            <Moon className="h-5 w-5" />
+            <Moon className="h-4 w-4" />
           )}
         </Button>
       </div>

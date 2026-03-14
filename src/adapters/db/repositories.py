@@ -100,6 +100,11 @@ class SqlAlchemyRoutingRuleRepository:
             payload_version=rule.payload_version,
             symbol_mappings=rule.symbol_mappings,
             risk_overrides=rule.risk_overrides,
+            webhook_body_template=rule.webhook_body_template,
+            rule_name=rule.rule_name,
+            destination_label=rule.destination_label,
+            destination_type=rule.destination_type,
+            custom_ai_instructions=rule.custom_ai_instructions,
             is_active=rule.is_active,
         )
         self._session.add(db_rule)
@@ -174,6 +179,11 @@ class SqlAlchemyRoutingRuleRepository:
             payload_version=row.payload_version,
             symbol_mappings=row.symbol_mappings or {},
             risk_overrides=row.risk_overrides or {},
+            webhook_body_template=row.webhook_body_template,
+            rule_name=row.rule_name,
+            destination_label=row.destination_label,
+            destination_type=row.destination_type,
+            custom_ai_instructions=row.custom_ai_instructions,
             is_active=row.is_active,
         )
 

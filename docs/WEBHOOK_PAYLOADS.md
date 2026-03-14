@@ -5,96 +5,173 @@
 The core function of the Telegram Signal Copier is to translate unstructured Telegram messages into structured JSON payloads that the SageMaster API can process. SageMaster performs **order routing** based on these payloads.
 
 The webhook URL format is:
-`https://api.sagemaster.io/deals_idea/{strategy_uuid}`
+`https://api.sagemaster.io/deals_idea/{strategy_uuid}` (Crypto)
+`https://sfx.sagemaster.io/deals_idea/{strategy_uuid}` (Forex)
 
 The `{strategy_uuid}` is unique to each user's strategy and is provided by the user during configuration.
 
-## 2. V1 Payload (Static Strategy)
+**CRITICAL DIFFERENCE:** The Forex and Crypto platforms use different field names and action types. The mapper must construct the correct payload based on the user's selected platform.
 
-Use the V1 payload when the user wants their SageMaster strategy to manage the Stop Loss (SL) and Take Profit (TP) values. The Telegram signal merely acts as a trigger to open the trade.
+## 2. Forex Webhook Schemas (SFX)
 
-### 2.1 Example: Start Long Market Deal
+### 2.1 Forex Field Mapping
+*   **ID Field:** `assistId` (NOT `assetId`)
+*   **Symbol Field:** `symbol`
+*   **Source:** `forex`
+*   **Date:** `{{time}}`
 
+### 2.2 Forex V1 vs V2
+*   **V1 (Static Strategy):** Uses fixed SL/TP and money management defined in the SageMaster strategy. The webhook only triggers the action.
+*   **V2 (Dynamic Signal):** The webhook payload overrides the strategy's SL/TP and money management settings.
+*   **Note:** Both V1 and V2 support the same trade management actions (close, partial close, breakeven). The difference is only in the entry payload fields.
+
+### 2.3 Forex Entry Actions
+**V1 Entry (Long/Short):**
 ```json
 {
   "type": "start_long_market_deal",
-  "assetId": "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
   "source": "forex",
-  "symbol": "EURUSD",
-  "date": "{{time}}"
+  "date": "{{time}}",
+  "symbol": "XAUUSD"
 }
 ```
+*(Use `start_short_market_deal` for short positions)*
 
-### 2.2 Example: Start Short Market Deal
-
-```json
-{
-  "type": "start_short_market_deal",
-  "assetId": "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307",
-  "source": "forex",
-  "symbol": "GBPUSD",
-  "date": "{{time}}"
-}
-```
-
-### 2.3 Field Descriptions (V1)
-
-*   `type` (string, required): The action to perform. Must be `start_long_market_deal` or `start_short_market_deal`.
-*   `assetId` (string, required): The unique identifier for the asset, provided by the user's SageMaster configuration.
-*   `source` (string, required): The asset class. Typically `forex` or `crypto`.
-*   `symbol` (string, required): The trading symbol (e.g., `EURUSD`). Must match the broker's symbol exactly.
-*   `date` (string, required): The timestamp of the signal. Can use the TradingView `{{time}}` variable or an ISO 8601 timestamp.
-
-## 3. V2 Payload (Dynamic Signal)
-
-Use the V2 payload when the Telegram signal provides specific SL/TP levels that should override the default strategy settings.
-
-### 3.1 Example: Start Long Market Deal with SL/TP
-
+**V2 Entry (Long/Short):**
 ```json
 {
   "type": "start_long_market_deal",
-  "assetId": "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
   "source": "forex",
-  "symbol": "EURUSD",
-  "price": "1.1000",
-  "takeProfits": [
-    1.1050,
-    1.1100
-  ],
-  "stopLoss": 1.0950
+  "date": "{{time}}",
+  "symbol": "XAUUSD",
+  "price": "{{close}}",
+  "balance": 1000,
+  "lots": 1,
+  "takeProfits": [ {{tpPrice}} ],
+  "stopLoss": {{slPrice}}
 }
 ```
 
-### 3.2 Example: Partially Close Position (V2 Provider Command)
+### 2.4 Forex Trade Management Actions (V1 & V2)
 
+**Close Position:**
+```json
+{
+  "type": "close_order_at_market_price",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}",
+  "symbol": "XAUUSD"
+}
+```
+
+**Partial Close (by Lot):**
 ```json
 {
   "type": "partially_close_by_lot",
-  "assetId": "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307",
-  "lots": "0.5"
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}",
+  "symbol": "XAUUSD",
+  "lotSize": 0.1
 }
 ```
 
-### 3.3 Example: Move to Breakeven (V2 Provider Command)
+**Partial Close (by Percentage):**
+```json
+{
+  "type": "partially_close_by_percentage",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}",
+  "symbol": "XAUUSD",
+  "percentage": 50
+}
+```
+
+**Move SL to Breakeven:**
+```json
+{
+  "type": "move_sl_to_breakeven",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}",
+  "symbol": "XAUUSD",
+  "slAdjustment": 0
+}
+```
+
+## 3. Crypto Webhook Schemas
+
+### 3.1 Crypto Field Mapping
+*   **ID Field:** `aiAssistId`
+*   **Symbol Field:** `tradeSymbol`
+*   **Exchange:** `exchange` (Required, e.g., "binance")
+*   **Event Symbol:** `eventSymbol` (e.g., `{{ticker}}`)
+*   **Date:** `{{time}}`
+
+### 3.2 Crypto Entry Action
+Crypto does not distinguish between long and short in the action type. It uses a single `start_deal` type.
 
 ```json
 {
-  "type": "breakeven",
-  "assetId": "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
+  "type": "start_deal",
+  "aiAssistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "exchange": "binance",
+  "tradeSymbol": "BTC/USDT",
+  "eventSymbol": "{{ticker}}",
+  "price": "{{close}}",
+  "date": "{{time}}"
 }
 ```
 
-### 3.4 Field Descriptions (V2)
+### 3.3 Crypto Trade Management Actions
 
-*   `type` (string, required): The action to perform.
-*   `assetId` (string, required): The unique identifier for the asset.
-*   `source` (string, required): The asset class.
-*   `symbol` (string, required): The trading symbol.
-*   `price` (string, optional): The entry price specified in the signal.
-*   `takeProfits` (array of numbers, optional): An array of Take Profit price levels.
-*   `stopLoss` (number, optional): The Stop Loss price level.
-*   `lots` (string/number, optional): The position size to close (for partial close actions).
+**Close Position:**
+```json
+{
+  "type": "close_order_at_market_price",
+  "aiAssistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "exchange": "binance",
+  "tradeSymbol": "BTC/USDT",
+  "eventSymbol": "{{ticker}}",
+  "price": "{{close}}",
+  "date": "{{time}}"
+}
+```
+
+**Partial Close (by Percentage ONLY):**
+Note: Crypto does not support partial close by lot, only by percentage.
+```json
+{
+  "type": "partially_closed_by_percentage",
+  "aiAssistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "exchange": "binance",
+  "tradeSymbol": "BTC/USDT",
+  "eventSymbol": "{{ticker}}",
+  "price": "{{close}}",
+  "date": "{{time}}",
+  "position_type": "long",
+  "percentage": 50
+}
+```
+
+**Move SL to Breakeven:**
+```json
+{
+  "type": "moved_sl_adjustment",
+  "aiAssistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "exchange": "binance",
+  "tradeSymbol": "BTC/USDT",
+  "eventSymbol": "{{ticker}}",
+  "price": "{{close}}",
+  "date": "{{time}}",
+  "position_type": "long",
+  "sl_adjustment": 0
+}
+```
 
 ## 4. Error Handling
 
@@ -103,7 +180,7 @@ The SageMaster API will return standard HTTP status codes.
 *   `200 OK`: The payload was successfully received and processed.
 *   `400 Bad Request`: The JSON payload is malformed or missing required fields.
 *   `401 Unauthorized`: The `{strategy_uuid}` in the URL is invalid or inactive.
-*   `404 Not Found`: The specified `assetId` or `symbol` could not be found.
+*   `404 Not Found`: The specified ID or symbol could not be found.
 *   `500 Internal Server Error`: An error occurred on the SageMaster platform.
 
 The dispatcher must log all non-200 responses in the `signal_logs` table for troubleshooting.

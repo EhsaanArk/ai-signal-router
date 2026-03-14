@@ -12,42 +12,64 @@ type StatusType =
 
 const statusConfig: Record<
   StatusType,
-  { label: string; className: string }
+  { label: string; className: string; dotColor: string }
 > = {
   connected: {
     label: "Connected",
-    className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    className: "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400",
+    dotColor: "bg-emerald-500",
   },
   disconnected: {
     label: "Disconnected",
-    className: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    className: "bg-rose-500/10 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400",
+    dotColor: "bg-rose-500",
   },
   active: {
     label: "Active",
-    className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    className: "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400",
+    dotColor: "bg-emerald-500",
   },
   inactive: {
     label: "Inactive",
-    className: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+    className: "bg-zinc-500/10 text-zinc-500 dark:bg-zinc-500/15 dark:text-zinc-400",
+    dotColor: "bg-zinc-400",
   },
   success: {
     label: "Success",
-    className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    className: "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400",
+    dotColor: "bg-emerald-500",
   },
   failed: {
     label: "Failed",
-    className: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    className: "bg-rose-500/10 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400",
+    dotColor: "bg-rose-500",
   },
   ignored: {
     label: "Ignored",
-    className: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+    className: "bg-amber-500/10 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400",
+    dotColor: "bg-amber-500",
   },
 };
 
-export function StatusBadge({ status }: { status: StatusType }) {
+interface StatusBadgeProps {
+  status: StatusType;
+  variant?: "badge" | "dot";
+}
+
+export function StatusBadge({ status, variant = "badge" }: StatusBadgeProps) {
   const config = statusConfig[status] ?? statusConfig.inactive;
+
+  if (variant === "dot") {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className={cn("h-1.5 w-1.5 rounded-full", config.dotColor)} />
+        <span className="text-xs text-muted-foreground">{config.label}</span>
+      </span>
+    );
+  }
+
   return (
-    <Badge variant="secondary" className={cn("font-medium", config.className)}>
+    <Badge variant="secondary" className={cn("text-[11px] font-medium rounded-sm px-1.5 py-0", config.className)}>
       {config.label}
     </Badge>
   );

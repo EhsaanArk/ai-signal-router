@@ -1,18 +1,18 @@
 """Tests for src.core.mapper — symbol mapping, payload building, tier limits."""
 
+import pytest
+
 from src.core.mapper import (
     apply_symbol_mapping,
     build_webhook_payload,
+    check_template_symbol_mismatch,
     check_tier_limit,
-    extract_asset_id,
 )
 from src.core.models import (
     ParsedSignal,
     RoutingRule,
     SignalAction,
     SubscriptionTier,
-    WebhookPayloadV1,
-    WebhookPayloadV2,
 )
 
 
@@ -33,42 +33,73 @@ def test_apply_symbol_mapping_no_match(sample_routing_rule_v2):
     assert result.symbol == "EURUSD"
 
 
-# ---- build_webhook_payload V1 ----
+# ---- build_webhook_payload requires template ----
 
 
-def test_build_webhook_payload_v1(sample_parsed_signal, sample_routing_rule_v1):
-    """V1 payload must contain type, assetId, source, symbol, and date."""
-    payload = build_webhook_payload(sample_parsed_signal, sample_routing_rule_v1)
-    assert isinstance(payload, WebhookPayloadV1)
-    assert payload.type == "start_long_market_deal"
-    assert payload.assetId == "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
-    assert payload.source == "forex"
-    assert payload.symbol == "EURUSD"
-    assert payload.date is not None
+def test_build_webhook_payload_no_template_raises(sample_parsed_signal):
+    """build_webhook_payload must raise ValueError when no template is provided."""
+    rule = RoutingRule(
+        id="22222222-2222-2222-2222-222222222222",
+        user_id="11111111-1111-1111-1111-111111111111",
+        source_channel_id="-1001234567890",
+        destination_webhook_url="https://api.sagemaster.io/deals_idea/some-id",
+        payload_version="V1",
+    )
+    with pytest.raises(ValueError, match="Webhook body template is required"):
+        build_webhook_payload(sample_parsed_signal, rule)
 
 
-def test_build_webhook_payload_v1_short(sample_routing_rule_v1):
+def test_build_webhook_payload_v1_with_template(sample_parsed_signal):
+    """V1 payload via template must contain type, assistId, source, symbol, and date."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "source": "",
+        "symbol": "",
+        "date": "",
+    }, version="V1")
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert payload["type"] == "start_long_market_deal"
+    assert payload["assistId"] == "my-assist-id"
+    assert payload["source"] == "forex"
+    assert payload["symbol"] == "EURUSD"
+    assert payload["date"] != ""
+
+
+def test_build_webhook_payload_v1_short_with_template():
     """Short direction should produce 'start_short_market_deal'."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "source": "",
+        "symbol": "",
+        "date": "",
+    }, version="V1")
     signal = ParsedSignal(symbol="GBPUSD", direction="short")
-    payload = build_webhook_payload(signal, sample_routing_rule_v1)
-    assert isinstance(payload, WebhookPayloadV1)
-    assert payload.type == "start_short_market_deal"
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "start_short_market_deal"
 
 
-# ---- build_webhook_payload V2 ----
-
-
-def test_build_webhook_payload_v2(sample_parsed_signal, sample_routing_rule_v2):
-    """V2 payload must include price, takeProfits, and stopLoss."""
-    payload = build_webhook_payload(sample_parsed_signal, sample_routing_rule_v2)
-    assert isinstance(payload, WebhookPayloadV2)
-    assert payload.type == SignalAction.start_long
-    assert payload.assetId == "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
-    assert payload.source == "forex"
-    assert payload.symbol == "EURUSD"
-    assert payload.price == "1.1"
-    assert payload.takeProfits == [1.1050, 1.1100]
-    assert payload.stopLoss == 1.0950
+def test_build_webhook_payload_v2_with_template(sample_parsed_signal):
+    """V2 payload via template must include price, takeProfits, and stopLoss."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "source": "",
+        "symbol": "",
+        "date": "",
+        "price": "",
+        "takeProfits": [],
+        "stopLoss": None,
+    }, version="V2")
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert payload["type"] == "start_long_market_deal"
+    assert payload["assistId"] == "my-assist-id"
+    assert payload["source"] == "forex"
+    assert payload["symbol"] == "EURUSD"
+    assert payload["price"] == "1.1"
+    assert payload["takeProfits"] == [1.1050, 1.1100]
+    assert payload["stopLoss"] == 1.0950
 
 
 # ---- check_tier_limit ----
@@ -87,10 +118,523 @@ def test_check_tier_limit_exceeded():
     assert check_tier_limit(SubscriptionTier.pro, 5) is False
 
 
-# ---- extract_asset_id ----
+# ---- Follow-up action types (with template) ----
 
 
-def test_extract_asset_id():
-    """Should extract UUID from a SageMaster webhook URL."""
-    url = "https://api.sagemaster.io/deals_idea/eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
-    assert extract_asset_id(url) == "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
+def test_partial_close_by_lot_v2():
+    """partial_close with lots should produce partially_close_by_lot."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "EURUSD",
+        "source": "forex",
+    }, version="V2")
+    signal = ParsedSignal(action="partial_close", symbol="EURUSD", lots="0.3")
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "partially_close_by_lot"
+    assert payload["lotSize"] == "0.3"
+
+
+def test_partial_close_by_lot_default():
+    """partial_close without lots or percentage should default to lot-based with 0.5."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "EURUSD",
+        "source": "forex",
+    }, version="V2")
+    signal = ParsedSignal(action="partial_close", symbol="EURUSD")
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "partially_close_by_lot"
+    assert payload["lotSize"] == "0.5"
+
+
+def test_partial_close_by_percentage_v2():
+    """partial_close with percentage should produce partially_close_by_percentage."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "EURUSD",
+        "source": "forex",
+    }, version="V2")
+    signal = ParsedSignal(action="partial_close", symbol="EURUSD", percentage=50)
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "partially_close_by_percentage"
+    assert payload["percentage"] == 50
+
+
+def test_breakeven_v2():
+    """breakeven should produce move_sl_to_breakeven with slAdjustment=0."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "XAUUSD",
+        "source": "forex",
+    }, version="V2")
+    signal = ParsedSignal(action="breakeven", symbol="XAUUSD")
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "move_sl_to_breakeven"
+    assert payload["slAdjustment"] == 0
+
+
+def test_close_position_v2():
+    """close_position should produce close_order_at_market_price."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "GBPJPY",
+        "source": "forex",
+    }, version="V2")
+    signal = ParsedSignal(action="close_position", symbol="GBPJPY")
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "close_order_at_market_price"
+
+
+def test_followup_no_template_raises():
+    """Follow-up actions without a template should raise ValueError."""
+    rule = RoutingRule(
+        id="22222222-2222-2222-2222-222222222222",
+        user_id="11111111-1111-1111-1111-111111111111",
+        source_channel_id="-1001234567890",
+        destination_webhook_url="https://api.sagemaster.io/deals_idea/some-id",
+        payload_version="V1",
+    )
+    signal = ParsedSignal(action="close_position", symbol="EURUSD")
+    with pytest.raises(ValueError, match="Webhook body template is required"):
+        build_webhook_payload(signal, rule)
+
+
+def test_modify_sl_maps_to_breakeven():
+    """modify_sl should map to move_sl_to_breakeven action."""
+    from src.core.mapper import _signal_action
+
+    signal = ParsedSignal(action="modify_sl", symbol="EURUSD", new_sl=1.0980)
+    assert _signal_action(signal) == SignalAction.breakeven
+
+
+def test_modify_tp_raises():
+    """modify_tp should raise ValueError (not supported by SageMaster)."""
+    from src.core.mapper import _signal_action
+
+    signal = ParsedSignal(action="modify_tp", symbol="EURUSD", new_tp=1.1200)
+    with pytest.raises(ValueError, match="not supported"):
+        _signal_action(signal)
+
+
+def test_trailing_sl_maps_to_breakeven():
+    """trailing_sl should map to move_sl_to_breakeven action."""
+    from src.core.mapper import _signal_action
+
+    signal = ParsedSignal(action="trailing_sl", symbol="XAUUSD", trailing_sl_pips=30)
+    assert _signal_action(signal) == SignalAction.breakeven
+
+
+def test_entry_backward_compat(sample_parsed_signal):
+    """Existing entry signals (no action field) should still work with template."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "source": "",
+        "symbol": "",
+        "date": "",
+        "price": "",
+        "takeProfits": [],
+        "stopLoss": None,
+    }, version="V2")
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert payload["type"] == "start_long_market_deal"
+
+
+# ---- Template follow-up: entry field stripping ----
+
+
+def _rule_with_template(template: dict, version: str = "V1") -> RoutingRule:
+    """Helper to create a routing rule with a webhook_body_template."""
+    return RoutingRule(
+        id="22222222-2222-2222-2222-222222222222",
+        user_id="11111111-1111-1111-1111-111111111111",
+        source_channel_id="-1001234567890",
+        source_channel_name="VIP Signals",
+        destination_webhook_url=(
+            "https://api.sagemaster.io/deals_idea/"
+            "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
+        ),
+        payload_version=version,
+        webhook_body_template=template,
+    )
+
+
+def test_template_followup_strips_entry_fields():
+    """Management actions via template should strip price/takeProfits/stopLoss."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "EURUSD",
+        "source": "forex",
+        "date": "",
+        "price": "{{close}}",
+        "takeProfits": [1.1, 1.2],
+        "stopLoss": 1.05,
+    }, version="V2")
+    signal = ParsedSignal(action="close_position", symbol="EURUSD")
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "close_order_at_market_price"
+    assert "price" not in payload
+    assert "takeProfits" not in payload
+    assert "stopLoss" not in payload
+    assert payload["assistId"] == "my-assist-id"
+
+
+def test_template_followup_breakeven_injects_slAdjustment():
+    """Breakeven via template should inject slAdjustment=0."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "XAUUSD",
+        "source": "forex",
+        "date": "",
+    })
+    signal = ParsedSignal(action="breakeven", symbol="XAUUSD")
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "move_sl_to_breakeven"
+    assert payload["slAdjustment"] == 0
+
+
+def test_template_followup_partial_close_pct():
+    """Partial close by percentage via template should inject percentage field."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "EURUSD",
+        "source": "forex",
+        "date": "",
+        "price": "{{close}}",
+        "takeProfits": [],
+    })
+    signal = ParsedSignal(action="partial_close", symbol="EURUSD", percentage=50)
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "partially_close_by_percentage"
+    assert payload["percentage"] == 50
+    assert "price" not in payload  # entry fields stripped
+    assert "takeProfits" not in payload
+
+
+def test_template_followup_partial_close_lot():
+    """Partial close by lot via template should inject lotSize field."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "EURUSD",
+        "source": "forex",
+        "date": "",
+    })
+    signal = ParsedSignal(action="partial_close", symbol="EURUSD", lots="0.3")
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "partially_close_by_lot"
+    assert payload["lotSize"] == "0.3"
+
+
+# ---- Template field preservation (entry) ----
+
+
+def test_template_preserves_prefilled_symbol_and_source(sample_parsed_signal):
+    """Template with pre-filled symbol and source should NOT be overwritten."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "AUDCAD",
+        "source": "forex",
+        "date": "",
+    })
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert payload["symbol"] == "AUDCAD"
+    assert payload["source"] == "forex"
+    assert payload["type"] == "start_long_market_deal"
+    assert payload["assistId"] == "my-assist-id"
+
+
+def test_template_fills_empty_symbol_and_source(sample_parsed_signal):
+    """Template with empty symbol/source should be filled from signal."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "",
+        "source": "",
+        "date": "",
+    })
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert payload["symbol"] == "EURUSD"
+    assert payload["source"] == "forex"
+
+
+def test_template_no_extra_fields_injected(sample_parsed_signal):
+    """Template without symbol/source keys should NOT have them injected."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "date": "",
+    })
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert "symbol" not in payload
+    assert "source" not in payload
+    assert payload["assistId"] == "my-assist-id"
+    assert payload["type"] == "start_long_market_deal"
+
+
+def test_template_v2_preserves_prefilled_tp_sl(sample_parsed_signal):
+    """V2 template with pre-filled price/TP/SL should NOT be overwritten."""
+    rule = _rule_with_template(
+        {
+            "type": "",
+            "assistId": "my-assist-id",
+            "symbol": "AUDCAD",
+            "source": "forex",
+            "date": "",
+            "price": "2.0",
+            "takeProfits": [2.1, 2.2],
+            "stopLoss": 1.9,
+        },
+        version="V2",
+    )
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert payload["price"] == "2.0"
+    assert payload["takeProfits"] == [2.1, 2.2]
+    assert payload["stopLoss"] == 1.9
+
+
+def test_template_v2_fills_empty_tp_sl(sample_parsed_signal):
+    """V2 template with empty price/TP/SL keys should be filled from signal."""
+    rule = _rule_with_template(
+        {
+            "type": "",
+            "assistId": "my-assist-id",
+            "symbol": "AUDCAD",
+            "source": "forex",
+            "date": "",
+            "price": "",
+            "takeProfits": [],
+            "stopLoss": None,
+        },
+        version="V2",
+    )
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert payload["symbol"] == "AUDCAD"
+    assert payload["price"] == "1.1"
+    assert payload["takeProfits"] == [1.1050, 1.1100]
+    assert payload["stopLoss"] == 1.0950
+
+
+def test_template_v2_no_extra_v2_fields(sample_parsed_signal):
+    """V2 template without price/TP/SL keys should NOT have them injected."""
+    rule = _rule_with_template(
+        {
+            "type": "",
+            "assistId": "my-assist-id",
+            "symbol": "AUDCAD",
+            "source": "forex",
+            "date": "",
+        },
+        version="V2",
+    )
+    payload = build_webhook_payload(sample_parsed_signal, rule)
+    assert payload["symbol"] == "AUDCAD"
+    assert "price" not in payload
+    assert "takeProfits" not in payload
+    assert "stopLoss" not in payload
+
+
+# ---- TradingView placeholder substitution ----
+
+
+def test_template_replaces_close_and_ticker_placeholders():
+    """{{close}} and {{ticker}} placeholders should be replaced with signal data."""
+    rule = _rule_with_template({
+        "type": "start_deal",
+        "tradeSymbol": "{{ticker}}",
+        "price": "{{close}}",
+        "date": "{{time}}",
+    })
+    signal = ParsedSignal(
+        symbol="BTCUSDT",
+        direction="long",
+        entry_price=64500.50,
+        source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["tradeSymbol"] == "BTCUSDT"
+    assert payload["price"] == "64500.5"
+    assert payload["type"] == "start_deal"  # preserved, not overwritten
+    assert payload["date"] != "{{time}}"  # replaced with timestamp
+
+
+def test_crypto_template_preserves_type_no_extra_fields():
+    """Crypto-style template: type='start_deal' preserved, no extra fields injected."""
+    rule = _rule_with_template({
+        "type": "start_deal",
+        "tradeSymbol": "{{ticker}}",
+        "price": "{{close}}",
+    })
+    signal = ParsedSignal(
+        symbol="ETHUSDT",
+        direction="long",
+        entry_price=3200.0,
+        source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "start_deal"
+    assert payload["tradeSymbol"] == "ETHUSDT"
+    assert payload["price"] == "3200.0"
+    assert "symbol" not in payload
+    assert "source" not in payload
+    assert "date" not in payload
+
+
+def test_forex_template_empty_type_filled_from_direction():
+    """Forex template with empty type should get direction-based type."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "AUDCAD",
+        "source": "forex",
+        "date": "",
+    })
+    signal = ParsedSignal(symbol="AUDCAD", direction="short", source_asset_class="forex")
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "start_short_market_deal"
+    assert payload["symbol"] == "AUDCAD"  # preserved from template
+    assert payload["source"] == "forex"  # preserved from template
+
+
+# ---- check_template_symbol_mismatch ----
+
+
+def test_mismatch_hardcoded_tradeSymbol_different_signal():
+    """Hardcoded tradeSymbol that differs from signal should return mismatch reason."""
+    rule = _rule_with_template({"type": "start_deal", "tradeSymbol": "LUMIA/USDT"})
+    signal = ParsedSignal(symbol="BTC/USDT", direction="long")
+    reason = check_template_symbol_mismatch(signal, rule)
+    assert reason is not None
+    assert "BTC/USDT" in reason
+    assert "LUMIA/USDT" in reason
+
+
+def test_mismatch_hardcoded_tradeSymbol_matching_signal():
+    """Hardcoded tradeSymbol that matches signal should return None (OK)."""
+    rule = _rule_with_template({"type": "start_deal", "tradeSymbol": "LUMIA/USDT"})
+    signal = ParsedSignal(symbol="LUMIA/USDT", direction="long")
+    assert check_template_symbol_mismatch(signal, rule) is None
+
+
+def test_mismatch_placeholder_tradeSymbol():
+    """{{ticker}} placeholder should never cause a mismatch."""
+    rule = _rule_with_template({"type": "start_deal", "tradeSymbol": "{{ticker}}"})
+    signal = ParsedSignal(symbol="ANY/COIN", direction="long")
+    assert check_template_symbol_mismatch(signal, rule) is None
+
+
+def test_mismatch_empty_tradeSymbol():
+    """Empty tradeSymbol (dynamic) should never cause a mismatch."""
+    rule = _rule_with_template({"type": "start_deal", "tradeSymbol": ""})
+    signal = ParsedSignal(symbol="ANY/COIN", direction="long")
+    assert check_template_symbol_mismatch(signal, rule) is None
+
+
+def test_mismatch_no_template():
+    """No template at all should never cause a mismatch."""
+    rule = RoutingRule(
+        id="22222222-2222-2222-2222-222222222222",
+        user_id="11111111-1111-1111-1111-111111111111",
+        source_channel_id="-1001234567890",
+        source_channel_name="VIP Signals",
+        destination_webhook_url=(
+            "https://api.sagemaster.io/deals_idea/"
+            "eec79d52-1ab9-4d3b-a7ca-125b2f5e0307"
+        ),
+        payload_version="V1",
+    )
+    signal = ParsedSignal(symbol="BTC/USDT", direction="long")
+    assert check_template_symbol_mismatch(signal, rule) is None
+
+
+def test_mismatch_hardcoded_symbol_field():
+    """Hardcoded 'symbol' field (not tradeSymbol) should also be checked."""
+    rule = _rule_with_template({
+        "type": "",
+        "symbol": "AUDCAD",
+        "source": "forex",
+    })
+    signal = ParsedSignal(symbol="EURUSD", direction="long")
+    reason = check_template_symbol_mismatch(signal, rule)
+    assert reason is not None
+    assert "EURUSD" in reason
+    assert "AUDCAD" in reason
+
+
+def test_close_placeholder_no_price():
+    """{{close}} should resolve to empty string when entry_price is None."""
+    rule = _rule_with_template({
+        "type": "start_deal",
+        "tradeSymbol": "{{ticker}}",
+        "price": "{{close}}",
+    })
+    signal = ParsedSignal(symbol="ETH/USDT", direction="long", entry_price=None)
+    payload = build_webhook_payload(signal, rule)
+    assert payload["price"] == ""
+    assert payload["tradeSymbol"] == "ETH/USDT"
+
+
+def test_eventSymbol_empty_filled_from_signal():
+    """Empty eventSymbol should be filled from signal."""
+    rule = _rule_with_template({
+        "type": "start_deal",
+        "tradeSymbol": "{{ticker}}",
+        "eventSymbol": "",
+        "price": "{{close}}",
+    })
+    signal = ParsedSignal(
+        symbol="SOL/USDT", direction="long", entry_price=150.0,
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["eventSymbol"] == "SOL/USDT"
+    assert payload["tradeSymbol"] == "SOL/USDT"
+
+
+def test_modify_sl_payload_with_new_sl():
+    """modify_sl with new_sl should produce breakeven with slAdjustment = new_sl."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "EURUSD",
+        "source": "forex",
+    }, version="V2")
+    signal = ParsedSignal(action="modify_sl", symbol="EURUSD", new_sl=25)
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "move_sl_to_breakeven"
+    assert payload["slAdjustment"] == 25
+
+
+def test_trailing_sl_payload():
+    """trailing_sl should produce breakeven with slAdjustment = trailing_sl_pips."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "XAUUSD",
+        "source": "forex",
+    }, version="V2")
+    signal = ParsedSignal(action="trailing_sl", symbol="XAUUSD", trailing_sl_pips=30)
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "move_sl_to_breakeven"
+    assert payload["slAdjustment"] == 30
+
+
+def test_mismatch_hardcoded_eventSymbol():
+    """Hardcoded eventSymbol that differs from signal should return mismatch."""
+    rule = _rule_with_template({
+        "type": "start_deal",
+        "tradeSymbol": "{{ticker}}",
+        "eventSymbol": "LUMIA/USDT",
+    })
+    signal = ParsedSignal(symbol="BTC/USDT", direction="long")
+    reason = check_template_symbol_mismatch(signal, rule)
+    assert reason is not None
+    assert "LUMIA/USDT" in reason

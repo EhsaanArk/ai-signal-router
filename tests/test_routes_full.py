@@ -131,6 +131,12 @@ async def test_app():
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings] = override_get_settings
 
+    # Set up in-memory cache and session store for tests
+    from src.adapters.redis.client import InMemoryCacheAdapter, InMemorySessionStore
+
+    app.state.cache = InMemoryCacheAdapter()
+    app.state.session_store = InMemorySessionStore()
+
     # Seed the test user with a real bcrypt hash so login tests work
     async with async_session_factory() as session:
         session.add(
@@ -282,6 +288,7 @@ class TestUnauthenticatedAccess:
                 "source_channel_id": "-100999",
                 "destination_webhook_url": "https://example.com/hook",
                 "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
         assert resp.status_code == 401
@@ -357,14 +364,7 @@ class TestTelegramVerifyCode:
         mock_auth = AsyncMock()
         mock_auth.verify_code.return_value = "fake-session-string"
 
-        mock_redis_instance = AsyncMock()
-        mock_redis_instance.set = AsyncMock()
-        mock_redis_instance.aclose = AsyncMock()
-
-        with (
-            patch("src.api.routes._get_telegram_auth", return_value=mock_auth),
-            patch("redis.asyncio.from_url", return_value=mock_redis_instance),
-        ):
+        with patch("src.api.routes._get_telegram_auth", return_value=mock_auth):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 resp = await ac.post(
@@ -395,8 +395,10 @@ class TestTelegramVerifyCode:
             assert row.phone_number == "+15551234567"
             assert row.is_active is True
 
-        # Verify Redis was called
-        mock_redis_instance.set.assert_awaited_once()
+        # Verify session was cached in the in-memory session store
+        session_store = app.state.session_store
+        cached = await session_store.get_session(SAMPLE_USER_ID)
+        assert cached is not None
 
 
 class TestTelegramStatus:
@@ -521,6 +523,7 @@ class TestRoutingRulesList:
                 "source_channel_id": "-100111",
                 "destination_webhook_url": "https://example.com/hook1",
                 "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
 
@@ -542,6 +545,7 @@ class TestRoutingRuleTierLimit:
                 "source_channel_id": "-100001",
                 "destination_webhook_url": "https://example.com/hook1",
                 "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
         assert resp.status_code == 201
@@ -554,6 +558,7 @@ class TestRoutingRuleTierLimit:
                 "source_channel_id": "-100001",
                 "destination_webhook_url": "https://example.com/hook1",
                 "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
         assert resp1.status_code == 201
@@ -565,6 +570,7 @@ class TestRoutingRuleTierLimit:
                 "source_channel_id": "-100002",
                 "destination_webhook_url": "https://example.com/hook2",
                 "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
         assert resp2.status_code == 403
@@ -583,6 +589,7 @@ class TestRoutingRuleUpdateWithSymbolMappings:
                 "source_channel_id": "-100555",
                 "destination_webhook_url": "https://example.com/hook",
                 "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
         rule_id = create_resp.json()["id"]
@@ -606,6 +613,7 @@ class TestRoutingRuleUpdateWithSymbolMappings:
                 "source_channel_id": "-100666",
                 "destination_webhook_url": "https://example.com/hook",
                 "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
         rule_id = create_resp.json()["id"]
@@ -747,6 +755,7 @@ class TestErrorCases:
                 "source_channel_id": "-100999",
                 "destination_webhook_url": "https://example.com/hook",
                 "payload_version": "V3",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
         assert resp.status_code == 422
@@ -762,6 +771,7 @@ class TestErrorCases:
                 "source_channel_id": "-100888",
                 "destination_webhook_url": "https://example.com/hook",
                 "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
         rule_id = create_resp.json()["id"]
@@ -778,7 +788,10 @@ class TestErrorCases:
         """source_channel_id and destination_webhook_url are required."""
         resp = await authed_client.post(
             "/api/v1/routing-rules",
-            json={"payload_version": "V1"},
+            json={
+                "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
+            },
         )
         assert resp.status_code == 422
 
