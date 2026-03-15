@@ -55,7 +55,7 @@ export function DashboardPage() {
 
   // Redirect new users to setup wizard
   const setupComplete = localStorage.getItem("sgm_setup_complete") === "true";
-  if (!setupComplete && !logsLoading && (logsData?.total ?? 0) === 0) {
+  if (!setupComplete && !rulesLoading && (rules?.length ?? 0) === 0) {
     return <Navigate to="/setup" replace />;
   }
 
