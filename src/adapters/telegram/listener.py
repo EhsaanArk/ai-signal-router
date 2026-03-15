@@ -98,8 +98,10 @@ class TelegramListener:
             events.MessageEdited(),
         )
 
-        # Catch up on any missed updates so Telethon's update loop is primed.
-        await self._client.catch_up()
+        # Fetch dialogs to prime Telethon's internal state and entity cache.
+        # Unlike catch_up(), this works reliably even with no prior update
+        # state (StringSession does not persist pts/qts/date).
+        await self._client.get_dialogs()
 
         logger.info("Telegram listener started for user %s (new messages + edits)", user_id)
 
@@ -298,6 +300,21 @@ if __name__ == "__main__":
                         listener.update_monitored_channels(updated)
                 except Exception:
                     logger.exception("Failed to refresh monitored channels")
+
+                # Heartbeat: verify Telethon connection is alive
+                if listener._client and listener._client.is_connected():
+                    logger.info(
+                        "Heartbeat: listener alive, monitoring %d channel(s)",
+                        len(listener._monitored_channels),
+                    )
+                else:
+                    logger.warning("Heartbeat: Telethon client disconnected, attempting reconnect...")
+                    try:
+                        await listener._client.connect()
+                        await listener._client.get_dialogs()
+                        logger.info("Reconnected successfully")
+                    except Exception:
+                        logger.exception("Reconnect failed")
         except (KeyboardInterrupt, asyncio.CancelledError):
             await listener.stop()
 
