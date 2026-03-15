@@ -127,7 +127,7 @@ class TelegramListener:
                 channel_id, chat.title if chat else "unknown",
             )
             return
-        logger.info("Message from monitored channel %s: %.50s", channel_id, message.text)
+        logger.info("Message from monitored channel %s (msg_id=%s)", channel_id, message.id)
 
         reply_to_id = None
         if message.reply_to:
