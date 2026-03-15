@@ -82,6 +82,10 @@ class TelegramListener:
                 "Re-authenticate via the auth flow."
             )
 
+        # Force Telethon to fetch initial state so it can receive updates.
+        me = await self._client.get_me()
+        logger.info("Authenticated as %s (id=%s)", me.username or me.phone, me.id)
+
         # Register the new-message event handler.
         # Listen to all messages (not just incoming) because the user's own
         # messages in channels they admin are classified as outgoing by Telethon.
@@ -93,6 +97,9 @@ class TelegramListener:
             self._on_new_message,
             events.MessageEdited(),
         )
+
+        # Catch up on any missed updates so Telethon's update loop is primed.
+        await self._client.catch_up()
 
         logger.info("Telegram listener started for user %s (new messages + edits)", user_id)
 
