@@ -675,16 +675,27 @@ def test_crypto_partial_close_pct_payload():
     assert "slAdjustment" not in payload
 
 
-def test_crypto_partial_close_lot_falls_back_to_pct():
-    """Crypto does not support lot-based close; should fall back to percentage."""
+def test_crypto_partial_close_lot_without_pct_raises():
+    """Crypto does not support lot-based close without a percentage — must reject."""
     rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
     signal = ParsedSignal(
         action="partial_close", symbol="ETH/USDT", direction="short",
         lots="0.5", source_asset_class="crypto",
     )
+    with pytest.raises(ValueError, match="lot-based partial close"):
+        build_webhook_payload(signal, rule)
+
+
+def test_crypto_partial_close_lot_with_pct_uses_percentage():
+    """Crypto lot-based close with a percentage available should use the percentage."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        action="partial_close", symbol="ETH/USDT", direction="short",
+        lots="0.5", percentage=75, source_asset_class="crypto",
+    )
     payload = build_webhook_payload(signal, rule)
-    # Should use crypto percentage type, not lot type
     assert payload["type"] == "partially_closed_by_percentage"
+    assert payload["percentage"] == 75
     assert payload["position_type"] == "short"
     assert "lotSize" not in payload
 
