@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 interface Props {
   initialData?: { symbol_mappings?: Record<string, string> };
   onFinish: (mappings: Record<string, string>) => void;
-  onBack: () => void;
+  onBack: (mappings: Record<string, string>) => void;
   isSubmitting: boolean;
 }
 
@@ -95,7 +95,13 @@ export function StepSymbolMappings({ initialData, onFinish, onBack, isSubmitting
       </Button>
 
       <div className="flex gap-2 pt-2">
-        <Button variant="outline" size="sm" onClick={onBack}>
+        <Button variant="outline" size="sm" onClick={() => {
+          const mappings: Record<string, string> = {};
+          for (const pair of pairs) {
+            if (pair.from && pair.to) mappings[pair.from] = pair.to;
+          }
+          onBack(mappings);
+        }}>
           Back
         </Button>
         <Button size="sm" onClick={handleSubmit} disabled={isSubmitting}>

@@ -25,7 +25,13 @@ interface Props {
     destinationType: DestinationType,
     destinationLabel: string,
   ) => void;
-  onBack: () => void;
+  onBack: (
+    url: string,
+    version: "V1" | "V2",
+    webhookBodyTemplate: Record<string, unknown> | null,
+    destinationType: DestinationType,
+    destinationLabel: string,
+  ) => void;
 }
 
 const DESTINATION_TYPES: { value: DestinationType; label: string; description: string }[] = [
@@ -408,7 +414,11 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
       )}
 
       <div className="flex gap-2 pt-2">
-        <Button variant="outline" size="sm" onClick={onBack}>
+        <Button variant="outline" size="sm" onClick={() => {
+          let parsedTemplate: Record<string, unknown> | null = null;
+          try { parsedTemplate = templateText.trim() ? JSON.parse(templateText.trim()) : null; } catch { /* ignore */ }
+          onBack(url, version, parsedTemplate, destinationType, destinationLabel);
+        }}>
           Back
         </Button>
         <Button size="sm" onClick={handleNext} disabled={!url}>
