@@ -38,13 +38,6 @@ router = APIRouter(prefix="/api/v1", tags=["v1"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-
-@router.get("/debug/sentry-test")
-async def sentry_test():
-    """Intentionally raise an error to verify Sentry is capturing exceptions."""
-    raise RuntimeError("Sentry integration test — this error is intentional")
-
-
 # ============================================================================
 # Request / Response schemas
 # ============================================================================
