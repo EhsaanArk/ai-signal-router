@@ -18,6 +18,7 @@ import { AdminHealthPage } from "@/pages/admin/health";
 import { AdminUsersPage } from "@/pages/admin/users";
 import { AdminUserDetailPage } from "@/pages/admin/user-detail";
 import { AdminSignalsPage } from "@/pages/admin/signals";
+import { AdminSystemRulesPage } from "@/pages/admin/system-rules";
 import { NotFound } from "@/components/shared/not-found";
 import { useAuth } from "@/contexts/auth-context";
 
@@ -50,6 +51,7 @@ const router = createBrowserRouter([
           { path: "/admin/users", element: <AdminRoute><AdminUsersPage /></AdminRoute> },
           { path: "/admin/users/:id", element: <AdminRoute><AdminUserDetailPage /></AdminRoute> },
           { path: "/admin/signals", element: <AdminRoute><AdminSignalsPage /></AdminRoute> },
+          { path: "/admin/system-rules", element: <AdminRoute><AdminSystemRulesPage /></AdminRoute> },
         ],
       },
     ],
