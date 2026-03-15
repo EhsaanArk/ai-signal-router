@@ -661,15 +661,14 @@ async def list_channels(
         session_encrypted = session_row.session_string_encrypted
 
     # Decrypt
-    from cryptography.fernet import Fernet
+    from src.core.security import decrypt_session_auto
 
     if not settings.ENCRYPTION_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="ENCRYPTION_KEY not configured",
         )
-    fernet = Fernet(settings.ENCRYPTION_KEY.encode())
-    session_string = fernet.decrypt(session_encrypted.encode()).decode()
+    session_string = decrypt_session_auto(session_encrypted, settings.ENCRYPTION_KEY.encode())
 
     # Fetch channels via adapter
     from src.adapters.telegram import get_user_channels
