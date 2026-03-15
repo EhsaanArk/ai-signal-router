@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -7,6 +8,19 @@ import { AuthProvider } from "@/contexts/auth-context";
 import { ErrorBoundary } from "@/components/shared/error-boundary";
 import App from "./App";
 import "./index.css";
+
+const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
+if (sentryDsn) {
+  Sentry.init({
+    dsn: sentryDsn,
+    sendDefaultPii: true,
+    tracesSampleRate: 0.1,
+    environment: import.meta.env.MODE,
+    initialScope: {
+      tags: { "service.role": "frontend" },
+    },
+  });
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
