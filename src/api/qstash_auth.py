@@ -61,9 +61,13 @@ async def verify_qstash_signature(
                 options={"verify_aud": False},
             )
             # Verify the body hash matches
-            if claims.get("body") == body_hash:
+            claim_hash = claims.get("body")
+            if claim_hash == body_hash:
                 return
-            logger.warning("QStash body hash mismatch: expected %s", body_hash)
+            logger.warning(
+                "QStash body hash mismatch: claim=%s computed=%s body_len=%d body_prefix=%s",
+                claim_hash, body_hash, len(body), body[:200],
+            )
         except JWTError:
             continue
 
