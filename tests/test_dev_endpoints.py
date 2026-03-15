@@ -234,27 +234,27 @@ class TestInjectSignalEndpoint:
     async def test_inject_signal_creates_raw_signal_and_processes(
         self,
         MockParser,
-        dev_client: AsyncClient,
+        dev_client_with_rule: AsyncClient,
     ):
         """The endpoint accepts text + channel_id, creates a RawSignal, and
-        invokes process_signal."""
+        invokes process_signal (requires a routing rule to reach the parser)."""
         mock_parser_instance = AsyncMock()
         mock_parser_instance.parse.return_value = SAMPLE_PARSED_SIGNAL
         MockParser.return_value = mock_parser_instance
 
-        resp = await dev_client.post(
+        resp = await dev_client_with_rule.post(
             "/api/dev/inject-signal",
-            json={"text": "BUY EURUSD @ 1.1000", "channel_id": "test-chan"},
+            json={"text": "BUY EURUSD @ 1.1000", "channel_id": "dev-channel"},
         )
 
         assert resp.status_code == 200
         data = resp.json()
         assert "raw_signal" in data
         assert data["raw_signal"]["raw_message"] == "BUY EURUSD @ 1.1000"
-        assert data["raw_signal"]["channel_id"] == "test-chan"
+        assert data["raw_signal"]["channel_id"] == "dev-channel"
         assert "results" in data
 
-        # Parser was called
+        # Parser was called (routing rule exists, so pipeline reaches parser)
         mock_parser_instance.parse.assert_called_once()
 
     @patch("src.adapters.openai.OpenAISignalParser")
@@ -449,10 +449,11 @@ class TestInvalidSignalHandling:
     async def test_invalid_signal_returns_ignored_result(
         self,
         MockParser,
-        dev_client: AsyncClient,
+        dev_client_with_rule: AsyncClient,
     ):
         """When the parser returns is_valid_signal=False, the pipeline
-        returns an 'ignored' result without dispatching."""
+        returns an 'ignored' result without dispatching.
+        Requires a routing rule so the pipeline reaches the parser."""
         invalid_parsed = ParsedSignal(
             symbol="",
             direction="long",
@@ -463,7 +464,7 @@ class TestInvalidSignalHandling:
         mock_parser_instance.parse.return_value = invalid_parsed
         MockParser.return_value = mock_parser_instance
 
-        resp = await dev_client.post(
+        resp = await dev_client_with_rule.post(
             "/api/dev/inject-signal",
             json={"text": "Hello everyone, good morning!"},
         )
@@ -478,15 +479,16 @@ class TestInvalidSignalHandling:
     async def test_parse_failure_returns_422(
         self,
         MockParser,
-        dev_client: AsyncClient,
+        dev_client_with_rule: AsyncClient,
     ):
         """When the OpenAI parser raises an exception, the endpoint
-        returns 422."""
+        returns 422. Requires a routing rule so the pipeline reaches
+        the parser."""
         mock_parser_instance = AsyncMock()
         mock_parser_instance.parse.side_effect = RuntimeError("OpenAI API down")
         MockParser.return_value = mock_parser_instance
 
-        resp = await dev_client.post(
+        resp = await dev_client_with_rule.post(
             "/api/dev/inject-signal",
             json={"text": "BUY EURUSD"},
         )

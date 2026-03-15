@@ -139,8 +139,14 @@ def _inject_crypto_management_fields(
     position_type = signal.direction or "long"
 
     if action == SignalAction.partial_close_lot:
-        # Crypto does not support lot-based partial close — fall back to percentage
-        payload["percentage"] = signal.percentage or 50
+        # Crypto does not support lot-based partial close
+        if signal.percentage:
+            payload["percentage"] = signal.percentage
+        else:
+            raise ValueError(
+                "Crypto does not support lot-based partial close and no "
+                "percentage was provided — cannot safely convert lots to %"
+            )
         payload["position_type"] = position_type
         payload.pop("lotSize", None)
         payload.pop("lots", None)
