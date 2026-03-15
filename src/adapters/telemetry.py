@@ -80,7 +80,7 @@ def _auto_instrument() -> None:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        FastAPIInstrumentor.instrument()
+        FastAPIInstrumentor().instrument()
     except ImportError:
         logger.debug("FastAPI auto-instrumentation not available")
 
