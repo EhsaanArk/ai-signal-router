@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { CheckCircle2, Loader2, Pencil, XCircle } from "lucide-react";
+import { useState, useCallback, useMemo } from "react";
+import { CheckCircle2, Lightbulb, Loader2, Pencil, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,7 +7,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TemplateBuilder } from "./template-builder";
 import { apiFetch } from "@/lib/api";
 import { cn, extractAccountIdFromUrl, extractTemplateMetadata } from "@/lib/utils";
-import type { DestinationType, TestWebhookResponse } from "@/types/api";
+import { useRoutingRules } from "@/hooks/use-routing-rules";
+import type { DestinationType, RoutingRuleResponse, TestWebhookResponse } from "@/types/api";
 
 interface Props {
   initialData?: {
@@ -68,9 +69,32 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
   const [testError, setTestError] = useState("");
   const [urlLocked, setUrlLocked] = useState(() => !!extractAccountIdFromUrl(initialData?.destination_webhook_url ?? ""));
   const [templateLocked, setTemplateLocked] = useState(() => !!extractTemplateMetadata(initialTemplateText).assistId);
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false);
 
   const accountId = extractAccountIdFromUrl(url);
   const templateMeta = extractTemplateMetadata(templateText);
+
+  // Duplicate webhook URL detection
+  const { data: existingRules } = useRoutingRules();
+  const matchingRules = useMemo(() => {
+    if (!url || !existingRules) return [];
+    return existingRules.filter(
+      (r) => r.destination_webhook_url === url && r.webhook_body_template
+    );
+  }, [url, existingRules]);
+
+  function applyFromRule(rule: RoutingRuleResponse) {
+    setDestinationType(rule.destination_type as DestinationType);
+    setVersion((rule.payload_version as "V1" | "V2") || "V1");
+    if (rule.webhook_body_template) {
+      const text = JSON.stringify(rule.webhook_body_template, null, 2);
+      setTemplateText(text);
+      const meta = extractTemplateMetadata(text);
+      if (meta.assistId) setTemplateLocked(true);
+    }
+    if (rule.destination_type === "sagemaster_crypto") setVersion("V1");
+    setSuggestionDismissed(true);
+  }
 
   const handleUrlPaste = useCallback((e: React.ClipboardEvent<HTMLInputElement>) => {
     const pasted = e.clipboardData.getData("text");
@@ -166,7 +190,10 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
             <button
               key={dt.value}
               type="button"
-              onClick={() => setDestinationType(dt.value)}
+              onClick={() => {
+                setDestinationType(dt.value);
+                if (dt.value === "sagemaster_crypto") setVersion("V1");
+              }}
               className={cn(
                 "rounded-md border px-3 py-2.5 text-left transition-colors",
                 destinationType === dt.value
@@ -261,30 +288,76 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
         )}
       </div>
 
-      {/* Signal Format */}
+      {/* Duplicate webhook suggestion */}
+      {matchingRules.length > 0 && !suggestionDismissed && (
+        <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2.5 space-y-2">
+          <div className="flex items-start gap-2">
+            <Lightbulb className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium">
+                {matchingRules.length === 1
+                  ? "You have a route using this webhook"
+                  : `You have ${matchingRules.length} routes using this webhook`}
+              </p>
+              {matchingRules.map((rule) => (
+                <div key={rule.id} className="flex items-center justify-between gap-2 mt-1.5">
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {rule.rule_name || rule.destination_label || "Unnamed route"}
+                    <span className="ml-1 opacity-60">
+                      ({DESTINATION_TYPES.find((dt) => dt.value === rule.destination_type)?.label ?? rule.destination_type}, {rule.payload_version || "V1"})
+                    </span>
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[10px] shrink-0"
+                    onClick={() => applyFromRule(rule)}
+                  >
+                    Use Settings
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setSuggestionDismissed(true)}
+            >
+              <XCircle className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Signal Format — crypto only supports V1 */}
       <div className="space-y-2">
         <Label className="text-xs">Signal Format</Label>
-        <RadioGroup
-          value={version}
-          onValueChange={(v: string) => setVersion(v as "V1" | "V2")}
-        >
-          <div className="flex gap-2">
-            <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
-              <RadioGroupItem value="V1" id="v1" />
-              <Label htmlFor="v1" className="cursor-pointer text-xs">
-                <span className="font-medium">V1</span>
-                <span className="block text-[10px] text-muted-foreground mt-0.5">Strategy trigger — sends entry, close, and breakeven commands. (No Price/TP/SL)</span>
-              </Label>
+        {destinationType === "sagemaster_crypto" ? (
+          <p className="text-xs text-muted-foreground rounded-md border px-3 py-2">V1 only — SageMaster Crypto does not support V2 signal format.</p>
+        ) : (
+          <RadioGroup
+            value={version}
+            onValueChange={(v: string) => setVersion(v as "V1" | "V2")}
+          >
+            <div className="flex gap-2">
+              <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
+                <RadioGroupItem value="V1" id="v1" />
+                <Label htmlFor="v1" className="cursor-pointer text-xs">
+                  <span className="font-medium">V1</span>
+                  <span className="block text-[10px] text-muted-foreground mt-0.5">Strategy trigger — sends entry, close, and breakeven commands. (No Price/TP/SL)</span>
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
+                <RadioGroupItem value="V2" id="v2" />
+                <Label htmlFor="v2" className="cursor-pointer text-xs">
+                  <span className="font-medium">V2</span>
+                  <span className="block text-[10px] text-muted-foreground mt-0.5">Full signal — includes entry, TP, SL, and lot size</span>
+                </Label>
+              </div>
             </div>
-            <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
-              <RadioGroupItem value="V2" id="v2" />
-              <Label htmlFor="v2" className="cursor-pointer text-xs">
-                <span className="font-medium">V2</span>
-                <span className="block text-[10px] text-muted-foreground mt-0.5">Full signal — includes entry, TP, SL, and lot size</span>
-              </Label>
-            </div>
-          </div>
-        </RadioGroup>
+          </RadioGroup>
+        )}
       </div>
 
       {/* Template Builder */}
