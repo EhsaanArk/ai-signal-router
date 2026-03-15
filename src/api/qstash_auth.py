@@ -8,6 +8,7 @@ In ``LOCAL_MODE`` validation is skipped so the dev inject endpoint and
 local queue adapter can call the workflow without a real QStash signature.
 """
 
+import base64
 import hashlib
 import logging
 from typing import Annotated
@@ -39,7 +40,9 @@ async def verify_qstash_signature(
         )
 
     body = await request.body()
-    body_hash = hashlib.sha256(body).hexdigest()
+    body_hash_bytes = hashlib.sha256(body).digest()
+    body_hash_b64 = base64.urlsafe_b64encode(body_hash_bytes).decode()
+    body_hash_hex = body_hash_bytes.hex()
 
     signing_keys = [
         k for k in [settings.QSTASH_CURRENT_SIGNING_KEY, settings.QSTASH_NEXT_SIGNING_KEY] if k
@@ -60,13 +63,13 @@ async def verify_qstash_signature(
                 algorithms=["HS256"],
                 options={"verify_aud": False},
             )
-            # Verify the body hash matches
+            # Verify the body hash matches (QStash may use base64url or hex)
             claim_hash = claims.get("body")
-            if claim_hash == body_hash:
+            if claim_hash in (body_hash_b64, body_hash_hex):
                 return
             logger.warning(
-                "QStash body hash mismatch: claim=%s computed=%s body_len=%d body_prefix=%s",
-                claim_hash, body_hash, len(body), body[:200],
+                "QStash body hash mismatch: claim=%s b64=%s hex=%s",
+                claim_hash, body_hash_b64, body_hash_hex,
             )
         except JWTError:
             continue
