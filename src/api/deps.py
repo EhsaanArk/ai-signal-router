@@ -48,7 +48,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 # ---------------------------------------------------------------------------
 
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_HOURS = 24
+ACCESS_TOKEN_EXPIRE_DAYS = 7
 
 
 class Settings(BaseSettings):
@@ -131,7 +131,7 @@ def get_dispatcher(request: Request):
 
 
 def create_access_token(data: dict, settings: Settings) -> str:
-    """Create a signed JWT with a 24-hour expiry.
+    """Create a signed JWT with a 7-day expiry.
 
     Parameters
     ----------
@@ -141,7 +141,7 @@ def create_access_token(data: dict, settings: Settings) -> str:
         Application settings providing the secret key.
     """
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
