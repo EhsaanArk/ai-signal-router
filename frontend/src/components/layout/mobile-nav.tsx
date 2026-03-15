@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
+  BookOpen,
   LayoutDashboard,
   MessageSquare,
   Radio,
@@ -87,6 +88,7 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
                   { path: "/admin/health", label: "System Health", icon: Activity },
                   { path: "/admin/users", label: "Users", icon: Users },
                   { path: "/admin/signals", label: "All Signals", icon: Radio },
+                  { path: "/admin/system-rules", label: "System Rules", icon: BookOpen },
                 ].map((item) => {
                   const isActive = location.pathname.startsWith(item.path);
                   return (

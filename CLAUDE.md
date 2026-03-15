@@ -29,10 +29,46 @@ This project is a cloud-based Telegram Signal Copier that intercepts trading sig
 - Use `pydantic` for all data validation and JSON serialization.
 - All Telegram interaction must use the `Telethon` library asynchronously.
 
-## Git Workflow
-- Branch naming: `feature/SGM-XXX-description` or `bugfix/SGM-XXX-description`
-- Commit format: `type(scope): description` (e.g., `feat(parser): add support for image signals`)
-- Always run tests and linter before committing.
+## Git Workflow & Deployment
+
+### Branches
+- `main` — production-ready code. Railway production environment auto-deploys from this branch.
+- `staging` — integration/testing branch. Railway staging environment auto-deploys from this branch.
+- Feature/bugfix branches are created off `staging`.
+
+### Branch Naming
+- `feature/SGM-XXX-description` or `bugfix/SGM-XXX-description`
+
+### Commit Format
+- `type(scope): description` (e.g., `feat(parser): add support for image signals`)
+
+### Development Flow
+1. Create a feature/bugfix branch off `staging`
+2. Develop and commit locally
+3. Push branch → create PR targeting `staging`
+4. Merge to `staging` → Railway staging auto-deploys
+5. Test on staging environment
+6. When staging is validated, create PR from `staging` → `main`
+7. Merge to `main` → Railway production auto-deploys
+
+### Hotfix Flow
+For urgent production fixes:
+1. Branch off `staging` (or `main` if critical)
+2. Fix, push, merge to `staging` first
+3. Test on staging, then PR `staging` → `main`
+
+### Rules
+- **Never push directly to `main`** — always go through `staging` first
+- **Never force-push** to `main` or `staging`
+- Always run tests and linter before committing
+- PRs from `staging` → `main` should summarise all included changes
+
+### Railway Environments
+- **Staging**: `staging` branch — 3 services (API, Listener, Frontend)
+  - API: `ai-signal-router-staging.up.railway.app`
+  - Frontend: `profound-communication-staging.up.railway.app`
+- **Production**: `main` branch — same 3-service architecture
+- Both environments auto-deploy on push to their respective branches
 
 ## Project Boundaries & Constraints
 - **NEVER** commit Telegram session strings or `.env` files to version control.
