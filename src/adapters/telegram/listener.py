@@ -229,6 +229,7 @@ if __name__ == "__main__":
             queue = QStashPublisher(
                 qstash_token=os.environ["QSTASH_TOKEN"],
                 workflow_url=os.environ["QSTASH_WORKFLOW_URL"],
+                qstash_url=os.environ.get("QSTASH_URL", ""),
             )
 
         # -- Resolve session: prefer env vars, fall back to DB lookup ----------

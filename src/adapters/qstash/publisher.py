@@ -34,11 +34,13 @@ class QStashPublisher:
         FastAPI backend).
     """
 
-    QSTASH_PUBLISH_URL = "https://qstash.upstash.io/v2/publish/"
+    DEFAULT_QSTASH_URL = "https://qstash.upstash.io"
 
-    def __init__(self, qstash_token: str, workflow_url: str) -> None:
+    def __init__(self, qstash_token: str, workflow_url: str, qstash_url: str = "") -> None:
         self._token = qstash_token
         self._workflow_url = workflow_url
+        base = (qstash_url or self.DEFAULT_QSTASH_URL).rstrip("/")
+        self._publish_url = f"{base}/v2/publish/"
         self._client = httpx.AsyncClient(
             headers={
                 "Authorization": f"Bearer {self._token}",
@@ -49,7 +51,7 @@ class QStashPublisher:
 
     async def enqueue(self, raw_signal: RawSignal) -> None:
         """Publish *raw_signal* as JSON to QStash for async processing."""
-        url = f"{self.QSTASH_PUBLISH_URL}{self._workflow_url}"
+        url = f"{self._publish_url}{self._workflow_url}"
         payload = raw_signal.model_dump_json()
 
         response = await self._client.post(
