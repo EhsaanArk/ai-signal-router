@@ -80,12 +80,16 @@ def create_app() -> FastAPI:
     if sentry_dsn:
         import sentry_sdk
 
+        service_role = os.environ.get("SERVICE_ROLE", "api")
         sentry_sdk.init(
             dsn=sentry_dsn,
             send_default_pii=True,
             traces_sample_rate=0.1,
+            environment="production" if not local_mode else "development",
+            server_name=f"sgm-{service_role}",
         )
-        logger.info("Sentry initialised")
+        sentry_sdk.set_tag("service.role", service_role)
+        logger.info("Sentry initialised (role=%s)", service_role)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:

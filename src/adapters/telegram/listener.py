@@ -176,6 +176,22 @@ if __name__ == "__main__":
 
     from src.adapters.qstash.publisher import QStashPublisher, LocalQueueAdapter
 
+    # Initialise Sentry for the listener process
+    sentry_dsn = os.environ.get("SENTRY_DSN", "")
+    if sentry_dsn:
+        import sentry_sdk
+
+        local_mode_env = os.environ.get("LOCAL_MODE", "false").lower() == "true"
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            send_default_pii=True,
+            traces_sample_rate=0.1,
+            environment="production" if not local_mode_env else "development",
+            server_name="sgm-listener",
+        )
+        sentry_sdk.set_tag("service.role", "listener")
+        logger.info("Sentry initialised (role=listener)")
+
     async def _main() -> None:
         api_id = int(os.environ["TELEGRAM_API_ID"])
         api_hash = os.environ["TELEGRAM_API_HASH"]
