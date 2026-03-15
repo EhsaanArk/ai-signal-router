@@ -9,6 +9,7 @@ services:
     env_file:
       - .env
     environment:
+      - SERVICE_ROLE=api
       - PORT=8000
       - LOCAL_MODE=true
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/sgm_copier
@@ -26,11 +27,11 @@ services:
     env_file:
       - .env
     environment:
+      - SERVICE_ROLE=listener
       - LOCAL_MODE=true
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/sgm_copier
       - REDIS_URL=redis://redis:6379/0
       - API_BASE_URL=http://api:8000
-    command: python -m src.adapters.telegram.listener
     volumes:
       - .:/app
     depends_on:
