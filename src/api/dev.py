@@ -46,6 +46,12 @@ class InjectSignalResponse(BaseModel):
     mapped_payloads: list[dict[str, Any]] | None = None
 
 
+@dev_router.get("/sentry-test")
+async def sentry_test():
+    """Raise a test exception to verify Sentry is capturing errors."""
+    raise RuntimeError("Sentry integration test — this error is intentional")
+
+
 @dev_router.post("/inject-signal", response_model=InjectSignalResponse)
 async def inject_signal(
     body: InjectSignalRequest,

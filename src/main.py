@@ -75,26 +75,26 @@ def create_app() -> FastAPI:
     """
     local_mode = os.environ.get("LOCAL_MODE", "true").lower() in ("true", "1", "yes")
 
-    # Initialise Sentry before the app is created
-    sentry_dsn = os.environ.get("SENTRY_DSN", "")
-    if sentry_dsn:
-        import sentry_sdk
-
-        service_role = os.environ.get("SERVICE_ROLE", "api")
-        sentry_sdk.init(
-            dsn=sentry_dsn,
-            send_default_pii=True,
-            traces_sample_rate=0.1,
-            environment="production" if not local_mode else "development",
-            server_name=f"sgm-{service_role}",
-        )
-        sentry_sdk.set_tag("service.role", service_role)
-        logger.info("Sentry initialised (role=%s)", service_role)
-
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-        # Initialise OpenTelemetry before anything else so auto-instrumentors
-        # can patch libraries before they are first imported.
+        # Initialise Sentry first (inside lifespan so uvicorn logging is ready)
+        sentry_dsn = os.environ.get("SENTRY_DSN", "")
+        if sentry_dsn:
+            import sentry_sdk
+
+            service_role = os.environ.get("SERVICE_ROLE", "api")
+            sentry_sdk.init(
+                dsn=sentry_dsn,
+                send_default_pii=True,
+                traces_sample_rate=0.1,
+                environment="production" if not local_mode else "development",
+                server_name=f"sgm-{service_role}",
+            )
+            sentry_sdk.set_tag("service.role", service_role)
+            logger.info("Sentry initialised (role=%s)", service_role)
+
+        # Initialise OpenTelemetry so auto-instrumentors can patch libraries
+        # before they are first imported.
         from src.adapters.telemetry import init_telemetry
 
         init_telemetry()
@@ -149,6 +149,11 @@ def create_app() -> FastAPI:
         yield
 
         # Shutdown
+        if os.environ.get("SENTRY_DSN", ""):
+            import sentry_sdk
+
+            sentry_sdk.flush(timeout=2)
+
         from src.adapters.telemetry import shutdown_telemetry
 
         shutdown_telemetry()
