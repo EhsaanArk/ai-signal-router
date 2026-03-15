@@ -1,0 +1,45 @@
+# Version control
+.git
+.gitignore
+
+# Environment & secrets
+.env
+.env.example
+
+# Documentation (should not be in production images)
+docs/
+CLAUDE.md
+README.md
+*.md
+
+# Claude Code config
+.claude/
+
+# Testing
+tests/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Frontend (not needed in backend image)
+frontend/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python artifacts
+__pycache__/
+*.egg-info/
+*.pyc
+.venv/
+venv/
+env/
+
+# Docker
+docker-compose.yml

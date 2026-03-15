@@ -43,6 +43,8 @@ services:
     container_name: sgm-frontend
     ports:
       - "5173:80"
+    environment:
+      - API_UPSTREAM=api:8000
     depends_on:
       - api
 
