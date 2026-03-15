@@ -56,7 +56,7 @@ class RedisSessionStore:
         logger.debug("Deleted session for user %s", user_id)
 
     async def close(self) -> None:
-        await self._redis.aclose()
+        await self._redis.close()
 
 
 class InMemorySessionStore:
@@ -108,7 +108,7 @@ class RedisCacheAdapter:
         await self._redis.delete(key)
 
     async def close(self) -> None:
-        await self._redis.aclose()
+        await self._redis.close()
 
 
 class InMemoryCacheAdapter:
