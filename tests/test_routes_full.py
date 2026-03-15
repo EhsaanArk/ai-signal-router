@@ -563,7 +563,7 @@ class TestRoutingRuleTierLimit:
         )
         assert resp1.status_code == 201
 
-        # Second rule should be blocked (free tier = 1 max)
+        # Second rule should succeed (free tier now allows 5, matching pro for beta)
         resp2 = await authed_client.post(
             "/api/v1/routing-rules",
             json={
@@ -573,9 +573,7 @@ class TestRoutingRuleTierLimit:
                 "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
             },
         )
-        assert resp2.status_code == 403
-        assert "free" in resp2.json()["detail"].lower()
-        assert "upgrade" in resp2.json()["detail"].lower()
+        assert resp2.status_code == 201
 
 
 class TestRoutingRuleUpdateWithSymbolMappings:
