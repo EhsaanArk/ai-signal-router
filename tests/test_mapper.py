@@ -5,6 +5,7 @@ import pytest
 from src.core.mapper import (
     apply_symbol_mapping,
     build_webhook_payload,
+    check_asset_class_mismatch,
     check_template_symbol_mismatch,
     check_tier_limit,
 )
@@ -755,3 +756,62 @@ def test_forex_management_unchanged():
     assert payload["percentage"] == 50
     assert "position_type" not in payload
     assert "sl_adjustment" not in payload
+
+
+# ---- Asset class compatibility checks ----
+
+
+def test_asset_class_crypto_to_crypto_ok():
+    """Crypto signal to crypto destination should pass."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(symbol="BTC/USDT", direction="long", source_asset_class="crypto")
+    assert check_asset_class_mismatch(signal, rule) is None
+
+
+def test_asset_class_forex_to_forex_ok():
+    """Forex signal to forex destination should pass."""
+    rule = _rule_with_template({"type": "", "assistId": "x", "symbol": "", "source": "forex"}, destination_type="sagemaster_forex")
+    signal = ParsedSignal(symbol="EURUSD", direction="long", source_asset_class="forex")
+    assert check_asset_class_mismatch(signal, rule) is None
+
+
+def test_asset_class_commodities_to_forex_ok():
+    """Commodities (XAUUSD) to forex destination should pass — SFX supports commodities."""
+    rule = _rule_with_template({"type": "", "assistId": "x", "symbol": "", "source": "forex"}, destination_type="sagemaster_forex")
+    signal = ParsedSignal(symbol="XAUUSD", direction="long", source_asset_class="commodities")
+    assert check_asset_class_mismatch(signal, rule) is None
+
+
+def test_asset_class_indices_to_forex_ok():
+    """Indices (US30) to forex destination should pass — SFX supports indices."""
+    rule = _rule_with_template({"type": "", "assistId": "x", "symbol": "", "source": "forex"}, destination_type="sagemaster_forex")
+    signal = ParsedSignal(symbol="US30", direction="long", source_asset_class="indices")
+    assert check_asset_class_mismatch(signal, rule) is None
+
+
+def test_asset_class_commodities_to_crypto_rejected():
+    """Commodities (XAUUSD) to crypto destination should be rejected."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(symbol="XAUUSD", direction="long", source_asset_class="commodities")
+    reason = check_asset_class_mismatch(signal, rule)
+    assert reason is not None
+    assert "commodities" in reason
+    assert "sagemaster_crypto" in reason
+
+
+def test_asset_class_crypto_to_forex_rejected():
+    """Crypto signal to forex destination should be rejected."""
+    rule = _rule_with_template({"type": "", "assistId": "x", "symbol": "", "source": "forex"}, destination_type="sagemaster_forex")
+    signal = ParsedSignal(symbol="BTC/USDT", direction="long", source_asset_class="crypto")
+    reason = check_asset_class_mismatch(signal, rule)
+    assert reason is not None
+    assert "crypto" in reason
+    assert "sagemaster_forex" in reason
+
+
+def test_asset_class_custom_destination_accepts_all():
+    """Custom destinations should accept any asset class."""
+    rule = _rule_with_template({"type": "", "symbol": ""}, destination_type="custom")
+    for asset_class in ("forex", "crypto", "commodities", "indices", "unknown"):
+        signal = ParsedSignal(symbol="TEST", direction="long", source_asset_class=asset_class)
+        assert check_asset_class_mismatch(signal, rule) is None

@@ -269,6 +269,39 @@ def check_template_symbol_mismatch(
     return None
 
 
+# ---------------------------------------------------------------------------
+# Asset class compatibility
+# ---------------------------------------------------------------------------
+
+# Which asset classes each SageMaster destination type can handle.
+# "custom" is absent — no restriction for user-controlled webhooks.
+_DESTINATION_ASSET_CLASSES: dict[str, set[str]] = {
+    "sagemaster_forex": {"forex", "commodities", "indices"},
+    "sagemaster_crypto": {"crypto"},
+}
+
+
+def check_asset_class_mismatch(
+    signal: ParsedSignal, rule: RoutingRule,
+) -> str | None:
+    """Return a reason string if the signal's asset class is incompatible
+    with the destination type.  Returns ``None`` if OK to dispatch.
+
+    For example, a commodities signal (XAUUSD) should not be sent to a
+    ``sagemaster_crypto`` destination because the crypto platform cannot
+    trade forex/commodity instruments.
+    """
+    allowed = _DESTINATION_ASSET_CLASSES.get(rule.destination_type)
+    if allowed is None:
+        return None  # custom destinations accept everything
+    if signal.source_asset_class not in allowed:
+        return (
+            f"Signal asset class '{signal.source_asset_class}' "
+            f"is not supported by {rule.destination_type} destinations"
+        )
+    return None
+
+
 def check_tier_limit(tier: SubscriptionTier, current_count: int) -> bool:
     """Return ``True`` if *current_count* is below the tier's destination cap.
 

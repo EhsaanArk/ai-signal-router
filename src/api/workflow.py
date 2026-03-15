@@ -169,7 +169,7 @@ async def process_signal(
     # ------------------------------------------------------------------
     # Step 4 — Dispatch to each destination (in parallel)
     # ------------------------------------------------------------------
-    from src.core.mapper import _signal_action, apply_symbol_mapping, check_template_symbol_mismatch
+    from src.core.mapper import _signal_action, apply_symbol_mapping, check_asset_class_mismatch, check_template_symbol_mismatch
 
     async def _process_single_rule(
         rule_row: RoutingRuleModel,
@@ -268,6 +268,19 @@ async def process_signal(
                 error_message=mismatch_reason,
             )
             return dr, {**base_log, "status": "ignored", "error_message": mismatch_reason}
+
+        # Asset class compatibility filter
+        asset_mismatch = check_asset_class_mismatch(parsed, rule)
+        if asset_mismatch:
+            logger.info(
+                "Asset class mismatch for rule %s: %s", rule.id, asset_mismatch,
+            )
+            dr = DispatchResult(
+                routing_rule_id=rule.id,
+                status="ignored",
+                error_message=asset_mismatch,
+            )
+            return dr, {**base_log, "status": "ignored", "error_message": asset_mismatch}
 
         # Dispatch webhook
         with tracer.start_as_current_span("signal.dispatch") as dispatch_span:
