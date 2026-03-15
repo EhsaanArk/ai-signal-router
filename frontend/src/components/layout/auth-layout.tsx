@@ -7,9 +7,12 @@ export function AuthLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
       <Card className="w-full max-w-md">
         <CardContent className="pt-6">
-          <h1 className="mb-6 text-center text-2xl font-semibold">
-            {APP_NAME}
-          </h1>
+          <div className="mb-6 flex flex-col items-center gap-1.5">
+            <h1 className="text-center text-2xl font-semibold">
+              {APP_NAME}
+            </h1>
+            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
+          </div>
           {children}
         </CardContent>
       </Card>

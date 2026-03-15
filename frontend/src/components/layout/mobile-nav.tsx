@@ -49,8 +49,9 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
         </SheetHeader>
         <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
           {/* Logo */}
-          <div className="flex h-12 items-center px-4 border-b border-sidebar-border">
-            <span className="text-sm font-bold text-primary">Signal Copier</span>
+          <div className="flex h-12 items-center gap-2 px-4 border-b border-sidebar-border">
+            <span className="text-sm font-bold text-primary">Sage Radar AI</span>
+            <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
           </div>
 
           {/* Nav */}

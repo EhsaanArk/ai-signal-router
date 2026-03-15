@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-const BASE = "SageMaster Signal Copier";
+const BASE = "Sage Radar AI";
 
 export function usePageTitle(title?: string) {
   useEffect(() => {
