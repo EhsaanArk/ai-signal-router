@@ -20,4 +20,4 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
     CMD wget -qO- http://localhost/ || exit 1
 
-CMD ["/bin/sh", "-c", "envsubst '${API_UPSTREAM}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+CMD ["/bin/sh", "-c", "NS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf) && export NAMESERVER=$(echo $NS | grep -q ':' && echo \"[$NS]\" || echo \"$NS\") && envsubst '${API_UPSTREAM} ${NAMESERVER}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
