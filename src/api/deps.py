@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     QSTASH_CURRENT_SIGNING_KEY: str = ""
     QSTASH_NEXT_SIGNING_KEY: str = ""
     TELEGRAM_BOT_TOKEN: str = ""
+    SENTRY_DSN: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
