@@ -146,6 +146,31 @@ def create_app() -> FastAPI:
                 logger.error("Failed to initialise database: %s", exc)
                 raise
 
+        # Auto-promote admin users from ADMIN_EMAILS env var
+        admin_emails_raw = settings_local.ADMIN_EMAILS
+        if admin_emails_raw:
+            admin_emails = [e.strip().lower() for e in admin_emails_raw.split(",") if e.strip()]
+            if admin_emails:
+                from sqlalchemy import update
+                from sqlalchemy.ext.asyncio import AsyncSession as SASession
+                from src.adapters.db.session import get_engine
+                from src.adapters.db.models import UserModel
+
+                admin_tier = settings_local.ADMIN_TIER
+
+                engine = get_engine()
+                async with SASession(engine, expire_on_commit=False) as db:
+                    result = await db.execute(
+                        update(UserModel)
+                        .where(UserModel.email.in_(admin_emails))
+                        .values(is_admin=True, subscription_tier=admin_tier)
+                        .returning(UserModel.email)
+                    )
+                    promoted = [row[0] for row in result.all()]
+                    await db.commit()
+                if promoted:
+                    logger.info("Admin bootstrap: %s → is_admin=True, tier=%s", promoted, admin_tier)
+
         yield
 
         # Shutdown

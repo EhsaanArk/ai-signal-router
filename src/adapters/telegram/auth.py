@@ -16,6 +16,11 @@ from telethon.sessions import StringSession
 logger = logging.getLogger(__name__)
 
 
+def _mask_phone(phone: str) -> str:
+    """Return a masked phone number showing only the last 4 digits."""
+    return f"***{phone[-4:]}" if len(phone) >= 4 else "***"
+
+
 class TelegramAuth:
     """Manages the Telegram phone-code verification flow.
 
@@ -55,7 +60,7 @@ class TelegramAuth:
         # Store client so verify_code can use the same session
         self._pending_clients[phone_number] = client
 
-        logger.info("Verification code sent to %s", phone_number)
+        logger.info("Verification code sent to %s", _mask_phone(phone_number))
         return {"phone_code_hash": sent_code.phone_code_hash}
 
     async def verify_code(
@@ -110,7 +115,7 @@ class TelegramAuth:
             await client.sign_in(password=password)
 
         session_string: str = client.session.save()  # type: ignore[union-attr]
-        logger.info("Authentication successful for %s", phone_number)
+        logger.info("Authentication successful for %s", _mask_phone(phone_number))
 
         # Cleanup: remove from pending but do NOT disconnect — the caller may
         # want to keep using the session.  We disconnect on explicit request.
@@ -123,4 +128,4 @@ class TelegramAuth:
         client = self._pending_clients.pop(phone_number, None)
         if client is not None:
             await client.disconnect()
-            logger.debug("Disconnected pending client for %s", phone_number)
+            logger.debug("Disconnected pending client for %s", _mask_phone(phone_number))

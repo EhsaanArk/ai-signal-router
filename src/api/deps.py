@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     QSTASH_NEXT_SIGNING_KEY: str = ""
     TELEGRAM_BOT_TOKEN: str = ""
     SENTRY_DSN: str = ""
+    ADMIN_EMAILS: str = ""
+    ADMIN_TIER: str = "elite"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

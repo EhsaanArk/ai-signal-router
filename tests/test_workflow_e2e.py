@@ -235,6 +235,7 @@ async def _seed_routing_rule(
     symbol_mappings: dict | None = None,
     payload_version: str = "V1",
     webhook_body_template: dict | None = None,
+    destination_type: str = "sagemaster_forex",
 ) -> uuid.UUID:
     """Insert a routing rule and return its id."""
     rule_id = uuid.uuid4()
@@ -249,6 +250,7 @@ async def _seed_routing_rule(
                 symbol_mappings=symbol_mappings or {},
                 risk_overrides={},
                 webhook_body_template=webhook_body_template or DEFAULT_TEMPLATE.copy(),
+                destination_type=destination_type,
                 is_active=True,
             )
         )
@@ -690,3 +692,55 @@ async def test_enabled_actions_null_allows_all(client, session_factory, test_dis
     results = resp.json()
     assert len(results) == 1
     assert results[0]["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# Asset class mismatch filtering
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_asset_class_mismatch_ignores_signal(
+    client, session_factory, test_dispatcher,
+):
+    """A commodities signal (XAUUSD) sent to a crypto destination should be
+    filtered out as 'ignored' with an asset class mismatch reason."""
+    crypto_template = {
+        "type": "start_deal",
+        "aiAssistId": "test-crypto-assist",
+        "exchange": "binance",
+        "tradeSymbol": "{{ticker}}",
+        "eventSymbol": "{{ticker}}",
+        "price": "{{close}}",
+        "date": "{{time}}",
+    }
+    await _seed_routing_rule(
+        session_factory,
+        webhook_body_template=crypto_template,
+        destination_type="sagemaster_crypto",
+    )
+
+    # AI parses "Buy gold" as XAUUSD / commodities
+    parsed = ParsedSignal(
+        symbol="XAUUSD",
+        direction="long",
+        order_type="market",
+        entry_price=2350.0,
+        source_asset_class="commodities",
+        is_valid_signal=True,
+    )
+
+    with _mock_openai_parser(parsed), _mock_httpx_post(dispatcher=test_dispatcher) as mock_post:
+        resp = await client.post(
+            "/api/workflow/process-signal",
+            json=_raw_signal_payload(raw_message="Buy gold"),
+        )
+
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["status"] == "ignored"
+    assert "commodities" in results[0]["error_message"]
+    assert "sagemaster_crypto" in results[0]["error_message"]
+    # Webhook should NOT have been called
+    mock_post.assert_not_called()
