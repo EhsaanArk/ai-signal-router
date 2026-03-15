@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -15,10 +15,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { TemplateBuilder } from "@/components/forms/template-builder";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Loader2, Plus, X, XCircle } from "lucide-react";
-import { useUpdateRule } from "@/hooks/use-routing-rules";
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Lightbulb, Loader2, Plus, X, XCircle } from "lucide-react";
+import { useRoutingRules, useUpdateRule } from "@/hooks/use-routing-rules";
 import { apiFetch } from "@/lib/api";
-import type { DestinationType, TestWebhookResponse } from "@/types/api";
+import type { DestinationType, RoutingRuleResponse, TestWebhookResponse } from "@/types/api";
 import { toast } from "sonner";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { cn } from "@/lib/utils";
@@ -32,7 +32,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { RoutingRuleResponse } from "@/types/api";
 
 const DESTINATION_TYPES: { value: DestinationType; label: string; description: string }[] = [
   { value: "sagemaster_forex", label: "SageMaster Forex", description: "Forex pairs via sfx.sagemaster.io" },
@@ -207,7 +206,28 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
     // Auto-expand if user has customized (not all enabled)
     () => rule.enabled_actions !== null && rule.enabled_actions.length < getAllActionKeys(destinationType).length,
   );
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false);
   const templateWarning = detectTemplateMismatch(destinationType, templateText);
+
+  // Duplicate webhook URL detection — only when URL is changed from original
+  const { data: existingRules } = useRoutingRules();
+  const matchingRules = useMemo(() => {
+    if (!url || url === rule.destination_webhook_url || !existingRules) return [];
+    return existingRules.filter(
+      (r) => r.destination_webhook_url === url && r.id !== rule.id && r.webhook_body_template
+    );
+  }, [url, rule.destination_webhook_url, rule.id, existingRules]);
+
+  function applyFromRule(matched: RoutingRuleResponse) {
+    setDestinationType(matched.destination_type as DestinationType);
+    setVersion((matched.payload_version as "V1" | "V2") || "V1");
+    if (matched.webhook_body_template) {
+      setTemplateText(JSON.stringify(matched.webhook_body_template, null, 2));
+    }
+    if (matched.destination_type === "sagemaster_crypto") setVersion("V1");
+    setSuggestionDismissed(true);
+  }
+
   const [pairs, setPairs] = useState<{ from: string; to: string }[]>(() => {
     return Object.entries(rule.symbol_mappings).map(([from, to]) => ({
       from,
@@ -356,7 +376,10 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
             <button
               key={dt.value}
               type="button"
-              onClick={() => setDestinationType(dt.value)}
+              onClick={() => {
+                setDestinationType(dt.value);
+                if (dt.value === "sagemaster_crypto") setVersion("V1");
+              }}
               className={cn(
                 "rounded-md border px-3 py-2.5 text-left transition-colors",
                 destinationType === dt.value
@@ -414,30 +437,76 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
         )}
       </div>
 
-      {/* Signal Format */}
+      {/* Duplicate webhook suggestion */}
+      {matchingRules.length > 0 && !suggestionDismissed && (
+        <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2.5 space-y-2">
+          <div className="flex items-start gap-2">
+            <Lightbulb className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium">
+                {matchingRules.length === 1
+                  ? "You have a route using this webhook"
+                  : `You have ${matchingRules.length} routes using this webhook`}
+              </p>
+              {matchingRules.map((r) => (
+                <div key={r.id} className="flex items-center justify-between gap-2 mt-1.5">
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {r.rule_name || r.destination_label || "Unnamed route"}
+                    <span className="ml-1 opacity-60">
+                      ({DESTINATION_TYPES.find((dt) => dt.value === r.destination_type)?.label ?? r.destination_type}, {r.payload_version || "V1"})
+                    </span>
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[10px] shrink-0"
+                    onClick={() => applyFromRule(r)}
+                  >
+                    Use Settings
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setSuggestionDismissed(true)}
+            >
+              <XCircle className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Signal Format — crypto only supports V1 */}
       <div className="space-y-1.5">
         <Label className="text-xs">Signal Format</Label>
-        <RadioGroup
-          value={version}
-          onValueChange={(v: string) => setVersion(v as "V1" | "V2")}
-        >
-          <div className="flex gap-2">
-            <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
-              <RadioGroupItem value="V1" id="edit-v1" />
-              <Label htmlFor="edit-v1" className="cursor-pointer text-xs">
-                <span className="font-medium">V1</span>
-                <span className="block text-[10px] text-muted-foreground mt-0.5">Strategy trigger — sends entry, close, and breakeven commands. (No Price/TP/SL)</span>
-              </Label>
+        {destinationType === "sagemaster_crypto" ? (
+          <p className="text-xs text-muted-foreground rounded-md border px-3 py-2">V1 only — SageMaster Crypto does not support V2 signal format.</p>
+        ) : (
+          <RadioGroup
+            value={version}
+            onValueChange={(v: string) => setVersion(v as "V1" | "V2")}
+          >
+            <div className="flex gap-2">
+              <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
+                <RadioGroupItem value="V1" id="edit-v1" />
+                <Label htmlFor="edit-v1" className="cursor-pointer text-xs">
+                  <span className="font-medium">V1</span>
+                  <span className="block text-[10px] text-muted-foreground mt-0.5">Strategy trigger — sends entry, close, and breakeven commands. (No Price/TP/SL)</span>
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
+                <RadioGroupItem value="V2" id="edit-v2" />
+                <Label htmlFor="edit-v2" className="cursor-pointer text-xs">
+                  <span className="font-medium">V2</span>
+                  <span className="block text-[10px] text-muted-foreground mt-0.5">Full signal — includes entry, TP, SL, and lot size</span>
+                </Label>
+              </div>
             </div>
-            <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
-              <RadioGroupItem value="V2" id="edit-v2" />
-              <Label htmlFor="edit-v2" className="cursor-pointer text-xs">
-                <span className="font-medium">V2</span>
-                <span className="block text-[10px] text-muted-foreground mt-0.5">Full signal — includes entry, TP, SL, and lot size</span>
-              </Label>
-            </div>
-          </div>
-        </RadioGroup>
+          </RadioGroup>
+        )}
       </div>
 
       {/* Webhook Body Template */}
