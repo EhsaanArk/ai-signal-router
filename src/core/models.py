@@ -43,7 +43,7 @@ class SubscriptionTier(str, Enum):
 # ---------------------------------------------------------------------------
 
 class SignalAction(str, Enum):
-    """Webhook action types supported by the SageMaster API."""
+    """Webhook action types supported by the SageMaster API (forex)."""
 
     start_long = "start_long_market_deal"
     start_short = "start_short_market_deal"
@@ -51,6 +51,17 @@ class SignalAction(str, Enum):
     partial_close_pct = "partially_close_by_percentage"
     breakeven = "move_sl_to_breakeven"
     close_position = "close_order_at_market_price"
+
+
+# Crypto action type strings — differ from forex per WEBHOOK_PAYLOADS.md
+# Crypto does not support lot-based partial close; both lot and pct map to percentage.
+CRYPTO_ACTION_TYPE: dict[str, str] = {
+    "start_deal": "start_deal",  # crypto uses single type for long/short
+    "close_position": "close_order_at_market_price",
+    "partial_close_lot": "partially_closed_by_percentage",  # no lot support
+    "partial_close_pct": "partially_closed_by_percentage",
+    "breakeven": "moved_sl_adjustment",
+}
 
 
 # ---------------------------------------------------------------------------

@@ -33,6 +33,7 @@ def _replace_placeholders(template: dict, signal: "ParsedSignal") -> dict:
     return result
 
 from src.core.models import (
+    CRYPTO_ACTION_TYPE,
     ParsedSignal,
     RoutingRule,
     SignalAction,
@@ -109,23 +110,52 @@ def _strip_entry_fields(payload: dict) -> dict:
 
 
 def _inject_management_fields(payload: dict, signal: ParsedSignal, action: SignalAction) -> dict:
-    """Add management-specific fields to the payload based on the action type."""
+    """Add forex management-specific fields to the payload."""
     if action == SignalAction.partial_close_lot:
         payload["lotSize"] = signal.lots or "0.5"
-        # Remove lots if it was in the entry template
         payload.pop("lots", None)
     elif action == SignalAction.partial_close_pct:
         payload["percentage"] = signal.percentage or 50
     elif action == SignalAction.breakeven:
         if signal.action == "modify_sl" and signal.new_sl is not None:
-            # Use new_sl as a pip-delta hint for slAdjustment
-            # The actual pip calculation depends on the pair; pass raw value
             payload["slAdjustment"] = int(signal.new_sl)
         elif signal.action == "trailing_sl" and signal.trailing_sl_pips is not None:
             payload["slAdjustment"] = signal.trailing_sl_pips
         else:
             payload["slAdjustment"] = 0
-    # close_position needs no extra fields
+    return payload
+
+
+def _inject_crypto_management_fields(
+    payload: dict, signal: ParsedSignal, action: SignalAction,
+) -> dict:
+    """Add crypto management-specific fields per documented crypto schema.
+
+    Key differences from forex:
+    - Partial close uses ``position_type`` + ``percentage`` (no lot-based close)
+    - SL adjustment uses ``sl_adjustment`` (snake_case, not camelCase)
+    - ``position_type`` is required for partial close and SL adjustment
+    """
+    position_type = signal.direction or "long"
+
+    if action == SignalAction.partial_close_lot:
+        # Crypto does not support lot-based partial close — fall back to percentage
+        payload["percentage"] = signal.percentage or 50
+        payload["position_type"] = position_type
+        payload.pop("lotSize", None)
+        payload.pop("lots", None)
+    elif action == SignalAction.partial_close_pct:
+        payload["percentage"] = signal.percentage or 50
+        payload["position_type"] = position_type
+    elif action == SignalAction.breakeven:
+        if signal.action == "modify_sl" and signal.new_sl is not None:
+            payload["sl_adjustment"] = int(signal.new_sl)
+        elif signal.action == "trailing_sl" and signal.trailing_sl_pips is not None:
+            payload["sl_adjustment"] = signal.trailing_sl_pips
+        else:
+            payload["sl_adjustment"] = 0
+        payload["position_type"] = position_type
+    # close_position needs no extra fields beyond type
     return payload
 
 
@@ -168,11 +198,20 @@ def build_webhook_payload(
     # ------------------------------------------------------------------
     # Follow-up actions (non-entry)
     # ------------------------------------------------------------------
+    is_crypto = rule.destination_type == "sagemaster_crypto"
+
     if signal.action != "entry":
         payload: dict = _replace_placeholders(rule.webhook_body_template, signal)
-        payload["type"] = action.value  # follow-ups MUST override type
         _strip_entry_fields(payload)
-        _inject_management_fields(payload, signal, action)
+
+        if is_crypto:
+            # Map forex SignalAction to documented crypto type string
+            crypto_key = action.name  # e.g. "partial_close_pct", "breakeven"
+            payload["type"] = CRYPTO_ACTION_TYPE.get(crypto_key, action.value)
+            _inject_crypto_management_fields(payload, signal, action)
+        else:
+            payload["type"] = action.value
+            _inject_management_fields(payload, signal, action)
         return payload
 
     # ------------------------------------------------------------------
@@ -181,7 +220,7 @@ def build_webhook_payload(
     payload = _replace_placeholders(rule.webhook_body_template, signal)
     # Fill empty-string fields from signal data
     if payload.get("type") == "":
-        payload["type"] = action.value
+        payload["type"] = CRYPTO_ACTION_TYPE["start_deal"] if is_crypto else action.value
     if payload.get("date") == "":
         payload["date"] = _utc_timestamp()
     if payload.get("symbol") == "":

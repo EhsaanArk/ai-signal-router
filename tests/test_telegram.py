@@ -608,3 +608,73 @@ class TestTelegramListenerStop:
         # Should not raise
         await listener.stop()
         assert listener._client is None
+
+
+# =========================================================================
+# PII Logging Tests — phone numbers must NEVER appear in logs
+# =========================================================================
+
+
+class TestAuthPIIMasking:
+    """Verify that phone numbers are masked in all auth log output."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_send_code_masks_phone_in_logs(self, MockClient, caplog):
+        mock_client = _make_mock_client()
+        mock_client.send_code_request.return_value = MagicMock(
+            phone_code_hash=FAKE_CODE_HASH,
+        )
+        MockClient.return_value = mock_client
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        with caplog.at_level("INFO"):
+            await auth.send_code(FAKE_PHONE)
+
+        for record in caplog.records:
+            assert FAKE_PHONE not in record.getMessage(), (
+                f"Raw phone number found in log: {record.getMessage()}"
+            )
+        # Masked suffix should appear
+        assert any("1234" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_verify_code_masks_phone_in_logs(self, MockClient, caplog):
+        mock_client = _make_mock_client()
+        mock_client.send_code_request.return_value = MagicMock(
+            phone_code_hash=FAKE_CODE_HASH,
+        )
+        mock_client.session.save.return_value = FAKE_SESSION_STRING
+        MockClient.return_value = mock_client
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        await auth.send_code(FAKE_PHONE)
+
+        with caplog.at_level("INFO"):
+            await auth.verify_code(FAKE_PHONE, FAKE_CODE, FAKE_CODE_HASH)
+
+        for record in caplog.records:
+            assert FAKE_PHONE not in record.getMessage(), (
+                f"Raw phone number found in log: {record.getMessage()}"
+            )
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_disconnect_masks_phone_in_logs(self, MockClient, caplog):
+        mock_client = _make_mock_client()
+        mock_client.send_code_request.return_value = MagicMock(
+            phone_code_hash=FAKE_CODE_HASH,
+        )
+        MockClient.return_value = mock_client
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        await auth.send_code(FAKE_PHONE)
+
+        with caplog.at_level("DEBUG"):
+            await auth.disconnect(FAKE_PHONE)
+
+        for record in caplog.records:
+            assert FAKE_PHONE not in record.getMessage(), (
+                f"Raw phone number found in log: {record.getMessage()}"
+            )

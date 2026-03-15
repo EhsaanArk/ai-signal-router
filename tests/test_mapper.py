@@ -248,7 +248,11 @@ def test_entry_backward_compat(sample_parsed_signal):
 # ---- Template follow-up: entry field stripping ----
 
 
-def _rule_with_template(template: dict, version: str = "V1") -> RoutingRule:
+def _rule_with_template(
+    template: dict,
+    version: str = "V1",
+    destination_type: str = "sagemaster_forex",
+) -> RoutingRule:
     """Helper to create a routing rule with a webhook_body_template."""
     return RoutingRule(
         id="22222222-2222-2222-2222-222222222222",
@@ -261,6 +265,7 @@ def _rule_with_template(template: dict, version: str = "V1") -> RoutingRule:
         ),
         payload_version=version,
         webhook_body_template=template,
+        destination_type=destination_type,
     )
 
 
@@ -638,3 +643,115 @@ def test_mismatch_hardcoded_eventSymbol():
     reason = check_template_symbol_mismatch(signal, rule)
     assert reason is not None
     assert "LUMIA/USDT" in reason
+
+
+# ---- Crypto management action payloads ----
+
+_CRYPTO_TEMPLATE = {
+    "type": "start_deal",
+    "aiAssistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+    "exchange": "binance",
+    "tradeSymbol": "{{ticker}}",
+    "eventSymbol": "{{ticker}}",
+    "price": "{{close}}",
+    "date": "{{time}}",
+}
+
+
+def test_crypto_partial_close_pct_payload():
+    """Crypto partial close should use documented crypto type and field names."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        action="partial_close", symbol="BTC/USDT", direction="long",
+        percentage=50, entry_price=64500.0, source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "partially_closed_by_percentage"
+    assert payload["percentage"] == 50
+    assert payload["position_type"] == "long"
+    # Should not have forex-specific fields
+    assert "lotSize" not in payload
+    assert "slAdjustment" not in payload
+
+
+def test_crypto_partial_close_lot_falls_back_to_pct():
+    """Crypto does not support lot-based close; should fall back to percentage."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        action="partial_close", symbol="ETH/USDT", direction="short",
+        lots="0.5", source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    # Should use crypto percentage type, not lot type
+    assert payload["type"] == "partially_closed_by_percentage"
+    assert payload["position_type"] == "short"
+    assert "lotSize" not in payload
+
+
+def test_crypto_breakeven_payload():
+    """Crypto breakeven should use moved_sl_adjustment type and sl_adjustment field."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        action="breakeven", symbol="BTC/USDT", direction="long",
+        entry_price=64500.0, source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "moved_sl_adjustment"
+    assert payload["sl_adjustment"] == 0
+    assert payload["position_type"] == "long"
+    # Should not have forex-specific camelCase field
+    assert "slAdjustment" not in payload
+
+
+def test_crypto_modify_sl_payload():
+    """Crypto modify_sl should use moved_sl_adjustment with sl_adjustment value."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        action="modify_sl", symbol="SOL/USDT", direction="long",
+        new_sl=42.0, source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "moved_sl_adjustment"
+    assert payload["sl_adjustment"] == 42
+    assert payload["position_type"] == "long"
+
+
+def test_crypto_close_position_payload():
+    """Crypto close uses same type as forex (close_order_at_market_price)."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        action="close_position", symbol="BTC/USDT", direction="long",
+        source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "close_order_at_market_price"
+
+
+def test_crypto_entry_uses_start_deal():
+    """Crypto entry should use start_deal type regardless of direction."""
+    rule = _rule_with_template(
+        {**_CRYPTO_TEMPLATE, "type": ""},
+        destination_type="sagemaster_crypto",
+    )
+    signal = ParsedSignal(
+        symbol="BTC/USDT", direction="long",
+        entry_price=64500.0, source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "start_deal"
+
+
+def test_forex_management_unchanged():
+    """Forex management actions should remain unchanged after crypto branching."""
+    rule = _rule_with_template({
+        "type": "",
+        "assistId": "my-assist-id",
+        "symbol": "EURUSD",
+        "source": "forex",
+    }, destination_type="sagemaster_forex")
+    signal = ParsedSignal(action="partial_close", symbol="EURUSD", percentage=50)
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "partially_close_by_percentage"
+    assert payload["percentage"] == 50
+    assert "position_type" not in payload
+    assert "sl_adjustment" not in payload
