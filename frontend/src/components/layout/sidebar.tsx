@@ -1,10 +1,13 @@
 import { Link, useLocation } from "react-router-dom";
 import {
+  Activity,
   LayoutDashboard,
   MessageSquare,
+  Radio,
   Route,
   ScrollText,
   Settings,
+  Users,
 } from "lucide-react";
 import {
   Tooltip,
@@ -88,6 +91,43 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
           );
         })}
       </nav>
+
+      {/* Admin Nav */}
+      {user?.is_admin && (
+        <div className="flex flex-col items-center gap-1 border-t border-sidebar-border py-2">
+          <span className="text-[8px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-0.5">
+            Admin
+          </span>
+          {[
+            { path: "/admin/health", label: "System Health", icon: Activity },
+            { path: "/admin/users", label: "Users", icon: Users },
+            { path: "/admin/signals", label: "All Signals", icon: Radio },
+          ].map((item) => {
+            const isActive = location.pathname.startsWith(item.path);
+            return (
+              <Tooltip key={item.path} delayDuration={0}>
+                <TooltipTrigger asChild>
+                  <Link
+                    to={item.path}
+                    onClick={onNavClick}
+                    className={cn(
+                      "relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+                      isActive
+                        ? "bg-sidebar-accent text-primary"
+                        : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    )}
+                  >
+                    <item.icon className="h-4 w-4" />
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="right" sideOffset={8}>
+                  {item.label}
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
+      )}
 
       {/* Bottom: Tier + Connection */}
       <div className="flex flex-col items-center gap-3 border-t border-sidebar-border py-3">

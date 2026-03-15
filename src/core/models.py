@@ -64,6 +64,8 @@ class User(BaseModel):
     email: str
     password_hash: str
     subscription_tier: SubscriptionTier = SubscriptionTier.free
+    is_admin: bool = False
+    is_disabled: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

@@ -35,6 +35,15 @@ def _validate_production_settings(settings) -> None:
     if "localhost" in settings.DATABASE_URL:
         errors.append("DATABASE_URL points to localhost — set a production database URL")
 
+    if "localhost" in settings.REDIS_URL:
+        errors.append("REDIS_URL points to localhost — set a production Redis URL")
+
+    if not settings.FRONTEND_URL or "localhost" in settings.FRONTEND_URL:
+        errors.append("FRONTEND_URL is not set or points to localhost")
+
+    if settings.TELEGRAM_API_ID == 0:
+        errors.append("TELEGRAM_API_ID is not set — Telegram auth will fail")
+
     if errors:
         for err in errors:
             logger.error("PRODUCTION CONFIG ERROR: %s", err)
@@ -49,6 +58,9 @@ def _validate_production_settings(settings) -> None:
 
     if not settings.QSTASH_CURRENT_SIGNING_KEY:
         logger.warning("QSTASH_CURRENT_SIGNING_KEY not set — QStash signature validation will fail")
+
+    if not settings.TELEGRAM_BOT_TOKEN:
+        logger.warning("TELEGRAM_BOT_TOKEN not set — Telegram bot notifications will be disabled")
 
 
 def create_app() -> FastAPI:
@@ -65,6 +77,12 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        # Initialise OpenTelemetry before anything else so auto-instrumentors
+        # can patch libraries before they are first imported.
+        from src.adapters.telemetry import init_telemetry
+
+        init_telemetry()
+
         mode_label = "LOCAL / development" if local_mode else "PRODUCTION"
         logger.info("Starting SGM Telegram Signal Copier in %s mode", mode_label)
 
@@ -115,6 +133,9 @@ def create_app() -> FastAPI:
         yield
 
         # Shutdown
+        from src.adapters.telemetry import shutdown_telemetry
+
+        shutdown_telemetry()
         await app.state.dispatcher.close()
         await app.state.cache.close()
         if hasattr(app.state.session_store, "close"):
@@ -153,9 +174,28 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
     )
+
+    # ------------------------------------------------------------------
+    # Security headers
+    # ------------------------------------------------------------------
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            if not local_mode:
+                response.headers["Strict-Transport-Security"] = (
+                    "max-age=31536000; includeSubDomains"
+                )
+            return response
+
+    application.add_middleware(SecurityHeadersMiddleware)
 
     # ------------------------------------------------------------------
     # Health check (verifies DB connectivity)
@@ -185,11 +225,13 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Mount routers
     # ------------------------------------------------------------------
+    from src.api.admin import admin_router
     from src.api.routes import router as v1_router
     from src.api.workflow import workflow_router
 
     application.include_router(v1_router)
     application.include_router(workflow_router)
+    application.include_router(admin_router)
 
     if local_mode:
         from src.api.dev import dev_router

@@ -1,52 +1,65 @@
 """Encryption utilities for Telegram session string storage.
 
-Uses Fernet symmetric encryption from the ``cryptography`` library to
-encrypt/decrypt session strings at rest.  The encryption key is derived
-from the ``ENCRYPTION_KEY`` environment variable.
+Uses AES-256-GCM authenticated encryption from the ``cryptography`` library
+to encrypt/decrypt session strings at rest.  The encryption key is derived
+from the ``ENCRYPTION_KEY`` environment variable (URL-safe base64-encoded
+32-byte key).
 """
 
 from __future__ import annotations
 
 import base64
+import os
 
-from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.fernet import Fernet, InvalidToken
+
+_NONCE_SIZE = 12  # 96-bit nonce recommended for AES-GCM
 
 
 def generate_key() -> bytes:
-    """Generate a new Fernet encryption key.
+    """Generate a new AES-256 encryption key.
 
     Returns
     -------
     bytes
-        A URL-safe base64-encoded 32-byte key suitable for use with
-        ``cryptography.fernet.Fernet``.
+        A URL-safe base64-encoded 32-byte key, compatible with the
+        ``ENCRYPTION_KEY`` environment variable format.
     """
-    return Fernet.generate_key()
+    raw = AESGCM.generate_key(bit_length=256)
+    return base64.urlsafe_b64encode(raw)
+
+
+def _get_raw_key(key: bytes) -> bytes:
+    """Decode a base64-encoded key to raw 32 bytes."""
+    return base64.urlsafe_b64decode(key)
 
 
 def encrypt_session(plain: str, key: bytes) -> str:
-    """Encrypt a plaintext Telegram session string.
+    """Encrypt a plaintext Telegram session string with AES-256-GCM.
 
     Parameters
     ----------
     plain:
         The plaintext session string to encrypt.
     key:
-        A Fernet-compatible encryption key (as returned by
-        ``generate_key()``).
+        A URL-safe base64-encoded 32-byte encryption key.
 
     Returns
     -------
     str
-        The encrypted session string, encoded as a URL-safe base64 string.
+        The encrypted session string as a URL-safe base64 string
+        (nonce + ciphertext concatenated).
     """
-    fernet = Fernet(key)
-    encrypted: bytes = fernet.encrypt(plain.encode("utf-8"))
-    return base64.urlsafe_b64encode(encrypted).decode("utf-8")
+    raw_key = _get_raw_key(key)
+    aesgcm = AESGCM(raw_key)
+    nonce = os.urandom(_NONCE_SIZE)
+    ciphertext = aesgcm.encrypt(nonce, plain.encode("utf-8"), None)
+    return base64.urlsafe_b64encode(nonce + ciphertext).decode("utf-8")
 
 
 def decrypt_session(cipher: str, key: bytes) -> str:
-    """Decrypt an encrypted Telegram session string.
+    """Decrypt an AES-256-GCM encrypted Telegram session string.
 
     Parameters
     ----------
@@ -54,7 +67,7 @@ def decrypt_session(cipher: str, key: bytes) -> str:
         The encrypted session string (URL-safe base64) as returned by
         ``encrypt_session()``.
     key:
-        The same Fernet key that was used for encryption.
+        The same key that was used for encryption.
 
     Returns
     -------
@@ -63,9 +76,54 @@ def decrypt_session(cipher: str, key: bytes) -> str:
 
     Raises
     ------
-    cryptography.fernet.InvalidToken
+    cryptography.exceptions.InvalidTag
         If the key is wrong or the ciphertext has been tampered with.
     """
+    raw_key = _get_raw_key(key)
+    aesgcm = AESGCM(raw_key)
+    data = base64.urlsafe_b64decode(cipher.encode("utf-8"))
+    nonce = data[:_NONCE_SIZE]
+    ciphertext = data[_NONCE_SIZE:]
+    return aesgcm.decrypt(nonce, ciphertext, None).decode("utf-8")
+
+
+def decrypt_session_legacy(cipher: str, key: bytes) -> str:
+    """Decrypt a Fernet-encrypted session string (legacy format).
+
+    Used during migration from the old Fernet encryption scheme.
+
+    Parameters
+    ----------
+    cipher:
+        The Fernet-encrypted session string.
+    key:
+        The encryption key (same base64 format used for AES-256-GCM).
+
+    Returns
+    -------
+    str
+        The original plaintext session string.
+    """
     fernet = Fernet(key)
-    encrypted: bytes = base64.urlsafe_b64decode(cipher.encode("utf-8"))
-    return fernet.decrypt(encrypted).decode("utf-8")
+    return fernet.decrypt(cipher.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_session_auto(cipher: str, key: bytes) -> str:
+    """Decrypt a session string, trying AES-256-GCM first then Fernet.
+
+    Parameters
+    ----------
+    cipher:
+        The encrypted session string (either AES-256-GCM or Fernet format).
+    key:
+        The encryption key.
+
+    Returns
+    -------
+    str
+        The original plaintext session string.
+    """
+    try:
+        return decrypt_session(cipher, key)
+    except Exception:
+        return decrypt_session_legacy(cipher, key)

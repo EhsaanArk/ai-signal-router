@@ -7,6 +7,7 @@ export interface UserMe {
   id: string;
   email: string;
   subscription_tier: string;
+  is_admin: boolean;
   created_at: string;
 }
 
@@ -148,4 +149,69 @@ export interface ResetPasswordRequest {
 
 export interface MessageResponse {
   message: string;
+}
+
+// Admin types
+
+export interface AdminUserSummary {
+  id: string;
+  email: string;
+  subscription_tier: string;
+  is_admin: boolean;
+  is_disabled: boolean;
+  created_at: string;
+  rule_count: number;
+  signal_count: number;
+  telegram_connected: boolean;
+}
+
+export interface PaginatedAdminUsers {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AdminUserSummary[];
+}
+
+export interface AdminRoutingRule {
+  id: string;
+  source_channel_id: string;
+  source_channel_name: string | null;
+  destination_webhook_url: string;
+  payload_version: string;
+  rule_name: string | null;
+  destination_type: string;
+  is_active: boolean;
+}
+
+export interface AdminSignalLog extends SignalLogResponse {
+  user_email: string;
+}
+
+export interface AdminUserDetail extends AdminUserSummary {
+  routing_rules: AdminRoutingRule[];
+  recent_signals: AdminSignalLog[];
+  notification_preferences: Record<string, unknown>;
+}
+
+export interface PaginatedAdminSignals {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AdminSignalLog[];
+}
+
+export interface AdminSignalStats {
+  total_today: number;
+  success_rate_24h: number;
+  top_failing_channels: { channel_id: string; fail_count: number }[];
+}
+
+export interface AdminHealthStats {
+  total_users: number;
+  active_users_7d: number;
+  signals_today: number;
+  signals_this_week: number;
+  success_rate_24h: number;
+  active_routing_rules: number;
+  active_telegram_sessions: number;
 }

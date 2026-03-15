@@ -458,6 +458,7 @@ class TestTelegramListenerOnNewMessage:
             api_id=FAKE_API_ID,
             api_hash=FAKE_API_HASH,
             queue_port=queue_port,
+            monitored_channels={str(-1001234567890)},
         )
         await listener.start(user_id=SAMPLE_USER_ID, session_string=FAKE_SESSION_STRING)
 
@@ -520,6 +521,7 @@ class TestTelegramListenerOnNewMessage:
             api_id=FAKE_API_ID,
             api_hash=FAKE_API_HASH,
             queue_port=queue_port,
+            monitored_channels={str(abs(-1009876543210))},
         )
         await listener.start(user_id=SAMPLE_USER_ID, session_string=FAKE_SESSION_STRING)
 

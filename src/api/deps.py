@@ -14,7 +14,6 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic_settings import BaseSettings
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +27,15 @@ logger = logging.getLogger(__name__)
 # Rate limiter
 # ---------------------------------------------------------------------------
 
-limiter = Limiter(key_func=get_remote_address)
+def _get_real_ip(request: Request) -> str:
+    """Extract client IP from X-Forwarded-For (proxy-aware) or fall back to remote address."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+
+limiter = Limiter(key_func=_get_real_ip)
 
 # ---------------------------------------------------------------------------
 # OAuth2 scheme
@@ -177,10 +184,30 @@ async def get_current_user(
     if user_row is None:
         raise credentials_exception
 
+    if getattr(user_row, "is_disabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+
     return User(
         id=user_row.id,
         email=user_row.email,
         password_hash=user_row.password_hash,
         subscription_tier=SubscriptionTier(user_row.subscription_tier),
+        is_admin=getattr(user_row, "is_admin", False),
+        is_disabled=getattr(user_row, "is_disabled", False),
         created_at=user_row.created_at,
     )
+
+
+async def get_admin_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Require the current user to be an admin."""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user

@@ -584,11 +584,12 @@ async def test_symbol_mapping_in_multi_destination(client, session_factory, test
 
 
 async def test_no_routing_rules_returns_empty(client, session_factory, test_dispatcher):
-    """When no routing rules match the channel, return empty list and log as ignored."""
+    """When no routing rules match the channel, return empty list without calling OpenAI."""
     # Don't seed any routing rules
     parsed = _make_valid_parsed_signal()
 
-    with _mock_openai_parser(parsed), _mock_httpx_post(dispatcher=test_dispatcher) as mock_post:
+    with _mock_openai_parser(parsed) as mock_parser_cls, \
+         _mock_httpx_post(dispatcher=test_dispatcher) as mock_post:
         resp = await client.post(
             "/api/workflow/process-signal",
             json=_raw_signal_payload(),
@@ -599,12 +600,12 @@ async def test_no_routing_rules_returns_empty(client, session_factory, test_disp
     assert results == []
 
     mock_post.assert_not_called()
+    # OpenAI parser should NOT even be instantiated when no routing rules exist
+    mock_parser_cls.assert_not_called()
 
-    # An "ignored" log should still be created
+    # No log entry should be created (skip silently to save resources)
     logs = await _get_signal_logs(session_factory)
-    assert len(logs) == 1
-    assert logs[0].status == "ignored"
-    assert "No routing rules" in logs[0].error_message
+    assert len(logs) == 0
 
 
 # ===========================================================================

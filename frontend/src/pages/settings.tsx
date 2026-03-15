@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowRight, Bell, LogOut, Mail, Calendar, Shield, MessageCircle, ExternalLink } from "lucide-react";
+import { Bell, LogOut, Mail, Calendar, Shield, MessageCircle, ExternalLink } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -135,17 +134,9 @@ export function SettingsPage() {
                       Current
                     </span>
                   ) : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="mt-1 h-6 text-[10px] px-2"
-                      asChild
-                    >
-                      <span>
-                        Choose
-                        <ArrowRight className="ml-1 h-2.5 w-2.5" />
-                      </span>
-                    </Button>
+                    <span className="mt-2 inline-block text-[10px] font-medium text-muted-foreground/50">
+                      Coming Soon
+                    </span>
                   )}
                 </div>
               );

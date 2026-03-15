@@ -42,13 +42,7 @@ services:
     build: ./frontend
     container_name: sgm-frontend
     ports:
-      - "5173:5173"
-    environment:
-      - API_URL=http://api:8000
-    command: npm run dev -- --host
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "5173:80"
     depends_on:
       - api
 

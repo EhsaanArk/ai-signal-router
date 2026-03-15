@@ -16,12 +16,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import RoutingRuleModel, SignalLogModel
+from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
 from src.api.qstash_auth import verify_qstash_signature
 from src.core.models import DispatchResult, ParsedSignal, RawSignal, RoutingRule
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer("signal.pipeline")
 
 workflow_router = APIRouter(tags=["workflow"])
 
@@ -50,7 +52,28 @@ async def process_signal(
     """
 
     # ------------------------------------------------------------------
-    # Step 1a — Look up original message if this is a reply
+    # Step 1 — Check routing rules FIRST (cheap DB query, avoids
+    #          wasting an OpenAI call on unsubscribed channels)
+    # ------------------------------------------------------------------
+    result = await db.execute(
+        select(RoutingRuleModel).where(
+            RoutingRuleModel.source_channel_id == raw_signal.channel_id,
+            RoutingRuleModel.user_id == raw_signal.user_id,
+            RoutingRuleModel.is_active.is_(True),
+        )
+    )
+    rules = result.scalars().all()
+
+    if not rules:
+        logger.info(
+            "No active routing rules for channel %s / user %s — skipping",
+            raw_signal.channel_id,
+            raw_signal.user_id,
+        )
+        return []
+
+    # ------------------------------------------------------------------
+    # Step 2a — Look up original message if this is a reply
     # ------------------------------------------------------------------
     original_message_text: str | None = None
     if raw_signal.reply_to_msg_id:
@@ -63,7 +86,7 @@ async def process_signal(
         original_message_text = row.scalar_one_or_none()
 
     # ------------------------------------------------------------------
-    # Step 1b — Load custom AI instructions for this channel (if any)
+    # Step 2b — Load custom AI instructions for this channel (if any)
     # ------------------------------------------------------------------
     custom_instructions_row = await db.execute(
         select(RoutingRuleModel.custom_ai_instructions).where(
@@ -77,39 +100,45 @@ async def process_signal(
     custom_instructions = custom_instructions_row.scalar_one_or_none()
 
     # ------------------------------------------------------------------
-    # Step 1c — Parse
+    # Step 2c — Parse
     # ------------------------------------------------------------------
     parsed: ParsedSignal
-    try:
-        from src.adapters.openai import OpenAISignalParser
+    with tracer.start_as_current_span("signal.parse") as span:
+        span.set_attribute("signal.channel_id", raw_signal.channel_id)
+        span.set_attribute("signal.message_id", raw_signal.message_id or 0)
+        try:
+            from src.adapters.openai import OpenAISignalParser
 
-        parser = OpenAISignalParser(api_key=settings.OPENAI_API_KEY)
-        parsed = await parser.parse(
-            raw_signal,
-            original_context=original_message_text,
-            custom_instructions=custom_instructions,
-        )
-    except Exception as exc:
-        logger.error("Signal parsing failed: %s", exc)
-        # Log the failure
-        db.add(
-            SignalLogModel(
-                user_id=raw_signal.user_id,
-                message_id=raw_signal.message_id,
-                channel_id=raw_signal.channel_id,
-                reply_to_msg_id=raw_signal.reply_to_msg_id,
-                raw_message=raw_signal.raw_message,
-                status="failed",
-                error_message=f"Parse error: {exc}",
+            parser = OpenAISignalParser(api_key=settings.OPENAI_API_KEY)
+            parsed = await parser.parse(
+                raw_signal,
+                original_context=original_message_text,
+                custom_instructions=custom_instructions,
             )
-        )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Failed to parse signal: {exc}",
-        ) from exc
+            span.set_attribute("signal.is_valid", parsed.is_valid_signal)
+            span.set_attribute("signal.symbol", parsed.symbol or "")
+            span.set_attribute("signal.action", parsed.action or "")
+        except Exception as exc:
+            span.record_exception(exc)
+            logger.error("Signal parsing failed: %s", exc)
+            db.add(
+                SignalLogModel(
+                    user_id=raw_signal.user_id,
+                    message_id=raw_signal.message_id,
+                    channel_id=raw_signal.channel_id,
+                    reply_to_msg_id=raw_signal.reply_to_msg_id,
+                    raw_message=raw_signal.raw_message,
+                    status="failed",
+                    error_message=f"Parse error: {exc}",
+                )
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Failed to parse signal: {exc}",
+            ) from exc
 
     # ------------------------------------------------------------------
-    # Step 2 — Early exit for invalid signals
+    # Step 3 — Early exit for invalid signals
     # ------------------------------------------------------------------
     if not parsed.is_valid_signal:
         logger.info(
@@ -136,38 +165,6 @@ async def process_signal(
                 error_message=parsed.ignore_reason,
             )
         ]
-
-    # ------------------------------------------------------------------
-    # Step 3 — Look up routing rules for this channel
-    # ------------------------------------------------------------------
-    result = await db.execute(
-        select(RoutingRuleModel).where(
-            RoutingRuleModel.source_channel_id == raw_signal.channel_id,
-            RoutingRuleModel.user_id == raw_signal.user_id,
-            RoutingRuleModel.is_active.is_(True),
-        )
-    )
-    rules = result.scalars().all()
-
-    if not rules:
-        logger.warning(
-            "No active routing rules for channel %s / user %s",
-            raw_signal.channel_id,
-            raw_signal.user_id,
-        )
-        db.add(
-            SignalLogModel(
-                user_id=raw_signal.user_id,
-                message_id=raw_signal.message_id,
-                channel_id=raw_signal.channel_id,
-                reply_to_msg_id=raw_signal.reply_to_msg_id,
-                raw_message=raw_signal.raw_message,
-                parsed_data=parsed.model_dump(),
-                status="ignored",
-                error_message="No routing rules configured for this channel",
-            )
-        )
-        return []
 
     # ------------------------------------------------------------------
     # Step 4 — Dispatch to each destination (in parallel)
@@ -273,15 +270,21 @@ async def process_signal(
             return dr, {**base_log, "status": "ignored", "error_message": mismatch_reason}
 
         # Dispatch webhook
-        try:
-            dr = await dispatcher.dispatch(parsed, rule)
-        except Exception as exc:
-            logger.error("Webhook dispatch failed for rule %s: %s", rule.id, exc)
-            dr = DispatchResult(
-                routing_rule_id=rule.id,
-                status="failed",
-                error_message=str(exc),
-            )
+        with tracer.start_as_current_span("signal.dispatch") as dispatch_span:
+            dispatch_span.set_attribute("dispatch.rule_id", str(rule.id))
+            dispatch_span.set_attribute("dispatch.destination_type", rule.destination_type or "")
+            dispatch_span.set_attribute("dispatch.destination_label", rule.destination_label or "")
+            try:
+                dr = await dispatcher.dispatch(parsed, rule)
+                dispatch_span.set_attribute("dispatch.status", dr.status)
+            except Exception as exc:
+                dispatch_span.record_exception(exc)
+                logger.error("Webhook dispatch failed for rule %s: %s", rule.id, exc)
+                dr = DispatchResult(
+                    routing_rule_id=rule.id,
+                    status="failed",
+                    error_message=str(exc),
+                )
 
         return dr, {
             **base_log,

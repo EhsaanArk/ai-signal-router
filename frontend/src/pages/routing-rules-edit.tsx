@@ -161,6 +161,7 @@ interface EditRuleFormProps {
     risk_overrides: Record<string, unknown>;
     webhook_body_template: Record<string, unknown> | null;
     enabled_actions: string[] | null;
+    keyword_blacklist: string[];
     is_active: boolean;
   }) => Promise<void>;
   isSubmitting: boolean;
@@ -194,7 +195,11 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
   const [customAiInstructions, setCustomAiInstructions] = useState(
     rule.custom_ai_instructions || ""
   );
-  const [showAdvanced, setShowAdvanced] = useState(!!rule.custom_ai_instructions);
+  const [keywords, setKeywords] = useState<string[]>(rule.keyword_blacklist || []);
+  const [keywordInput, setKeywordInput] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(
+    !!rule.custom_ai_instructions || (rule.keyword_blacklist && rule.keyword_blacklist.length > 0),
+  );
   const [enabledActions, setEnabledActions] = useState<Set<string>>(
     () => new Set(rule.enabled_actions || getAllActionKeys(destinationType)),
   );
@@ -297,6 +302,7 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
       risk_overrides: riskOverrides,
       webhook_body_template: parsedTemplate,
       enabled_actions: Array.from(enabledActions),
+      keyword_blacklist: keywords,
       is_active: isActive,
     });
   }
@@ -492,6 +498,68 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
             <p className="text-[10px] text-muted-foreground">
               Tell the AI how to interpret signals from this channel. These instructions are appended to the parser's system prompt.
             </p>
+
+            {/* Keyword Blacklist */}
+            <div className="mt-4 space-y-1.5">
+              <Label className="text-xs">Keyword Blacklist</Label>
+              <p className="text-[10px] text-muted-foreground">
+                Messages containing any of these keywords will be ignored for this route.
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  placeholder="e.g., demo, paper trade"
+                  value={keywordInput}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKeywordInput(e.target.value)}
+                  onKeyDown={(e: React.KeyboardEvent) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const kw = keywordInput.trim();
+                      if (kw && !keywords.includes(kw)) {
+                        setKeywords((prev) => [...prev, kw]);
+                      }
+                      setKeywordInput("");
+                    }
+                  }}
+                  className="h-8 text-sm flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => {
+                    const kw = keywordInput.trim();
+                    if (kw && !keywords.includes(kw)) {
+                      setKeywords((prev) => [...prev, kw]);
+                    }
+                    setKeywordInput("");
+                  }}
+                  disabled={!keywordInput.trim()}
+                >
+                  Add
+                </Button>
+              </div>
+              {keywords.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {keywords.map((kw) => (
+                    <span
+                      key={kw}
+                      className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs"
+                    >
+                      {kw}
+                      <button
+                        type="button"
+                        onClick={() => setKeywords((prev) => prev.filter((k) => k !== kw))}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

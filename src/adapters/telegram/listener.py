@@ -15,10 +15,12 @@ from uuid import UUID
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
+from src.adapters.telemetry import get_tracer
 from src.core.interfaces import QueuePort
 from src.core.models import RawSignal
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer("telegram.listener")
 
 
 class TelegramListener:
@@ -109,8 +111,10 @@ class TelegramListener:
         # event.chat_id may include a -100 prefix; abs() strips it.
         channel_id = str(chat.id) if chat else str(abs(event.chat_id))
 
-        # Skip channels the user hasn't configured routing rules for
-        if self._monitored_channels and channel_id not in self._monitored_channels:
+        # Skip channels the user hasn't configured routing rules for.
+        # When _monitored_channels is empty no channel should pass through —
+        # this prevents processing ALL messages before routing rules exist.
+        if channel_id not in self._monitored_channels:
             logger.info(
                 "Skipping message from unmonitored channel %s (chat=%s)",
                 channel_id, chat.title if chat else "unknown",
@@ -131,19 +135,22 @@ class TelegramListener:
             timestamp=datetime.now(timezone.utc),
         )
 
-        try:
-            await self._queue_port.enqueue(raw_signal)
-            logger.debug(
-                "Enqueued message %d from channel %s",
-                message.id,
-                channel_id,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to enqueue message %d from channel %s",
-                message.id,
-                channel_id,
-            )
+        with tracer.start_as_current_span("telegram.enqueue") as span:
+            span.set_attribute("telegram.channel_id", channel_id)
+            span.set_attribute("telegram.message_id", message.id)
+            try:
+                await self._queue_port.enqueue(raw_signal)
+                logger.debug(
+                    "Enqueued message %d from channel %s",
+                    message.id,
+                    channel_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to enqueue message %d from channel %s",
+                    message.id,
+                    channel_id,
+                )
 
     def update_monitored_channels(self, channels: set[str]) -> None:
         """Update the set of channel IDs this listener should process."""
@@ -206,7 +213,7 @@ if __name__ == "__main__":
         from src.adapters.db.models import TelegramSessionModel, RoutingRuleModel
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession as SASession
-        from cryptography.fernet import Fernet
+        from src.core.security import decrypt_session_auto
 
         engine = get_engine()
 
@@ -219,7 +226,7 @@ if __name__ == "__main__":
         else:
             logger.info("No LISTENER_USER_ID / TELEGRAM_SESSION_STRING in env; "
                         "querying DB for active session...")
-            fernet = Fernet(os.environ["ENCRYPTION_KEY"].encode())
+            enc_key = os.environ["ENCRYPTION_KEY"].encode()
             async with SASession(engine, expire_on_commit=False) as db:
                 stmt = select(TelegramSessionModel).where(
                     TelegramSessionModel.is_active.is_(True)
@@ -229,7 +236,7 @@ if __name__ == "__main__":
             if row is None:
                 raise RuntimeError("No active Telegram session found in database.")
             user_id = row.user_id
-            session_string = fernet.decrypt(row.session_string_encrypted.encode()).decode()
+            session_string = decrypt_session_auto(row.session_string_encrypted, enc_key)
             logger.info("Loaded session for user %s from database.", user_id)
 
         # -- Load monitored channels from routing rules ----------------------

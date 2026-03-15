@@ -66,6 +66,7 @@ class UserMeResponse(BaseModel):
     id: UUID
     email: str
     subscription_tier: str
+    is_admin: bool = False
     created_at: str
 
 
@@ -238,6 +239,12 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if getattr(user_row, "is_disabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
     )
@@ -266,6 +273,12 @@ async def login_json(
             detail="Incorrect email or password",
         )
 
+    if getattr(user_row, "is_disabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
     )
@@ -281,6 +294,7 @@ async def get_me(
         id=current_user.id,
         email=current_user.email,
         subscription_tier=current_user.subscription_tier.value,
+        is_admin=current_user.is_admin,
         created_at=current_user.created_at.isoformat(),
     )
 
@@ -510,15 +524,14 @@ async def telegram_verify_code(
         raise
 
     # Encrypt the session string before storing
-    from cryptography.fernet import Fernet
+    from src.core.security import encrypt_session
 
     if not settings.ENCRYPTION_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="ENCRYPTION_KEY not configured",
         )
-    fernet = Fernet(settings.ENCRYPTION_KEY.encode())
-    encrypted = fernet.encrypt(session_string.encode()).decode()
+    encrypted = encrypt_session(session_string, settings.ENCRYPTION_KEY.encode())
 
     # Upsert the telegram session record
     result = await db.execute(

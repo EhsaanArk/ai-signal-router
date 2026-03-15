@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false as sa_false,
 )
 from sqlalchemy.dialects.postgresql import JSON, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -44,6 +45,12 @@ class UserModel(Base):
     )
     notification_preferences: Mapped[dict] = mapped_column(
         JSONB, server_default='{}', nullable=False
+    )
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean, server_default=sa_false(), nullable=False
+    )
+    is_disabled: Mapped[bool] = mapped_column(
+        Boolean, server_default=sa_false(), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

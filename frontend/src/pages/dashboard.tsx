@@ -11,7 +11,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -62,7 +61,7 @@ export function DashboardPage() {
 
   const anyFetching = tgFetching || rulesFetching || logsFetching;
   const isConnected = telegramStatus?.connected ?? false;
-  const hasRules = (rules?.length ?? 0) > 0;
+
   const tier = user?.subscription_tier || "free";
   const successRate = logStats && logStats.total > 0
     ? ((logStats.success / logStats.total) * 100).toFixed(1)
