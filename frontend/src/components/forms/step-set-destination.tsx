@@ -29,8 +29,8 @@ interface Props {
 }
 
 const DESTINATION_TYPES: { value: DestinationType; label: string; description: string }[] = [
-  { value: "sagemaster_forex", label: "SageMaster Forex", description: "Forex pairs via sfx.sagemaster.io" },
-  { value: "sagemaster_crypto", label: "SageMaster Crypto", description: "Crypto pairs via api.sagemaster.io" },
+  { value: "sagemaster_forex", label: "SageMaster Forex", description: "Forex, commodities & indices (sfx.sagemaster.io)" },
+  { value: "sagemaster_crypto", label: "SageMaster Crypto", description: "Crypto pairs (app.sagemaster.io)" },
   { value: "custom", label: "Custom Webhook", description: "Any webhook endpoint" },
 ];
 
