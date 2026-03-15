@@ -66,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     removeToken();
+    localStorage.removeItem("sgm_setup_complete");
     setTokenState(null);
     setUser(null);
   }, []);
