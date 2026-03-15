@@ -63,6 +63,15 @@ For urgent production fixes:
 - Always run tests and linter before committing
 - PRs from `staging` → `main` should summarise all included changes
 
+### Multi-Agent Collaboration
+When multiple Claude Code agents are working on this repo simultaneously:
+1. **Each agent MUST work on its own feature/bugfix branch** — never commit directly to `staging` or `main`
+2. **Branch off `staging`** at the start of the task: `git checkout -b feature/SGM-XXX-description staging`
+3. **Pull latest staging** before branching: `git fetch origin && git checkout staging && git pull`
+4. **Create a PR to `staging`** when work is complete — do not merge without user approval
+5. **Never force-push** or rebase shared branches
+6. **If you see uncommitted changes** in the working tree that aren't yours, stash them or ask the user — do not discard them
+
 ### Railway Environments
 - **Staging**: `staging` branch — 3 services (API, Listener, Frontend)
   - API: `ai-signal-router-staging.up.railway.app`
