@@ -1,19 +1,18 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Radio, CheckCircle2, ArrowRight } from "lucide-react";
+import { Check, CheckCircle2, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { TelegramConnectForm } from "@/components/forms/telegram-connect-form";
 import { RoutingRuleWizard } from "@/components/forms/routing-rule-wizard";
 import { useTelegramStatus } from "@/hooks/use-telegram";
-import { useLogStats } from "@/hooks/use-logs";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { cn } from "@/lib/utils";
 
 const STEPS = [
   { label: "Connect Telegram", description: "Link your account" },
   { label: "Create Route", description: "Channel to destination" },
-  { label: "First Signal", description: "Waiting for signal" },
+  { label: "Setup Complete", description: "You're all set" },
 ] as const;
 
 function completeSetup() {
@@ -24,10 +23,8 @@ export function SetupPage() {
   usePageTitle("Setup");
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
-  const [celebrated, setCelebrated] = useState(false);
 
   const { data: telegramStatus, isLoading: tgLoading } = useTelegramStatus();
-  const { data: logStats } = useLogStats();
 
   const isConnected = telegramStatus?.connected ?? false;
 
@@ -37,13 +34,6 @@ export function SetupPage() {
       setStep(1);
     }
   }, [tgLoading, isConnected, step]);
-
-  // Auto-celebrate when first signal arrives on step 3
-  useEffect(() => {
-    if (step === 2 && logStats && logStats.total > 0 && !celebrated) {
-      setCelebrated(true);
-    }
-  }, [step, logStats, celebrated]);
 
   function handleSkip() {
     completeSetup();
@@ -146,39 +136,21 @@ export function SetupPage() {
                 </div>
               )}
 
-              {/* Step 3: Waiting for First Signal */}
+              {/* Step 3: Setup Complete */}
               {step === 2 && (
                 <div className="flex flex-col items-center py-8 space-y-4">
-                  {celebrated ? (
-                    <>
-                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950">
-                        <CheckCircle2 className="h-8 w-8 text-emerald-600" />
-                      </div>
-                      <h2 className="text-xl font-semibold">You're all set!</h2>
-                      <p className="text-sm text-muted-foreground text-center">
-                        Your first signal was routed successfully
-                      </p>
-                      <Button onClick={handleGoToDashboard} className="mt-4">
-                        Go to Dashboard
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                        <Radio className="h-8 w-8 text-primary animate-pulse" />
-                      </div>
-                      <h2 className="text-lg font-semibold">Listening for signals...</h2>
-                      <p className="text-sm text-muted-foreground text-center max-w-sm">
-                        Send a trading signal in your connected Telegram channel.
-                        This page will update automatically when a signal is received.
-                      </p>
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-                        <span className="text-xs text-muted-foreground">Polling every 10 seconds</span>
-                      </div>
-                    </>
-                  )}
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950">
+                    <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                  </div>
+                  <h2 className="text-xl font-semibold">You're all set!</h2>
+                  <p className="text-sm text-muted-foreground text-center max-w-sm">
+                    Your route is active. Signals from your channel will be
+                    automatically detected, parsed, and routed to your destination.
+                  </p>
+                  <Button onClick={handleGoToDashboard} className="mt-4">
+                    Go to Dashboard
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
                 </div>
               )}
             </CardContent>
