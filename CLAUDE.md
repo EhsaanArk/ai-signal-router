@@ -77,6 +77,38 @@ For urgent production fixes:
 - **Multi-Destination Routing**: The system must support routing 1 Telegram channel to N SageMaster webhooks (Destinations), each with its own risk settings and symbol mappings.
 - **CRITICAL TERMINOLOGY**: Always use the term "order routing" or "route" instead of "execution" when referring to SageMaster's function. SageMaster does not perform the final execution.
 
+## Critical Signal Pipeline — Handle With Care
+
+The following files form the live trading signal pipeline. Changes to these files directly affect real money. **Extra caution required.**
+
+### Pipeline Flow
+```
+Telegram → Listener → QStash → API Workflow → OpenAI Parser → Mapper → Webhook Dispatcher → DB Log
+```
+
+### Protected Files
+| File | Role |
+|------|------|
+| `src/adapters/telegram/listener.py` | Intercepts Telegram messages, builds RawSignal, enqueues to QStash |
+| `src/adapters/qstash/publisher.py` | Publishes signals to QStash for async processing |
+| `src/api/qstash_auth.py` | Verifies QStash JWT signatures on callbacks |
+| `src/api/workflow.py` | Orchestrates the full signal processing pipeline |
+| `src/adapters/openai/parser.py` | LLM-based signal parsing (system prompt + GPT-4o-mini) |
+| `src/core/mapper.py` | Symbol mapping, action mapping, webhook payload construction |
+| `src/adapters/webhook/dispatcher.py` | HTTP dispatch to SageMaster with retry logic |
+| `src/core/models.py` | RawSignal, ParsedSignal, RoutingRule, DispatchResult |
+| `src/core/interfaces.py` | Protocol definitions (SignalParser, QueuePort, etc.) |
+| `src/adapters/db/models.py` | SignalLogModel, RoutingRuleModel, TelegramSessionModel |
+
+### Rules for Pipeline Files
+1. **Read before modifying** — always read the full file before making any changes
+2. **Never remove existing logic** — only add or modify; if removing, explain why and confirm with user
+3. **Preserve function signatures** — changing a signature breaks callers across the pipeline
+4. **Never modify the OpenAI system prompt** (`parser.py`) without explicit user request
+5. **Never change webhook payload structure** (`mapper.py` `build_webhook_payload()`) without explicit user request — SageMaster expects a specific JSON format
+6. **Run tests after any pipeline change** — `pytest -v tests/`
+7. **If unsure, ask** — never guess at pipeline behaviour; ask the user or read the code
+
 ## Documentation Pointers
 - High-level product brief: `@docs/SPEC.md`
 - Phased feature roadmap and tiers: `@docs/PRODUCT_ROADMAP.md`
