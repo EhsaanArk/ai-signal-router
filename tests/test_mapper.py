@@ -114,7 +114,7 @@ def test_check_tier_limit_within():
 
 def test_check_tier_limit_exceeded():
     """Should return False when current count meets or exceeds the tier maximum."""
-    assert check_tier_limit(SubscriptionTier.free, 1) is False
+    assert check_tier_limit(SubscriptionTier.free, 5) is False
     assert check_tier_limit(SubscriptionTier.starter, 2) is False
     assert check_tier_limit(SubscriptionTier.pro, 5) is False
 
