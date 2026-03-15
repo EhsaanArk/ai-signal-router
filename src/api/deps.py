@@ -9,10 +9,11 @@ from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic_settings import BaseSettings
+from slowapi import Limiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,20 @@ from src.adapters.db.session import get_async_session_factory
 from src.core.models import SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Rate limiter
+# ---------------------------------------------------------------------------
+
+def _get_real_ip(request: Request) -> str:
+    """Extract client IP from X-Forwarded-For (proxy-aware) or fall back to remote address."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+
+limiter = Limiter(key_func=_get_real_ip)
 
 # ---------------------------------------------------------------------------
 # OAuth2 scheme
@@ -49,6 +64,12 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = ""
     QSTASH_TOKEN: str = ""
     QSTASH_URL: str = ""
+    RESEND_API_KEY: str = ""
+    FRONTEND_URL: str = "http://localhost:5173"
+    ALLOWED_ORIGINS: str = ""
+    QSTASH_CURRENT_SIGNING_KEY: str = ""
+    QSTASH_NEXT_SIGNING_KEY: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -81,6 +102,26 @@ async def get_db(
         except Exception:
             await session.rollback()
             raise
+
+
+# ---------------------------------------------------------------------------
+# Cache and session store dependencies
+# ---------------------------------------------------------------------------
+
+
+def get_cache(request: Request):
+    """Return the shared CachePort instance from app state."""
+    return request.app.state.cache
+
+
+def get_session_store(request: Request):
+    """Return the shared SessionStore instance from app state."""
+    return request.app.state.session_store
+
+
+def get_dispatcher(request: Request):
+    """Return the shared WebhookDispatcher instance from app state."""
+    return request.app.state.dispatcher
 
 
 # ---------------------------------------------------------------------------
@@ -143,10 +184,30 @@ async def get_current_user(
     if user_row is None:
         raise credentials_exception
 
+    if getattr(user_row, "is_disabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+
     return User(
         id=user_row.id,
         email=user_row.email,
         password_hash=user_row.password_hash,
         subscription_tier=SubscriptionTier(user_row.subscription_tier),
+        is_admin=getattr(user_row, "is_admin", False),
+        is_disabled=getattr(user_row, "is_disabled", False),
         created_at=user_row.created_at,
     )
+
+
+async def get_admin_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Require the current user to be an admin."""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user

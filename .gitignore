@@ -25,6 +25,9 @@ htmlcov/
 .vscode/
 .idea/
 
+# Claude Code local settings (contains secrets)
+.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db

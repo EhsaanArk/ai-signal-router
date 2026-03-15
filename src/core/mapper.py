@@ -3,58 +3,45 @@
 Pure domain logic — no infrastructure imports.  Responsible for:
 
 * Applying per-rule symbol mappings (e.g. "GOLD" -> "XAUUSD").
-* Building SageMaster V1 / V2 webhook payloads.
+* Building SageMaster webhook payloads from user-provided templates.
 * Enforcing subscription-tier destination limits.
-* Extracting the asset-id UUID from a SageMaster webhook URL.
 """
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 
-from src.core.models import ParsedSignal, RoutingRule, SubscriptionTier
+
+def _utc_timestamp() -> str:
+    """Return a UTC timestamp in the format SGM/TradingView expects: ``2026-03-13T21:19:00Z``."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-# ---------------------------------------------------------------------------
-# UUID regex used to extract asset IDs from webhook URLs
-# ---------------------------------------------------------------------------
-_UUID_RE = re.compile(
-    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+def _replace_placeholders(template: dict, signal: "ParsedSignal") -> dict:
+    """Replace TradingView ``{{...}}`` placeholders in template string values."""
+    tv_vars = {
+        "{{time}}": _utc_timestamp(),
+        "{{close}}": str(signal.entry_price) if signal.entry_price is not None else "",
+        "{{ticker}}": signal.symbol,
+    }
+    result = {}
+    for key, value in template.items():
+        if isinstance(value, str):
+            for placeholder, replacement in tv_vars.items():
+                value = value.replace(placeholder, replacement)
+        result[key] = value
+    return result
+
+from src.core.models import (
+    ParsedSignal,
+    RoutingRule,
+    SignalAction,
+    SubscriptionTier,
 )
 
 
-def extract_asset_id(webhook_url: str) -> str:
-    """Extract the UUID asset-id from a SageMaster webhook URL.
-
-    SageMaster webhook URLs end with a UUID that identifies the destination
-    trading account asset.  For example::
-
-        https://app.sagemaster.com/api/webhook/ea1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d
-
-    Parameters
-    ----------
-    webhook_url:
-        The full webhook URL.
-
-    Returns
-    -------
-    str
-        The extracted UUID string.
-
-    Raises
-    ------
-    ValueError
-        If no UUID is found in the URL.
-    """
-    matches = _UUID_RE.findall(webhook_url)
-    if not matches:
-        raise ValueError(
-            f"Could not extract asset ID (UUID) from webhook URL: {webhook_url}"
-        )
-    # The last UUID in the URL is the asset ID
-    return matches[-1]
+# Fields that should be stripped from the template for management actions
+_ENTRY_ONLY_FIELDS = {"price", "takeProfits", "stopLoss", "balance"}
 
 
 # ---------------------------------------------------------------------------
@@ -79,56 +66,169 @@ def apply_symbol_mapping(signal: ParsedSignal, rule: RoutingRule) -> ParsedSigna
 # Webhook payload builders
 # ---------------------------------------------------------------------------
 
-def _deal_type(direction: str, order_type: str) -> str:
-    """Build the SageMaster ``type`` field string.
+def _signal_action(signal: ParsedSignal) -> SignalAction:
+    """Map a ``ParsedSignal`` to the corresponding ``SignalAction``.
 
-    Examples: ``start_long_market_deal``, ``start_short_limit_deal``.
+    For entry signals, maps by direction.  For follow-up actions, maps
+    directly to the corresponding ``SignalAction`` enum member.
     """
-    return f"start_{direction}_{order_type}_deal"
+    action = signal.action
+    if action == "entry":
+        if signal.direction == "long":
+            return SignalAction.start_long
+        elif signal.direction == "short":
+            return SignalAction.start_short
+        raise ValueError(f"Unsupported direction: {signal.direction}")
+    if action == "partial_close":
+        # Choose lot-based or percentage-based depending on signal data
+        if signal.percentage is not None:
+            return SignalAction.partial_close_pct
+        return SignalAction.partial_close_lot
+    if action == "breakeven":
+        return SignalAction.breakeven
+    if action == "close_position":
+        return SignalAction.close_position
+    if action == "modify_sl":
+        # modify_sl maps to breakeven with slAdjustment when new_sl is available
+        return SignalAction.breakeven
+    if action == "modify_tp":
+        # modify_tp has no SageMaster equivalent — will be logged as unsupported
+        raise ValueError("Action 'modify_tp' is not supported by SageMaster")
+    if action == "trailing_sl":
+        # trailing_sl maps to breakeven with slAdjustment = trailing pip value
+        return SignalAction.breakeven
+    raise ValueError(f"Unknown action: {action}")
 
 
-def build_webhook_payload(signal: ParsedSignal, rule: RoutingRule) -> dict:
-    """Construct a V1 or V2 webhook payload dictionary.
+def _strip_entry_fields(payload: dict) -> dict:
+    """Remove entry-specific fields from a management action payload."""
+    for field in _ENTRY_ONLY_FIELDS:
+        payload.pop(field, None)
+    # Also strip lots unless it's a partial close by lot
+    return payload
+
+
+def _inject_management_fields(payload: dict, signal: ParsedSignal, action: SignalAction) -> dict:
+    """Add management-specific fields to the payload based on the action type."""
+    if action == SignalAction.partial_close_lot:
+        payload["lotSize"] = signal.lots or "0.5"
+        # Remove lots if it was in the entry template
+        payload.pop("lots", None)
+    elif action == SignalAction.partial_close_pct:
+        payload["percentage"] = signal.percentage or 50
+    elif action == SignalAction.breakeven:
+        if signal.action == "modify_sl" and signal.new_sl is not None:
+            # Use new_sl as a pip-delta hint for slAdjustment
+            # The actual pip calculation depends on the pair; pass raw value
+            payload["slAdjustment"] = int(signal.new_sl)
+        elif signal.action == "trailing_sl" and signal.trailing_sl_pips is not None:
+            payload["slAdjustment"] = signal.trailing_sl_pips
+        else:
+            payload["slAdjustment"] = 0
+    # close_position needs no extra fields
+    return payload
+
+
+def build_webhook_payload(
+    signal: ParsedSignal, rule: RoutingRule
+) -> dict:
+    """Construct a webhook payload dict from the rule's template.
+
+    A ``webhook_body_template`` is required.  The template must contain the
+    ``assistId`` (forex) or ``aiAssistId`` (crypto) provided by the user —
+    this function never injects or overwrites those fields.
 
     Parameters
     ----------
     signal:
         The parsed (and optionally symbol-mapped) signal.
     rule:
-        The routing rule whose ``payload_version`` and
-        ``destination_webhook_url`` determine payload shape and asset ID.
+        The routing rule whose ``webhook_body_template`` and
+        ``payload_version`` determine payload shape.
 
     Returns
     -------
     dict
-        A JSON-serialisable dictionary ready to POST to SageMaster.
+        The constructed payload ready to POST.
+
+    Raises
+    ------
+    ValueError
+        If the rule has no ``webhook_body_template``.
     """
-    asset_id = extract_asset_id(rule.destination_webhook_url)
-    deal_type = _deal_type(signal.direction, signal.order_type)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    if not rule.webhook_body_template:
+        raise ValueError(
+            "Webhook body template is required for SageMaster destinations. "
+            "Copy the JSON from your SageMaster Assists overview page > "
+            "alert configuration in SageMaster."
+        )
 
-    payload: dict = {
-        "type": deal_type,
-        "assetId": asset_id,
-        "source": signal.source_asset_class,
-        "symbol": signal.symbol,
-        "date": now_iso,
-    }
+    action = _signal_action(signal)
 
+    # ------------------------------------------------------------------
+    # Follow-up actions (non-entry)
+    # ------------------------------------------------------------------
+    if signal.action != "entry":
+        payload: dict = _replace_placeholders(rule.webhook_body_template, signal)
+        payload["type"] = action.value  # follow-ups MUST override type
+        _strip_entry_fields(payload)
+        _inject_management_fields(payload, signal, action)
+        return payload
+
+    # ------------------------------------------------------------------
+    # Entry signals
+    # ------------------------------------------------------------------
+    payload = _replace_placeholders(rule.webhook_body_template, signal)
+    # Fill empty-string fields from signal data
+    if payload.get("type") == "":
+        payload["type"] = action.value
+    if payload.get("date") == "":
+        payload["date"] = _utc_timestamp()
+    if payload.get("symbol") == "":
+        payload["symbol"] = signal.symbol
+    if payload.get("tradeSymbol") == "":
+        payload["tradeSymbol"] = signal.symbol
+    if payload.get("eventSymbol") == "":
+        payload["eventSymbol"] = signal.symbol
+    if payload.get("source") == "":
+        payload["source"] = signal.source_asset_class
+    # V2 fields — only fill if template has the key with empty value
     if rule.payload_version == "V2":
-        if signal.entry_price is not None:
-            payload["price"] = str(signal.entry_price)
-        if signal.take_profits:
+        if payload.get("price") == "":
+            payload["price"] = str(signal.entry_price) if signal.entry_price is not None else ""
+        if "takeProfits" in payload and not payload["takeProfits"]:
             payload["takeProfits"] = signal.take_profits
-        if signal.stop_loss is not None:
+        if "stopLoss" in payload and not payload["stopLoss"]:
             payload["stopLoss"] = signal.stop_loss
-
     return payload
 
 
 # ---------------------------------------------------------------------------
 # Tier limit check
 # ---------------------------------------------------------------------------
+
+def check_template_symbol_mismatch(
+    signal: ParsedSignal, rule: RoutingRule
+) -> str | None:
+    """Return a reason string if the signal symbol doesn't match the template's
+    hardcoded symbol.  Returns ``None`` if no mismatch (OK to dispatch).
+
+    A symbol is considered "hardcoded" when it is a non-empty string that does
+    not contain a ``{{…}}`` placeholder.  Empty strings and placeholders like
+    ``{{ticker}}`` are treated as dynamic and never cause a mismatch.
+    """
+    if not rule.webhook_body_template:
+        return None
+    for field in ("symbol", "tradeSymbol", "eventSymbol"):
+        value = rule.webhook_body_template.get(field)
+        if isinstance(value, str) and value and "{{" not in value:
+            if value != signal.symbol:
+                return (
+                    f"Signal symbol '{signal.symbol}' does not match "
+                    f"template {field} '{value}'"
+                )
+    return None
+
 
 def check_tier_limit(tier: SubscriptionTier, current_count: int) -> bool:
     """Return ``True`` if *current_count* is below the tier's destination cap.

@@ -6,7 +6,9 @@ URLs defined in each routing rule.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 
 import httpx
 
@@ -14,6 +16,10 @@ from src.core.mapper import apply_symbol_mapping, build_webhook_payload
 from src.core.models import DispatchResult, ParsedSignal, RoutingRule
 
 logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 0.5  # seconds
+_RETRYABLE_CODES = {429, 500, 502, 503, 504}
 
 
 class WebhookDispatcher:
@@ -34,58 +40,101 @@ class WebhookDispatcher:
     ) -> DispatchResult:
         """Apply symbol mapping, build the payload, and POST to the webhook.
 
-        Returns a ``DispatchResult`` with ``status='success'`` on a 2xx
-        response, or ``status='failed'`` with an error message otherwise.
+        Retries up to ``MAX_RETRIES`` times on transient failures (5xx, 429,
+        network errors) with exponential backoff.  Non-retryable 4xx responses
+        are returned immediately as failures.
         """
-        try:
-            # 1. Apply symbol mapping from routing rule
-            mapped_signal = apply_symbol_mapping(signal, rule)
+        # 1. Apply symbol mapping from routing rule
+        mapped_signal = apply_symbol_mapping(signal, rule)
 
-            # 2. Build the webhook payload (V1 or V2) via core mapper
-            payload = build_webhook_payload(mapped_signal, rule)
+        # 2. Build the webhook payload (V1 or V2) via core mapper
+        payload_model = build_webhook_payload(mapped_signal, rule)
+        if isinstance(payload_model, dict):
+            payload = {k: v for k, v in payload_model.items() if v is not None}
+        else:
+            payload = payload_model.model_dump(exclude_none=True)
 
-            # 3. POST to the destination webhook URL
-            response = await self._client.post(
-                rule.destination_webhook_url,
-                json=payload,
-            )
+        # 3. Apply per-destination risk overrides (e.g. lot size)
+        if rule.risk_overrides:
+            payload.update(rule.risk_overrides)
 
-            # 4. Determine success/failure from status code
-            if response.is_success:
-                logger.info(
-                    "Dispatched signal to %s — HTTP %d",
+        # 4. POST with retry logic
+        last_error: str = ""
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = await self._client.post(
                     rule.destination_webhook_url,
-                    response.status_code,
-                )
-                return DispatchResult(
-                    routing_rule_id=rule.id,
-                    status="success",
-                    webhook_payload=payload,
-                )
-            else:
-                error_msg = (
-                    f"HTTP {response.status_code}: {response.text[:500]}"
-                )
-                logger.warning(
-                    "Webhook returned non-success for rule %s: %s",
-                    rule.id,
-                    error_msg,
-                )
-                return DispatchResult(
-                    routing_rule_id=rule.id,
-                    status="failed",
-                    error_message=error_msg,
-                    webhook_payload=payload,
+                    json=payload,
                 )
 
-        except httpx.HTTPError as exc:
-            error_msg = f"HTTP error dispatching to {rule.destination_webhook_url}: {exc}"
-            logger.error(error_msg)
-            return DispatchResult(
-                routing_rule_id=rule.id,
-                status="failed",
-                error_message=error_msg,
-            )
+                if response.is_success:
+                    logger.info(
+                        "Dispatched signal to %s — HTTP %d (attempt %d)",
+                        rule.destination_webhook_url,
+                        response.status_code,
+                        attempt + 1,
+                    )
+                    return DispatchResult(
+                        routing_rule_id=rule.id,
+                        status="success",
+                        webhook_payload=payload,
+                        attempt_count=attempt + 1,
+                    )
+
+                last_error = f"HTTP {response.status_code}: {response.text[:500]}"
+
+                if response.status_code not in _RETRYABLE_CODES:
+                    logger.warning(
+                        "Webhook returned non-retryable %d for rule %s: %s",
+                        response.status_code,
+                        rule.id,
+                        last_error,
+                    )
+                    return DispatchResult(
+                        routing_rule_id=rule.id,
+                        status="failed",
+                        error_message=last_error,
+                        webhook_payload=payload,
+                        attempt_count=attempt + 1,
+                    )
+
+                logger.warning(
+                    "Retryable HTTP %d for rule %s (attempt %d/%d)",
+                    response.status_code,
+                    rule.id,
+                    attempt + 1,
+                    MAX_RETRIES,
+                )
+
+            except httpx.HTTPError as exc:
+                last_error = f"HTTP error dispatching to {rule.destination_webhook_url}: {exc}"
+                logger.warning(
+                    "Network error for rule %s (attempt %d/%d): %s",
+                    rule.id,
+                    attempt + 1,
+                    MAX_RETRIES,
+                    exc,
+                )
+
+            # Exponential backoff with jitter before next attempt
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.25)
+                await asyncio.sleep(delay)
+
+        # All retries exhausted
+        logger.error(
+            "All %d attempts exhausted for rule %s: %s",
+            MAX_RETRIES,
+            rule.id,
+            last_error,
+        )
+        return DispatchResult(
+            routing_rule_id=rule.id,
+            status="failed",
+            error_message=f"Failed after {MAX_RETRIES} attempts: {last_error}",
+            webhook_payload=payload,
+            attempt_count=MAX_RETRIES,
+        )
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

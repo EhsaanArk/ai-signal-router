@@ -1,12 +1,12 @@
 """Public API router — /api/v1 endpoints for the SGM Telegram Signal Copier."""
 
-from __future__ import annotations
-
 import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
+    PasswordResetTokenModel,
     RoutingRuleModel,
     SignalLogModel,
     TelegramSessionModel,
@@ -22,9 +23,12 @@ from src.adapters.db.models import (
 from src.api.deps import (
     Settings,
     create_access_token,
+    get_cache,
     get_current_user,
     get_db,
+    get_session_store,
     get_settings,
+    limiter,
 )
 from src.core.models import RoutingRule, SubscriptionTier, User
 
@@ -41,6 +45,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # --- Auth -------------------------------------------------------------------
 
+class RegisterRequest(BaseModel):
+    """User registration payload."""
+    email: str
+    password: str
+
+
 class LoginRequest(BaseModel):
     """JSON login alternative to OAuth2 form data."""
     email: str
@@ -50,6 +60,27 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class UserMeResponse(BaseModel):
+    id: UUID
+    email: str
+    subscription_tier: str
+    is_admin: bool = False
+    created_at: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class MessageResponse(BaseModel):
+    message: str
 
 
 # --- Telegram ---------------------------------------------------------------
@@ -66,14 +97,18 @@ class VerifyCodeRequest(BaseModel):
     phone_number: str
     code: str
     phone_code_hash: str
+    password: str | None = None
 
 
 class VerifyCodeResponse(BaseModel):
     status: str = "ok"
+    requires_2fa: bool = False
 
 
 class TelegramStatusResponse(BaseModel):
     connected: bool
+    phone_number: str | None = None
+    connected_at: str | None = None
 
 
 # --- Channels ---------------------------------------------------------------
@@ -86,6 +121,32 @@ class ChannelInfo(BaseModel):
 
 # --- Routing Rules ----------------------------------------------------------
 
+class TestWebhookRequest(BaseModel):
+    url: str
+
+
+class TestWebhookResponse(BaseModel):
+    success: bool
+    status_code: int | None = None
+    error: str | None = None
+
+
+class RoutingRuleUpdate(BaseModel):
+    source_channel_name: str | None = None
+    destination_webhook_url: str | None = None
+    payload_version: Literal["V1", "V2"] | None = None
+    symbol_mappings: dict[str, str] | None = None
+    risk_overrides: dict[str, Any] | None = None
+    webhook_body_template: dict[str, Any] | None = None
+    rule_name: str | None = None
+    destination_label: str | None = None
+    destination_type: Literal["sagemaster_forex", "sagemaster_crypto", "custom"] | None = None
+    custom_ai_instructions: str | None = None
+    enabled_actions: list[str] | None = None
+    keyword_blacklist: list[str] | None = None
+    is_active: bool | None = None
+
+
 class RoutingRuleCreate(BaseModel):
     source_channel_id: str
     source_channel_name: str | None = None
@@ -93,6 +154,13 @@ class RoutingRuleCreate(BaseModel):
     payload_version: Literal["V1", "V2"] = "V1"
     symbol_mappings: dict[str, str] = Field(default_factory=dict)
     risk_overrides: dict[str, Any] = Field(default_factory=dict)
+    webhook_body_template: dict[str, Any] | None = None
+    rule_name: str | None = None
+    destination_label: str | None = None
+    destination_type: Literal["sagemaster_forex", "sagemaster_crypto", "custom"] = "sagemaster_forex"
+    custom_ai_instructions: str | None = None
+    enabled_actions: list[str] | None = None
+    keyword_blacklist: list[str] = Field(default_factory=list)
 
 
 class RoutingRuleResponse(BaseModel):
@@ -104,7 +172,16 @@ class RoutingRuleResponse(BaseModel):
     payload_version: str
     symbol_mappings: dict[str, str]
     risk_overrides: dict[str, Any]
+    webhook_body_template: dict[str, Any] | None
+    rule_name: str | None = None
+    destination_label: str | None = None
+    destination_type: str = "sagemaster_forex"
+    custom_ai_instructions: str | None = None
+    enabled_actions: list[str] | None = None
+    keyword_blacklist: list[str] = Field(default_factory=list)
     is_active: bool
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 # --- Logs -------------------------------------------------------------------
@@ -119,6 +196,9 @@ class SignalLogResponse(BaseModel):
     status: str
     error_message: str | None
     processed_at: str
+    message_id: int | None = None
+    channel_id: str | None = None
+    reply_to_msg_id: int | None = None
 
 
 class PaginatedLogs(BaseModel):
@@ -134,7 +214,9 @@ class PaginatedLogs(BaseModel):
 
 
 @router.post("/auth/login", response_model=TokenResponse)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -157,6 +239,12 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if getattr(user_row, "is_disabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
     )
@@ -164,7 +252,9 @@ async def login(
 
 
 @router.post("/auth/login-json", response_model=TokenResponse)
+@limiter.limit("5/minute")
 async def login_json(
+    request: Request,
     body: LoginRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -183,15 +273,217 @@ async def login_json(
             detail="Incorrect email or password",
         )
 
+    if getattr(user_row, "is_disabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
     )
     return TokenResponse(access_token=token)
 
 
+@router.get("/auth/me", response_model=UserMeResponse)
+async def get_me(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> UserMeResponse:
+    """Return the current authenticated user's profile."""
+    return UserMeResponse(
+        id=current_user.id,
+        email=current_user.email,
+        subscription_tier=current_user.subscription_tier.value,
+        is_admin=current_user.is_admin,
+        created_at=current_user.created_at.isoformat(),
+    )
+
+
+@router.post(
+    "/auth/register",
+    response_model=TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit("3/minute")
+async def register(
+    request: Request,
+    body: RegisterRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TokenResponse:
+    """Register a new user and return a JWT."""
+    # Check email uniqueness
+    result = await db.execute(
+        select(UserModel).where(UserModel.email == body.email)
+    )
+    if result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email already exists",
+        )
+
+    hashed = pwd_context.hash(body.password)
+    new_user = UserModel(email=body.email, password_hash=hashed)
+    db.add(new_user)
+    await db.flush()
+
+    token = create_access_token(
+        data={"sub": str(new_user.id)}, settings=settings
+    )
+    return TokenResponse(access_token=token)
+
+
+@router.post("/auth/forgot-password", response_model=MessageResponse)
+@limiter.limit("3/minute")
+async def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> MessageResponse:
+    """Send a password reset link if the email exists. Always returns 200."""
+    result = await db.execute(
+        select(UserModel).where(UserModel.email == body.email)
+    )
+    user_row = result.scalar_one_or_none()
+
+    if user_row is not None:
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = pwd_context.hash(raw_token)
+
+        reset_token = PasswordResetTokenModel(
+            user_id=user_row.id,
+            token_hash=token_hash,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        db.add(reset_token)
+        await db.flush()
+
+        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
+
+        if settings.RESEND_API_KEY:
+            try:
+                import resend
+
+                resend.api_key = settings.RESEND_API_KEY
+                resend.Emails.send(
+                    {
+                        "from": "SageMaster <noreply@sagemaster.io>",
+                        "to": [body.email],
+                        "subject": "Reset your password",
+                        "html": (
+                            f"<p>Click the link below to reset your password. "
+                            f"This link expires in 1 hour.</p>"
+                            f'<p><a href="{reset_link}">Reset Password</a></p>'
+                        ),
+                    }
+                )
+            except Exception:
+                logger.exception("Failed to send password reset email")
+        else:
+            logger.warning(
+                "RESEND_API_KEY not set — reset link: %s", reset_link
+            )
+
+    return MessageResponse(
+        message="If an account exists, a reset link has been sent."
+    )
+
+
+@router.post("/auth/reset-password", response_model=MessageResponse)
+@limiter.limit("5/minute")
+async def reset_password(
+    request: Request,
+    body: ResetPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    """Reset password using a valid token."""
+    result = await db.execute(
+        select(PasswordResetTokenModel).where(
+            PasswordResetTokenModel.expires_at > datetime.now(timezone.utc),
+            PasswordResetTokenModel.used_at.is_(None),
+        )
+    )
+    token_rows = result.scalars().all()
+
+    matched_token: PasswordResetTokenModel | None = None
+    for row in token_rows:
+        if pwd_context.verify(body.token, row.token_hash):
+            matched_token = row
+            break
+
+    if matched_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    # Update user password
+    user_result = await db.execute(
+        select(UserModel).where(UserModel.id == matched_token.user_id)
+    )
+    user_row = user_result.scalar_one()
+    user_row.password_hash = pwd_context.hash(body.new_password)
+
+    # Mark token as used
+    matched_token.used_at = datetime.now(timezone.utc)
+
+    return MessageResponse(message="Password has been reset successfully.")
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/auth/change-password", response_model=MessageResponse)
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    body: ChangePasswordRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    """Change password for the authenticated user."""
+    result = await db.execute(
+        select(UserModel).where(UserModel.id == current_user.id)
+    )
+    user_row = result.scalar_one()
+
+    if not pwd_context.verify(body.current_password, user_row.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    if len(body.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 8 characters",
+        )
+
+    user_row.password_hash = pwd_context.hash(body.new_password)
+    return MessageResponse(message="Password changed successfully.")
+
+
 # ============================================================================
 # Telegram endpoints
 # ============================================================================
+
+_telegram_auth_instance: "TelegramAuth | None" = None
+
+
+def _get_telegram_auth(settings: Settings) -> "TelegramAuth":
+    """Return a shared TelegramAuth singleton so pending clients persist across requests."""
+    global _telegram_auth_instance
+    if _telegram_auth_instance is None:
+        from src.adapters.telegram import TelegramAuth
+
+        _telegram_auth_instance = TelegramAuth(
+            api_id=settings.TELEGRAM_API_ID,
+            api_hash=settings.TELEGRAM_API_HASH,
+        )
+    return _telegram_auth_instance
 
 
 @router.post("/telegram/send-code", response_model=SendCodeResponse)
@@ -201,12 +493,7 @@ async def telegram_send_code(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> SendCodeResponse:
     """Send a Telegram verification code to the given phone number."""
-    from src.adapters.telegram import TelegramAuth
-
-    auth = TelegramAuth(
-        api_id=settings.TELEGRAM_API_ID,
-        api_hash=settings.TELEGRAM_API_HASH,
-    )
+    auth = _get_telegram_auth(settings)
     result = await auth.send_code(body.phone_number)
     return SendCodeResponse(phone_code_hash=result["phone_code_hash"])
 
@@ -217,30 +504,34 @@ async def telegram_verify_code(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    session_store=Depends(get_session_store),
+    cache=Depends(get_cache),
 ) -> VerifyCodeResponse:
     """Verify the Telegram code and persist the encrypted session string."""
-    from src.adapters.telegram import TelegramAuth
+    from telethon.errors import SessionPasswordNeededError
 
-    auth = TelegramAuth(
-        api_id=settings.TELEGRAM_API_ID,
-        api_hash=settings.TELEGRAM_API_HASH,
-    )
-    session_string = await auth.verify_code(
-        phone_number=body.phone_number,
-        code=body.code,
-        phone_code_hash=body.phone_code_hash,
-    )
+    auth = _get_telegram_auth(settings)
+    try:
+        session_string = await auth.verify_code(
+            phone_number=body.phone_number,
+            code=body.code,
+            phone_code_hash=body.phone_code_hash,
+            password=body.password,
+        )
+    except (SessionPasswordNeededError, ValueError) as exc:
+        if "password" in str(exc).lower() or isinstance(exc, SessionPasswordNeededError):
+            return VerifyCodeResponse(status="2fa_required", requires_2fa=True)
+        raise
 
     # Encrypt the session string before storing
-    from cryptography.fernet import Fernet
+    from src.core.security import encrypt_session
 
     if not settings.ENCRYPTION_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="ENCRYPTION_KEY not configured",
         )
-    fernet = Fernet(settings.ENCRYPTION_KEY.encode())
-    encrypted = fernet.encrypt(session_string.encode()).decode()
+    encrypted = encrypt_session(session_string, settings.ENCRYPTION_KEY.encode())
 
     # Upsert the telegram session record
     result = await db.execute(
@@ -264,19 +555,14 @@ async def telegram_verify_code(
             )
         )
 
-    # Cache session in Redis for fast lookup by the listener
+    # Cache session for fast lookup by the listener
     try:
-        import redis.asyncio as aioredis
-
-        r = aioredis.from_url(settings.REDIS_URL)
-        await r.set(
-            f"tg_session:{current_user.id}",
-            encrypted,
-            ex=86400 * 30,  # 30-day TTL
-        )
-        await r.aclose()
+        await session_store.save_session(current_user.id, encrypted)
     except Exception:
-        logger.warning("Failed to cache session in Redis — continuing without cache")
+        logger.warning("Failed to cache session — continuing without cache")
+
+    # Invalidate telegram status cache
+    await cache.delete(f"tg_status:{current_user.id}")
 
     return VerifyCodeResponse(status="ok")
 
@@ -294,7 +580,48 @@ async def telegram_status(
         )
     )
     session = result.scalar_one_or_none()
-    return TelegramStatusResponse(connected=session is not None)
+    if session is None:
+        return TelegramStatusResponse(connected=False)
+
+    return TelegramStatusResponse(
+        connected=True,
+        phone_number=session.phone_number,
+        connected_at=session.created_at.isoformat() if session.created_at else None,
+    )
+
+
+@router.post("/telegram/disconnect", response_model=MessageResponse)
+async def telegram_disconnect(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    session_store=Depends(get_session_store),
+    cache=Depends(get_cache),
+) -> MessageResponse:
+    """Disconnect the user's Telegram account by deactivating all sessions."""
+    result = await db.execute(
+        select(TelegramSessionModel).where(
+            TelegramSessionModel.user_id == current_user.id,
+            TelegramSessionModel.is_active.is_(True),
+        )
+    )
+    sessions = result.scalars().all()
+    if not sessions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active Telegram session found.",
+        )
+
+    for session in sessions:
+        session.is_active = False
+
+    # Remove cached session and invalidate status cache
+    try:
+        await session_store.delete_session(current_user.id)
+    except Exception:
+        logger.warning("Failed to remove cached session")
+    await cache.delete(f"tg_status:{current_user.id}")
+
+    return MessageResponse(message="Telegram account disconnected successfully.")
 
 
 # ============================================================================
@@ -307,21 +634,16 @@ async def list_channels(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    session_store=Depends(get_session_store),
 ) -> list[ChannelInfo]:
     """List Telegram channels the user is subscribed to."""
-    # Retrieve session string: try Redis first, fall back to DB
+    # Retrieve session string: try session store first, fall back to DB
     session_encrypted: str | None = None
 
     try:
-        import redis.asyncio as aioredis
-
-        r = aioredis.from_url(settings.REDIS_URL)
-        cached = await r.get(f"tg_session:{current_user.id}")
-        await r.aclose()
-        if cached:
-            session_encrypted = cached if isinstance(cached, str) else cached.decode()
+        session_encrypted = await session_store.get_session(current_user.id)
     except Exception:
-        logger.debug("Redis lookup failed, falling back to DB")
+        logger.debug("Session store lookup failed, falling back to DB")
 
     if session_encrypted is None:
         result = await db.execute(
@@ -368,6 +690,30 @@ async def list_channels(
 # ============================================================================
 
 
+def _rule_to_response(r: RoutingRuleModel) -> "RoutingRuleResponse":
+    """Convert a RoutingRuleModel row to a RoutingRuleResponse."""
+    return RoutingRuleResponse(
+        id=r.id,
+        user_id=r.user_id,
+        source_channel_id=r.source_channel_id,
+        source_channel_name=r.source_channel_name,
+        destination_webhook_url=r.destination_webhook_url,
+        payload_version=r.payload_version,
+        symbol_mappings=r.symbol_mappings or {},
+        risk_overrides=r.risk_overrides or {},
+        webhook_body_template=r.webhook_body_template,
+        rule_name=r.rule_name,
+        destination_label=r.destination_label,
+        destination_type=r.destination_type,
+        custom_ai_instructions=r.custom_ai_instructions,
+        enabled_actions=r.enabled_actions,
+        keyword_blacklist=r.keyword_blacklist or [],
+        is_active=r.is_active,
+        created_at=r.created_at.isoformat() if r.created_at else None,
+        updated_at=r.updated_at.isoformat() if r.updated_at else None,
+    )
+
+
 def _check_tier_limit(
     tier: SubscriptionTier,
     current_rule_count: int,
@@ -378,7 +724,7 @@ def _check_tier_limit(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 f"Your {tier.value} plan allows up to "
-                f"{tier.max_destinations} routing rule(s). "
+                f"{tier.max_destinations} route(s). "
                 "Please upgrade to add more."
             ),
         )
@@ -388,28 +734,29 @@ def _check_tier_limit(
 async def list_routing_rules(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
 ) -> list[RoutingRuleResponse]:
     """Return all routing rules belonging to the current user."""
+    import json
+
+    cache_key = f"rules:{current_user.id}"
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return [RoutingRuleResponse(**r) for r in json.loads(cached)]
+
     result = await db.execute(
         select(RoutingRuleModel)
         .where(RoutingRuleModel.user_id == current_user.id)
         .order_by(RoutingRuleModel.created_at.desc())
     )
     rows = result.scalars().all()
-    return [
-        RoutingRuleResponse(
-            id=r.id,
-            user_id=r.user_id,
-            source_channel_id=r.source_channel_id,
-            source_channel_name=r.source_channel_name,
-            destination_webhook_url=r.destination_webhook_url,
-            payload_version=r.payload_version,
-            symbol_mappings=r.symbol_mappings or {},
-            risk_overrides=r.risk_overrides or {},
-            is_active=r.is_active,
-        )
-        for r in rows
-    ]
+    rules = [_rule_to_response(r) for r in rows]
+    await cache.set(
+        cache_key,
+        json.dumps([r.model_dump(mode="json") for r in rules]),
+        ttl_seconds=30,
+    )
+    return rules
 
 
 @router.post(
@@ -421,6 +768,7 @@ async def create_routing_rule(
     body: RoutingRuleCreate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
 ) -> RoutingRuleResponse:
     """Create a new routing rule after verifying the user's tier limit."""
     # Count existing active rules
@@ -436,6 +784,17 @@ async def create_routing_rule(
 
     _check_tier_limit(current_user.subscription_tier, current_count)
 
+    # Template is required for SageMaster destinations (contains assistId)
+    if body.destination_type in ("sagemaster_forex", "sagemaster_crypto") and not body.webhook_body_template:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Webhook body template is required for SageMaster destinations. "
+                "Copy the JSON from your SageMaster Assists overview page > "
+                "alert configuration in SageMaster."
+            ),
+        )
+
     new_rule = RoutingRuleModel(
         user_id=current_user.id,
         source_channel_id=body.source_channel_id,
@@ -444,22 +803,145 @@ async def create_routing_rule(
         payload_version=body.payload_version,
         symbol_mappings=body.symbol_mappings,
         risk_overrides=body.risk_overrides,
+        webhook_body_template=body.webhook_body_template,
+        rule_name=body.rule_name,
+        destination_label=body.destination_label,
+        destination_type=body.destination_type,
+        custom_ai_instructions=body.custom_ai_instructions,
+        enabled_actions=body.enabled_actions,
+        keyword_blacklist=body.keyword_blacklist,
         is_active=True,
     )
     db.add(new_rule)
     await db.flush()  # populate default values (id, timestamps)
+    await cache.delete(f"rules:{current_user.id}")
 
-    return RoutingRuleResponse(
-        id=new_rule.id,
-        user_id=new_rule.user_id,
-        source_channel_id=new_rule.source_channel_id,
-        source_channel_name=new_rule.source_channel_name,
-        destination_webhook_url=new_rule.destination_webhook_url,
-        payload_version=new_rule.payload_version,
-        symbol_mappings=new_rule.symbol_mappings or {},
-        risk_overrides=new_rule.risk_overrides or {},
-        is_active=new_rule.is_active,
+    return _rule_to_response(new_rule)
+
+
+@router.get("/routing-rules/{rule_id}", response_model=RoutingRuleResponse)
+async def get_routing_rule(
+    rule_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RoutingRuleResponse:
+    """Return a single routing rule by ID, scoped to the current user."""
+    result = await db.execute(
+        select(RoutingRuleModel).where(
+            RoutingRuleModel.id == rule_id,
+            RoutingRuleModel.user_id == current_user.id,
+        )
     )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routing rule not found")
+    return _rule_to_response(row)
+
+
+@router.put("/routing-rules/{rule_id}", response_model=RoutingRuleResponse)
+async def update_routing_rule(
+    rule_id: UUID,
+    body: RoutingRuleUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
+) -> RoutingRuleResponse:
+    """Update a routing rule by ID, scoped to the current user."""
+    result = await db.execute(
+        select(RoutingRuleModel).where(
+            RoutingRuleModel.id == rule_id,
+            RoutingRuleModel.user_id == current_user.id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routing rule not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+
+    # Determine the effective destination_type and template after update
+    effective_type = update_data.get("destination_type", row.destination_type)
+    effective_template = update_data.get("webhook_body_template", row.webhook_body_template)
+    if effective_type in ("sagemaster_forex", "sagemaster_crypto") and not effective_template:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Webhook body template is required for SageMaster destinations. "
+                "Copy the JSON from your SageMaster Assists overview page > "
+                "alert configuration in SageMaster."
+            ),
+        )
+
+    for field, value in update_data.items():
+        setattr(row, field, value)
+    await db.flush()
+    await db.refresh(row)
+    await cache.delete(f"rules:{current_user.id}")
+
+    return _rule_to_response(row)
+
+
+@router.delete(
+    "/routing-rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_routing_rule(
+    rule_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
+):
+    """Delete a routing rule by ID, scoped to the current user."""
+    result = await db.execute(
+        select(RoutingRuleModel).where(
+            RoutingRuleModel.id == rule_id,
+            RoutingRuleModel.user_id == current_user.id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routing rule not found")
+    await db.delete(row)
+    await cache.delete(f"rules:{current_user.id}")
+
+
+@router.post("/webhook/test", response_model=TestWebhookResponse)
+async def test_webhook(
+    body: TestWebhookRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> TestWebhookResponse:
+    """Send a test ping to a webhook URL to verify connectivity."""
+    import httpx
+
+    try:
+        url = body.url
+        # Validate URL format
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return TestWebhookResponse(
+                success=False, error="URL must use http or https"
+            )
+
+        test_payload = {
+            "type": "test",
+            "source": "sagemaster-signal-copier",
+            "message": "This is a test ping from SageMaster Signal Copier.",
+        }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=test_payload)
+            return TestWebhookResponse(
+                success=resp.status_code < 400,
+                status_code=resp.status_code,
+                error=None if resp.status_code < 400 else f"HTTP {resp.status_code}",
+            )
+    except httpx.TimeoutException:
+        return TestWebhookResponse(success=False, error="Request timed out")
+    except Exception as exc:
+        return TestWebhookResponse(success=False, error=str(exc))
 
 
 # ============================================================================
@@ -473,20 +955,29 @@ async def list_logs(
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = 50,
     offset: int = 0,
+    status_filter: str | None = Query(None, alias="status"),
+    rule_id: UUID | None = Query(None),
 ) -> PaginatedLogs:
     """Return paginated signal logs for the current user."""
+    # Base filter
+    base_filter = [SignalLogModel.user_id == current_user.id]
+    if status_filter and status_filter != "all":
+        base_filter.append(SignalLogModel.status == status_filter)
+    if rule_id:
+        base_filter.append(SignalLogModel.routing_rule_id == rule_id)
+
     # Total count
     count_result = await db.execute(
         select(func.count())
         .select_from(SignalLogModel)
-        .where(SignalLogModel.user_id == current_user.id)
+        .where(*base_filter)
     )
     total = count_result.scalar_one()
 
     # Fetch page
     result = await db.execute(
         select(SignalLogModel)
-        .where(SignalLogModel.user_id == current_user.id)
+        .where(*base_filter)
         .order_by(SignalLogModel.processed_at.desc())
         .limit(limit)
         .offset(offset)
@@ -504,8 +995,213 @@ async def list_logs(
             status=r.status,
             error_message=r.error_message,
             processed_at=r.processed_at.isoformat() if r.processed_at else "",
+            message_id=r.message_id,
+            channel_id=r.channel_id,
+            reply_to_msg_id=r.reply_to_msg_id,
         )
         for r in rows
     ]
 
     return PaginatedLogs(total=total, limit=limit, offset=offset, items=items)
+
+
+class LogStatsResponse(BaseModel):
+    total: int
+    success: int
+    failed: int
+    ignored: int
+
+
+@router.get("/logs/stats", response_model=LogStatsResponse)
+async def log_stats(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
+) -> LogStatsResponse:
+    """Return signal log counts by status for the current user."""
+    import json
+
+    cache_key = f"log_stats:{current_user.id}"
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return LogStatsResponse(**json.loads(cached))
+
+    result = await db.execute(
+        select(SignalLogModel.status, func.count())
+        .where(SignalLogModel.user_id == current_user.id)
+        .group_by(SignalLogModel.status)
+    )
+    counts = {row[0]: row[1] for row in result.all()}
+    total = sum(counts.values())
+
+    stats = LogStatsResponse(
+        total=total,
+        success=counts.get("success", 0),
+        failed=counts.get("failed", 0),
+        ignored=counts.get("ignored", 0),
+    )
+    await cache.set(cache_key, stats.model_dump_json(), ttl_seconds=15)
+    return stats
+
+
+# ---------------------------------------------------------------------------
+# Notification preferences
+# ---------------------------------------------------------------------------
+
+
+class NotificationPreferencesResponse(BaseModel):
+    email_on_success: bool = False
+    email_on_failure: bool = True
+    telegram_on_success: bool = False
+    telegram_on_failure: bool = False
+    telegram_bot_chat_id: int | None = None
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    email_on_success: bool | None = None
+    email_on_failure: bool | None = None
+    telegram_on_success: bool | None = None
+    telegram_on_failure: bool | None = None
+
+
+@router.get("/settings/notifications", response_model=NotificationPreferencesResponse)
+async def get_notification_preferences(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> NotificationPreferencesResponse:
+    """Return the current user's notification preferences."""
+    result = await db.execute(
+        select(UserModel.notification_preferences).where(
+            UserModel.id == current_user.id
+        )
+    )
+    prefs = result.scalar_one_or_none() or {}
+    return NotificationPreferencesResponse(**prefs)
+
+
+@router.put("/settings/notifications", response_model=NotificationPreferencesResponse)
+async def update_notification_preferences(
+    body: NotificationPreferencesUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> NotificationPreferencesResponse:
+    """Update the current user's notification preferences."""
+    result = await db.execute(
+        select(UserModel).where(UserModel.id == current_user.id)
+    )
+    user_row = result.scalar_one()
+
+    current_prefs = user_row.notification_preferences or {}
+    updates = body.model_dump(exclude_none=True)
+    current_prefs.update(updates)
+    user_row.notification_preferences = current_prefs
+
+    return NotificationPreferencesResponse(**current_prefs)
+
+
+# ---------------------------------------------------------------------------
+# Telegram Bot Notifications
+# ---------------------------------------------------------------------------
+
+
+class TelegramBotLinkResponse(BaseModel):
+    bot_link: str
+
+
+@router.get("/settings/telegram-bot-link", response_model=TelegramBotLinkResponse)
+async def get_telegram_bot_link(
+    current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TelegramBotLinkResponse:
+    """Return a deep link to start the SGM notification bot.
+
+    The link encodes the user's ID so the bot webhook can associate the
+    Telegram ``chat_id`` with their account.
+    """
+    if not settings.TELEGRAM_BOT_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram bot notifications are not configured",
+        )
+
+    import base64
+
+    token = base64.urlsafe_b64encode(str(current_user.id).encode()).decode().rstrip("=")
+    bot_username = await _resolve_bot_username(settings.TELEGRAM_BOT_TOKEN)
+    return TelegramBotLinkResponse(
+        bot_link=f"https://t.me/{bot_username}?start={token}",
+    )
+
+
+async def _resolve_bot_username(bot_token: str) -> str:
+    """Call getMe to resolve the bot's username (cached after first call)."""
+    if not hasattr(_resolve_bot_username, "_cache"):
+        _resolve_bot_username._cache = {}  # type: ignore[attr-defined]
+    cache = _resolve_bot_username._cache  # type: ignore[attr-defined]
+    if bot_token in cache:
+        return cache[bot_token]
+
+    import httpx
+
+    url = f"https://api.telegram.org/bot{bot_token}/getMe"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url)
+        data = resp.json()
+        username = data.get("result", {}).get("username", "sgm_copier_bot")
+        cache[bot_token] = username
+        return username
+
+
+class TelegramBotUpdate(BaseModel):
+    """Minimal Telegram Bot update payload for /start command."""
+    update_id: int
+    message: dict | None = None
+
+
+@router.post("/webhook/telegram-bot")
+async def telegram_bot_webhook(
+    body: TelegramBotUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Receive Telegram bot updates.
+
+    When a user sends ``/start <token>``, decode the token to find the user
+    and store their ``chat_id`` in notification preferences.
+    """
+    message = body.message
+    if not message:
+        return {"ok": True}
+
+    text = message.get("text", "")
+    chat_id = message.get("chat", {}).get("id")
+
+    if not text.startswith("/start ") or not chat_id:
+        return {"ok": True}
+
+    token_part = text.split(" ", 1)[1].strip()
+
+    import base64
+
+    # Restore padding
+    padded = token_part + "=" * (-len(token_part) % 4)
+    try:
+        user_id_str = base64.urlsafe_b64decode(padded).decode()
+        user_id = UUID(user_id_str)
+    except Exception:
+        logger.warning("Invalid /start token: %s", token_part)
+        return {"ok": True}
+
+    result = await db.execute(
+        select(UserModel).where(UserModel.id == user_id)
+    )
+    user_row = result.scalar_one_or_none()
+    if user_row is None:
+        logger.warning("Telegram bot /start: user %s not found", user_id)
+        return {"ok": True}
+
+    prefs = user_row.notification_preferences or {}
+    prefs["telegram_bot_chat_id"] = chat_id
+    user_row.notification_preferences = prefs
+
+    logger.info("Telegram bot linked for user %s, chat_id=%s", user_id, chat_id)
+    return {"ok": True, "linked": True}

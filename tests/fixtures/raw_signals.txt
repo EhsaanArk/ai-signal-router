@@ -41,3 +41,13 @@ TP: 2330.00
 Buy USDJPY @ 150.20
 SL: 149.80
 TP: 151.00
+--- SIGNAL 11 ---
+Close half of EURUSD position now.
+--- SIGNAL 12 ---
+Move SL to breakeven on XAUUSD.
+--- SIGNAL 13 ---
+Close all GBPJPY positions, market has reversed.
+--- SIGNAL 14 ---
+Update SL on EURUSD to 1.0980
+--- SIGNAL 15 ---
+TP1 hit on BTCUSD! Close 50% and let the rest run to TP2.

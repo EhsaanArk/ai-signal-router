@@ -1,0 +1,59 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api";
+import type {
+  RoutingRuleCreate,
+  RoutingRuleResponse,
+  RoutingRuleUpdate,
+} from "@/types/api";
+
+export function useRoutingRules() {
+  return useQuery({
+    queryKey: ["routing-rules"],
+    queryFn: () => apiFetch<RoutingRuleResponse[]>("/routing-rules"),
+  });
+}
+
+export function useCreateRule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: RoutingRuleCreate) =>
+      apiFetch<RoutingRuleResponse>("/routing-rules", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["routing-rules"] });
+    },
+  });
+}
+
+export function useUpdateRule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: RoutingRuleUpdate;
+    }) =>
+      apiFetch<RoutingRuleResponse>(`/routing-rules/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["routing-rules"] });
+    },
+  });
+}
+
+export function useDeleteRule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<void>(`/routing-rules/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["routing-rules"] });
+    },
+  });
+}

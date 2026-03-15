@@ -11,7 +11,7 @@ services:
     environment:
       - PORT=8000
       - LOCAL_MODE=true
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/sgm_copier
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/sgm_copier
       - REDIS_URL=redis://redis:6379/0
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
@@ -27,8 +27,9 @@ services:
       - .env
     environment:
       - LOCAL_MODE=true
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/sgm_copier
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/sgm_copier
       - REDIS_URL=redis://redis:6379/0
+      - API_BASE_URL=http://api:8000
     command: python -m src.adapters.telegram.listener
     volumes:
       - .:/app
@@ -36,6 +37,14 @@ services:
       - api
       - db
       - redis
+
+  frontend:
+    build: ./frontend
+    container_name: sgm-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
 
   db:
     image: postgres:16-alpine

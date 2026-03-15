@@ -100,6 +100,11 @@ class SqlAlchemyRoutingRuleRepository:
             payload_version=rule.payload_version,
             symbol_mappings=rule.symbol_mappings,
             risk_overrides=rule.risk_overrides,
+            webhook_body_template=rule.webhook_body_template,
+            rule_name=rule.rule_name,
+            destination_label=rule.destination_label,
+            destination_type=rule.destination_type,
+            custom_ai_instructions=rule.custom_ai_instructions,
             is_active=rule.is_active,
         )
         self._session.add(db_rule)
@@ -124,6 +129,44 @@ class SqlAlchemyRoutingRuleRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one()
 
+    async def get_by_id(self, rule_id: UUID, user_id: UUID) -> RoutingRule | None:
+        stmt = select(RoutingRuleModel).where(
+            RoutingRuleModel.id == rule_id,
+            RoutingRuleModel.user_id == user_id,
+        )
+        result = await self._session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return self._to_domain(row)
+
+    async def update(self, rule_id: UUID, user_id: UUID, **fields) -> RoutingRule | None:
+        stmt = select(RoutingRuleModel).where(
+            RoutingRuleModel.id == rule_id,
+            RoutingRuleModel.user_id == user_id,
+        )
+        result = await self._session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        for key, value in fields.items():
+            setattr(row, key, value)
+        await self._session.flush()
+        return self._to_domain(row)
+
+    async def delete(self, rule_id: UUID, user_id: UUID) -> bool:
+        stmt = select(RoutingRuleModel).where(
+            RoutingRuleModel.id == rule_id,
+            RoutingRuleModel.user_id == user_id,
+        )
+        result = await self._session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.flush()
+        return True
+
     # ------------------------------------------------------------------
     @staticmethod
     def _to_domain(row: RoutingRuleModel) -> RoutingRule:
@@ -136,6 +179,11 @@ class SqlAlchemyRoutingRuleRepository:
             payload_version=row.payload_version,
             symbol_mappings=row.symbol_mappings or {},
             risk_overrides=row.risk_overrides or {},
+            webhook_body_template=row.webhook_body_template,
+            rule_name=row.rule_name,
+            destination_label=row.destination_label,
+            destination_type=row.destination_type,
+            custom_ai_instructions=row.custom_ai_instructions,
             is_active=row.is_active,
         )
 

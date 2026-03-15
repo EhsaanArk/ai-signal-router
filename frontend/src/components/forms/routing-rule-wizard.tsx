@@ -1,0 +1,234 @@
+import { useState, useMemo } from "react";
+import { Check } from "lucide-react";
+import { StepSelectChannel } from "./step-select-channel";
+import { StepSetDestination } from "./step-set-destination";
+import { StepActions } from "./step-actions";
+import { StepSymbolMappings } from "./step-symbol-mappings";
+import { TierLimitBanner } from "@/components/shared/tier-gate";
+import { useCreateRule } from "@/hooks/use-routing-rules";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import type { DestinationType, RoutingRuleCreate } from "@/types/api";
+
+interface WizardData {
+  source_channel_id: string;
+  source_channel_name: string;
+  destination_webhook_url: string;
+  payload_version: "V1" | "V2";
+  webhook_body_template: Record<string, unknown> | null;
+  risk_overrides: Record<string, unknown>;
+  symbol_mappings: Record<string, string>;
+  rule_name: string;
+  destination_label: string;
+  destination_type: DestinationType;
+  enabled_actions: string[];
+  keyword_blacklist: string[];
+}
+
+interface StepDef {
+  id: "channel" | "destination" | "actions" | "mappings";
+  label: string;
+  description: string;
+}
+
+const ALL_STEPS: StepDef[] = [
+  { id: "channel", label: "Channel", description: "Signal channel" },
+  { id: "destination", label: "Destination", description: "Webhook + template" },
+  { id: "actions", label: "Actions", description: "What gets forwarded" },
+  { id: "mappings", label: "Mappings", description: "Symbol maps" },
+];
+
+interface Props {
+  onComplete: () => void;
+}
+
+export function RoutingRuleWizard({ onComplete }: Props) {
+  const [step, setStep] = useState(0);
+  const [data, setData] = useState<Partial<WizardData>>({});
+  const createRule = useCreateRule();
+
+  const activeSteps = useMemo(() => {
+    if (data.destination_type === "custom") return ALL_STEPS;
+    // SageMaster destinations skip the mappings step
+    return ALL_STEPS.filter((s) => s.id !== "mappings");
+  }, [data.destination_type]);
+
+  const currentStepId = activeSteps[step]?.id;
+
+  function handleNext(partial: Partial<WizardData>) {
+    setData((prev) => ({ ...prev, ...partial }));
+    setStep((s) => s + 1);
+  }
+
+  async function handleFinish(mappings: Record<string, string>) {
+    const payload: RoutingRuleCreate = {
+      source_channel_id: data.source_channel_id!,
+      source_channel_name: data.source_channel_name,
+      destination_webhook_url: data.destination_webhook_url!,
+      payload_version: data.payload_version || "V1",
+      symbol_mappings: mappings,
+      risk_overrides: data.risk_overrides || {},
+      webhook_body_template: data.webhook_body_template ?? null,
+      rule_name: data.rule_name || null,
+      destination_label: null,
+      destination_type: data.destination_type || "sagemaster_forex",
+      enabled_actions: data.enabled_actions || null,
+      keyword_blacklist: data.keyword_blacklist || [],
+    };
+
+    try {
+      await createRule.mutateAsync(payload);
+      toast.success("Route created");
+      onComplete();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to create rule"
+      );
+    }
+  }
+
+  // Called when Actions step is the final step (SageMaster path)
+  async function handleActionsFinish(enabledActions: string[], riskOverrides: Record<string, unknown>, keywordBlacklist: string[]) {
+    setData((prev) => ({ ...prev, enabled_actions: enabledActions, risk_overrides: riskOverrides, keyword_blacklist: keywordBlacklist }));
+    // Submit directly with empty mappings
+    const merged = { ...data, enabled_actions: enabledActions, risk_overrides: riskOverrides, keyword_blacklist: keywordBlacklist };
+    const payload: RoutingRuleCreate = {
+      source_channel_id: merged.source_channel_id!,
+      source_channel_name: merged.source_channel_name,
+      destination_webhook_url: merged.destination_webhook_url!,
+      payload_version: merged.payload_version || "V1",
+      symbol_mappings: {},
+      risk_overrides: riskOverrides,
+      webhook_body_template: merged.webhook_body_template ?? null,
+      rule_name: merged.rule_name || null,
+      destination_label: merged.destination_label || null,
+      destination_type: merged.destination_type || "sagemaster_forex",
+      enabled_actions: enabledActions,
+      keyword_blacklist: keywordBlacklist,
+    };
+
+    try {
+      await createRule.mutateAsync(payload);
+      toast.success("Route created");
+      onComplete();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to create rule"
+      );
+    }
+  }
+
+  const isFinalActions = currentStepId === "actions" && !activeSteps.some((s) => s.id === "mappings");
+
+  return (
+    <div className="space-y-6">
+      {/* Tier limit warning */}
+      <TierLimitBanner />
+
+      {/* Step indicator — numbered circles with line */}
+      <div className="flex items-center gap-0">
+        {activeSteps.map((s, i) => (
+          <div key={s.id} className="flex items-center flex-1 last:flex-none">
+            <div className="flex items-center gap-2">
+              <div
+                className={cn(
+                  "flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium transition-colors",
+                  i < step
+                    ? "bg-primary text-primary-foreground"
+                    : i === step
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground"
+                )}
+              >
+                {i < step ? <Check className="h-3.5 w-3.5" /> : i + 1}
+              </div>
+              <div className="hidden sm:block">
+                <p className={cn(
+                  "text-xs font-medium leading-none",
+                  i <= step ? "text-foreground" : "text-muted-foreground"
+                )}>
+                  {s.label}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{s.description}</p>
+              </div>
+            </div>
+            {i < activeSteps.length - 1 && (
+              <div className={cn(
+                "flex-1 h-px mx-3",
+                i < step ? "bg-primary" : "bg-border"
+              )} />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {currentStepId === "channel" && (
+        <StepSelectChannel
+          initialData={{
+            source_channel_id: data.source_channel_id,
+            rule_name: data.rule_name,
+          }}
+          onNext={(channelId, channelName, ruleName) =>
+            handleNext({
+              source_channel_id: channelId,
+              source_channel_name: channelName,
+              rule_name: ruleName,
+            })
+          }
+        />
+      )}
+      {currentStepId === "destination" && (
+        <StepSetDestination
+          initialData={{
+            destination_webhook_url: data.destination_webhook_url,
+            payload_version: data.payload_version,
+            webhook_body_template: data.webhook_body_template,
+            destination_type: data.destination_type,
+            destination_label: data.destination_label,
+          }}
+          onNext={(url, version, webhookBodyTemplate, destinationType, destinationLabel) =>
+            handleNext({
+              destination_webhook_url: url,
+              payload_version: version,
+              webhook_body_template: webhookBodyTemplate,
+              destination_type: destinationType,
+              destination_label: destinationLabel,
+            })
+          }
+          onBack={() => setStep((s) => s - 1)}
+        />
+      )}
+      {currentStepId === "actions" && (
+        <StepActions
+          initialData={{
+            enabled_actions: data.enabled_actions,
+            risk_overrides: data.risk_overrides,
+            keyword_blacklist: data.keyword_blacklist,
+          }}
+          wizardData={data}
+          onNext={(enabledActions, riskOverrides, keywordBlacklist) =>
+            handleNext({
+              enabled_actions: enabledActions,
+              risk_overrides: riskOverrides,
+              keyword_blacklist: keywordBlacklist,
+            })
+          }
+          onBack={() => setStep((s) => s - 1)}
+          isFinalStep={isFinalActions}
+          onFinish={handleActionsFinish}
+          isSubmitting={createRule.isPending}
+        />
+      )}
+      {currentStepId === "mappings" && (
+        <StepSymbolMappings
+          initialData={{
+            symbol_mappings: data.symbol_mappings,
+          }}
+          onFinish={handleFinish}
+          onBack={() => setStep((s) => s - 1)}
+          isSubmitting={createRule.isPending}
+        />
+      )}
+    </div>
+  );
+}

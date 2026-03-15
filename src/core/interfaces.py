@@ -20,6 +20,26 @@ from src.core.models import (
 
 
 # ---------------------------------------------------------------------------
+# Signal source (Telegram, MT5 EA, Discord, etc.)
+# ---------------------------------------------------------------------------
+
+class SignalSource(Protocol):
+    """Lifecycle interface for a signal input (e.g. Telegram listener).
+
+    Implementations push ``RawSignal`` objects to a ``QueuePort`` internally;
+    this protocol only governs start/stop lifecycle.
+    """
+
+    async def start(self) -> None:
+        """Begin listening for signals."""
+        ...
+
+    async def stop(self) -> None:
+        """Gracefully stop listening."""
+        ...
+
+
+# ---------------------------------------------------------------------------
 # Signal parsing
 # ---------------------------------------------------------------------------
 
@@ -58,6 +78,28 @@ class QueuePort(Protocol):
 
     async def enqueue(self, signal: RawSignal) -> None:
         """Place *signal* onto the processing queue."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+
+class CachePort(Protocol):
+    """General-purpose cache (rate limiting, dedup, etc.)."""
+
+    async def get(self, key: str) -> str | None:
+        """Return the cached value, or ``None`` if absent/expired."""
+        ...
+
+    async def set(
+        self, key: str, value: str, ttl_seconds: int | None = None
+    ) -> None:
+        """Store *value* under *key*, optionally expiring after *ttl_seconds*."""
+        ...
+
+    async def delete(self, key: str) -> None:
+        """Remove *key* from the cache."""
         ...
 
 

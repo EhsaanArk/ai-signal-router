@@ -1,11 +1,18 @@
-"""Tests for src.core.security — Fernet encrypt/decrypt utilities."""
+"""Tests for src.core.security — AES-256-GCM encrypt/decrypt utilities."""
 
 import base64
 
 import pytest
-from cryptography.fernet import InvalidToken
+from cryptography.exceptions import InvalidTag
+from cryptography.fernet import Fernet
 
-from src.core.security import decrypt_session, encrypt_session, generate_key
+from src.core.security import (
+    decrypt_session,
+    decrypt_session_auto,
+    decrypt_session_legacy,
+    encrypt_session,
+    generate_key,
+)
 
 
 def test_encrypt_decrypt_roundtrip():
@@ -17,11 +24,11 @@ def test_encrypt_decrypt_roundtrip():
 
 
 def test_different_keys_fail():
-    """Decrypting with a different key should raise InvalidToken."""
+    """Decrypting with a different key should raise InvalidTag."""
     key1 = generate_key()
     key2 = generate_key()
     cipher = encrypt_session("secret", key1)
-    with pytest.raises(InvalidToken):
+    with pytest.raises(InvalidTag):
         decrypt_session(cipher, key2)
 
 
@@ -29,6 +36,39 @@ def test_generate_key():
     """Generated key should be a valid url-safe base64-encoded 32-byte key."""
     key = generate_key()
     assert isinstance(key, bytes)
-    # Fernet keys are 44 bytes of url-safe base64 (encoding 32 bytes)
     decoded = base64.urlsafe_b64decode(key)
     assert len(decoded) == 32
+
+
+def test_ciphertext_differs_each_call():
+    """Each encryption should produce different ciphertext (unique nonce)."""
+    key = generate_key()
+    c1 = encrypt_session("same-text", key)
+    c2 = encrypt_session("same-text", key)
+    assert c1 != c2
+    # But both decrypt to the same plaintext
+    assert decrypt_session(c1, key) == decrypt_session(c2, key) == "same-text"
+
+
+def test_legacy_fernet_decrypt():
+    """Legacy Fernet-encrypted strings should be decryptable."""
+    key = generate_key()  # base64-encoded 32 bytes — valid Fernet key
+    fernet = Fernet(key)
+    plaintext = "legacy-session-string"
+    cipher = fernet.encrypt(plaintext.encode()).decode()
+    assert decrypt_session_legacy(cipher, key) == plaintext
+
+
+def test_auto_decrypt_aes256gcm():
+    """Auto-decrypt should handle AES-256-GCM ciphertext."""
+    key = generate_key()
+    cipher = encrypt_session("aes-gcm-session", key)
+    assert decrypt_session_auto(cipher, key) == "aes-gcm-session"
+
+
+def test_auto_decrypt_fernet_fallback():
+    """Auto-decrypt should fall back to Fernet for legacy ciphertext."""
+    key = generate_key()
+    fernet = Fernet(key)
+    cipher = fernet.encrypt(b"legacy-session").decode()
+    assert decrypt_session_auto(cipher, key) == "legacy-session"
