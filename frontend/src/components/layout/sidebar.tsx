@@ -55,8 +55,9 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
       )}
     >
       {/* Logo */}
-      <div className="flex h-14 items-center justify-center border-b border-sidebar-border">
-        <span className="text-lg font-bold text-primary">SC</span>
+      <div className="flex h-14 flex-col items-center justify-center border-b border-sidebar-border gap-0.5">
+        <span className="text-lg font-bold text-primary">SR</span>
+        <span className="text-[7px] font-bold uppercase tracking-wider px-1 py-px rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
       </div>
 
       {/* Nav */}
