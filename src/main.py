@@ -156,22 +156,20 @@ def create_app() -> FastAPI:
                 from src.adapters.db.session import get_engine
                 from src.adapters.db.models import UserModel
 
+                admin_tier = settings_local.ADMIN_TIER
+
                 engine = get_engine()
                 async with SASession(engine, expire_on_commit=False) as db:
                     result = await db.execute(
                         update(UserModel)
-                        .where(
-                            UserModel.email.in_(admin_emails),
-                            UserModel.is_admin.is_(False),
-                        )
+                        .where(UserModel.email.in_(admin_emails))
+                        .values(is_admin=True, subscription_tier=admin_tier)
                         .returning(UserModel.email)
                     )
                     promoted = [row[0] for row in result.all()]
                     await db.commit()
                 if promoted:
-                    logger.info("Promoted %d user(s) to admin: %s", len(promoted), promoted)
-                else:
-                    logger.info("Admin emails configured; all matching users already admin")
+                    logger.info("Admin bootstrap: %s → is_admin=True, tier=%s", promoted, admin_tier)
 
         yield
 
