@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Callable, Awaitable
 from uuid import UUID
 
+import sentry_sdk
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 

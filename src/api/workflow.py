@@ -11,6 +11,8 @@ import asyncio
 import logging
 from typing import Annotated
 
+import sentry_sdk
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -293,6 +295,7 @@ async def process_signal(
             except Exception as exc:
                 dispatch_span.record_exception(exc)
                 logger.error("Webhook dispatch failed for rule %s: %s", rule.id, exc)
+                sentry_sdk.capture_exception(exc)
                 dr = DispatchResult(
                     routing_rule_id=rule.id,
                     status="failed",
@@ -319,6 +322,7 @@ async def process_signal(
     for i, outcome in enumerate(outcomes):
         if isinstance(outcome, Exception):
             logger.error("Unexpected error processing rule %s: %s", rules[i].id, outcome)
+            sentry_sdk.capture_exception(outcome)
             dr = DispatchResult(
                 routing_rule_id=rules[i].id,
                 status="failed",
@@ -385,6 +389,7 @@ async def process_signal(
                     )
         except Exception as exc:
             logger.error("Email notification failed (non-blocking): %s", exc)
+            sentry_sdk.capture_exception(exc)
 
         # Telegram notification
         try:
@@ -404,5 +409,6 @@ async def process_signal(
                 )
         except Exception as exc:
             logger.error("Telegram notification failed (non-blocking): %s", exc)
+            sentry_sdk.capture_exception(exc)
 
     return results

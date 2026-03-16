@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 
+import sentry_sdk
 from openai import AsyncOpenAI
 
 from src.core.models import ParsedSignal, RawSignal
@@ -206,6 +207,7 @@ class OpenAISignalParser:
 
         except json.JSONDecodeError as exc:
             logger.error("Failed to decode OpenAI response as JSON: %s", exc)
+            sentry_sdk.capture_exception(exc)
             return ParsedSignal(
                 symbol="UNKNOWN",
                 direction="long",
@@ -216,6 +218,7 @@ class OpenAISignalParser:
             )
         except Exception as exc:
             logger.exception("OpenAI API call failed")
+            sentry_sdk.capture_exception(exc)
             return ParsedSignal(
                 symbol="UNKNOWN",
                 direction="long",
