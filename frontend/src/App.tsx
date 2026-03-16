@@ -6,6 +6,7 @@ import { LoginPage } from "@/pages/login";
 import { RegisterPage } from "@/pages/register";
 import { ForgotPasswordPage } from "@/pages/forgot-password";
 import { ResetPasswordPage } from "@/pages/reset-password";
+import { VerifyEmailPage } from "@/pages/verify-email";
 import { DashboardPage } from "@/pages/dashboard";
 import { TelegramPage } from "@/pages/telegram";
 import { RoutingRulesPage } from "@/pages/routing-rules";
@@ -33,6 +34,7 @@ const router = createBrowserRouter([
   { path: "/register", element: <RegisterPage /> },
   { path: "/forgot-password", element: <ForgotPasswordPage /> },
   { path: "/reset-password", element: <ResetPasswordPage /> },
+  { path: "/verify-email", element: <VerifyEmailPage /> },
   {
     element: <ProtectedRoute />,
     children: [

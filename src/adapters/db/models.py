@@ -52,6 +52,9 @@ class UserModel(Base):
     is_disabled: Mapped[bool] = mapped_column(
         Boolean, server_default=sa_false(), nullable=False
     )
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, server_default=sa_false(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -252,6 +255,34 @@ class SignalLogModel(Base):
 
 class PasswordResetTokenModel(Base):
     __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    user: Mapped[UserModel] = relationship()
+
+
+class EmailVerificationTokenModel(Base):
+    __tablename__ = "email_verification_tokens"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
+    EmailVerificationTokenModel,
     PasswordResetTokenModel,
     RoutingRuleModel,
     SignalLogModel,
@@ -67,6 +68,7 @@ class UserMeResponse(BaseModel):
     email: str
     subscription_tier: str
     is_admin: bool = False
+    email_verified: bool = False
     created_at: str
 
 
@@ -295,6 +297,7 @@ async def get_me(
         email=current_user.email,
         subscription_tier=current_user.subscription_tier.value,
         is_admin=current_user.is_admin,
+        email_verified=current_user.email_verified,
         created_at=current_user.created_at.isoformat(),
     )
 
@@ -326,6 +329,37 @@ async def register(
     new_user = UserModel(email=body.email, password_hash=hashed)
     db.add(new_user)
     await db.flush()
+
+    # Send email verification
+    raw_verify_token = secrets.token_urlsafe(32)
+    verify_token_hash = pwd_context.hash(raw_verify_token)
+    db.add(EmailVerificationTokenModel(
+        user_id=new_user.id,
+        token_hash=verify_token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+    ))
+    await db.flush()
+
+    verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_verify_token}"
+    if settings.RESEND_API_KEY:
+        try:
+            import resend
+            resend.api_key = settings.RESEND_API_KEY
+            resend.Emails.send({
+                "from": "Sage Radar AI <onboarding@resend.dev>",
+                "to": [body.email],
+                "subject": "Verify your email",
+                "html": (
+                    "<p>Welcome to Sage Radar AI! Please verify your email address "
+                    "by clicking the link below.</p>"
+                    f'<p><a href="{verify_link}">Verify Email</a></p>'
+                    "<p>This link expires in 24 hours.</p>"
+                ),
+            })
+        except Exception:
+            logger.exception("Failed to send verification email")
+    else:
+        logger.warning("RESEND_API_KEY not set — verify link: %s", verify_link)
 
     token = create_access_token(
         data={"sub": str(new_user.id)}, settings=settings
@@ -429,6 +463,95 @@ async def reset_password(
     matched_token.used_at = datetime.now(timezone.utc)
 
     return MessageResponse(message="Password has been reset successfully.")
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
+@router.post("/auth/verify-email", response_model=MessageResponse)
+@limiter.limit("10/minute")
+async def verify_email(
+    request: Request,
+    body: VerifyEmailRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    """Verify a user's email using the token from the verification link."""
+    result = await db.execute(
+        select(EmailVerificationTokenModel).where(
+            EmailVerificationTokenModel.expires_at > datetime.now(timezone.utc),
+            EmailVerificationTokenModel.used_at.is_(None),
+        )
+    )
+    token_rows = result.scalars().all()
+
+    matched_token: EmailVerificationTokenModel | None = None
+    for row in token_rows:
+        if pwd_context.verify(body.token, row.token_hash):
+            matched_token = row
+            break
+
+    if matched_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token",
+        )
+
+    # Mark user as verified
+    user_result = await db.execute(
+        select(UserModel).where(UserModel.id == matched_token.user_id)
+    )
+    user_row = user_result.scalar_one()
+    user_row.email_verified = True
+
+    # Mark token as used
+    matched_token.used_at = datetime.now(timezone.utc)
+
+    return MessageResponse(message="Email verified successfully.")
+
+
+@router.post("/auth/resend-verification", response_model=MessageResponse)
+@limiter.limit("3/minute")
+async def resend_verification(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> MessageResponse:
+    """Resend the verification email for the current user."""
+    if current_user.email_verified:
+        return MessageResponse(message="Email is already verified.")
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = pwd_context.hash(raw_token)
+    db.add(EmailVerificationTokenModel(
+        user_id=current_user.id,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+    ))
+    await db.flush()
+
+    verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_token}"
+    if settings.RESEND_API_KEY:
+        try:
+            import resend
+            resend.api_key = settings.RESEND_API_KEY
+            resend.Emails.send({
+                "from": "Sage Radar AI <onboarding@resend.dev>",
+                "to": [current_user.email],
+                "subject": "Verify your email",
+                "html": (
+                    "<p>Please verify your email address by clicking the link below.</p>"
+                    f'<p><a href="{verify_link}">Verify Email</a></p>'
+                    "<p>This link expires in 24 hours.</p>"
+                ),
+            })
+        except Exception:
+            logger.exception("Failed to send verification email")
+    else:
+        logger.warning("RESEND_API_KEY not set — verify link: %s", verify_link)
+
+    return MessageResponse(message="Verification email sent.")
 
 
 class ChangePasswordRequest(BaseModel):
