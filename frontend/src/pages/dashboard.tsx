@@ -4,7 +4,9 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  CheckCircle2,
   Plus,
+  Radio,
   RefreshCw,
   Reply,
 } from "lucide-react";
@@ -164,6 +166,37 @@ export function DashboardPage() {
               {isConnected ? "Create Route" : "Connect Telegram & Create Route"}
               <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
             </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Waiting for first signal — setup complete but no signals yet */}
+      {setupComplete && !rulesLoading && (rules?.length ?? 0) > 0 && !logsLoading && (logStats?.total ?? 0) === 0 && (
+        <Card className="border-primary/20 bg-primary/[0.02]">
+          <CardContent className="py-8 space-y-4">
+            <div className="flex flex-col items-center text-center space-y-2">
+              <span className="relative flex h-8 w-8 items-center justify-center">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/20" />
+                <Radio className="relative h-5 w-5 text-primary" />
+              </span>
+              <p className="text-sm font-medium">Listening for signals...</p>
+              <p className="text-xs text-muted-foreground max-w-xs">
+                Your routes are active. When a trading signal is posted in your Telegram channel, it will appear here automatically.
+              </p>
+            </div>
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                Telegram connected
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                {rules?.length} route{(rules?.length ?? 0) !== 1 ? "s" : ""} active
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground text-center">
+              Tip: Send a test message in your Telegram channel to verify the connection.
+            </p>
           </CardContent>
         </Card>
       )}

@@ -47,3 +47,14 @@ export async function apiFetch<T>(
 
   return response.json();
 }
+
+export async function deleteAccount(password: string): Promise<{ message: string }> {
+  return apiFetch<{ message: string }>("/auth/account/delete", {
+    method: "POST",
+    body: JSON.stringify({ current_password: password }),
+  });
+}
+
+export async function exportAccountData(): Promise<Record<string, unknown>> {
+  return apiFetch<Record<string, unknown>>("/auth/account/export");
+}

@@ -53,6 +53,17 @@ class SqlAlchemyUserRepository:
             return None
         return self._to_domain(row)
 
+    async def delete(self, user_id: UUID) -> bool:
+        """Delete user — CASCADE removes all related data."""
+        stmt = select(UserModel).where(UserModel.id == user_id)
+        result = await self._session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.flush()
+        return True
+
     # ------------------------------------------------------------------
     @staticmethod
     def _to_domain(row: UserModel) -> User:
