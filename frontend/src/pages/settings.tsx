@@ -236,36 +236,35 @@ function ChangePasswordCard() {
               required
             />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="new-password" className="text-xs">New Password</Label>
-              <Input
-                id="new-password"
-                type="password"
-                className="h-8 text-sm"
-                value={newPassword}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                  setNewPassword(e.target.value);
-                  if (error) setError("");
-                }}
-                required
-                minLength={8}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="confirm-password" className="text-xs">Confirm Password</Label>
-              <Input
-                id="confirm-password"
-                type="password"
-                className="h-8 text-sm"
-                value={confirmPassword}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                  setConfirmPassword(e.target.value);
-                  if (error) setError("");
-                }}
-                required
-              />
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="new-password" className="text-xs">New Password</Label>
+            <Input
+              id="new-password"
+              type="password"
+              className="h-8 text-sm"
+              value={newPassword}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                setNewPassword(e.target.value);
+                if (error) setError("");
+              }}
+              required
+              minLength={8}
+            />
+            <p className="text-[10px] text-muted-foreground">Min. 8 characters</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="confirm-password" className="text-xs">Confirm Password</Label>
+            <Input
+              id="confirm-password"
+              type="password"
+              className="h-8 text-sm"
+              value={confirmPassword}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                setConfirmPassword(e.target.value);
+                if (error) setError("");
+              }}
+              required
+            />
           </div>
           {error && <p className="text-[11px] text-destructive">{error}</p>}
           <Button type="submit" size="sm" className="h-7 text-xs" disabled={isSubmitting}>
@@ -350,7 +349,7 @@ function NotificationsCard() {
 
         {isFreeTier ? (
           <p className="text-[10px] text-muted-foreground">
-            Upgrade to Starter or above to receive signal notifications via Telegram.
+            Telegram notifications coming soon to paid plans.
           </p>
         ) : !hasTelegramLinked ? (
           <div className="space-y-2">

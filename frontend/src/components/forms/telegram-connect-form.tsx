@@ -136,7 +136,7 @@ export function TelegramConnectForm({ onSuccess }: TelegramConnectFormProps = {}
               className="h-8 text-sm"
             />
             <p className="text-[10px] text-muted-foreground">
-              Include country code (e.g., +1 for US)
+              Enter the phone number linked to your personal Telegram account, including country code (e.g., +1 for US)
             </p>
           </div>
           <Button type="submit" size="sm" className="h-7 text-xs" disabled={sendCode.isPending}>

@@ -137,7 +137,7 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
         <Tooltip delayDuration={0}>
           <TooltipTrigger asChild>
             <span className={cn("text-[10px] font-bold uppercase tracking-wider cursor-default", tierColors[tier] || "text-zinc-400")}>
-              {getTierDisplayName(tier).slice(0, 3)}
+              {({ free: "FREE", starter: "STR", pro: "PRO", elite: "ELT" }[tier]) || tier.slice(0, 3).toUpperCase()}
             </span>
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={8}>
