@@ -4,7 +4,7 @@ import { APP_NAME } from "@/lib/constants";
 
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+    <div className="dark flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardContent className="pt-6">
           <div className="mb-6 flex flex-col items-center gap-1.5">
@@ -12,6 +12,9 @@ export function AuthLayout({ children }: { children: ReactNode }) {
               {APP_NAME}
             </h1>
             <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
+            <p className="text-xs text-muted-foreground text-center mt-1">
+              Automate your Telegram trading signals to SageMaster
+            </p>
           </div>
           {children}
         </CardContent>

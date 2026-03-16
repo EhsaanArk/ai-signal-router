@@ -8,6 +8,7 @@ import { RoutingRuleWizard } from "@/components/forms/routing-rule-wizard";
 import { useTelegramStatus } from "@/hooks/use-telegram";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 const STEPS = [
   { label: "Connect Telegram", description: "Link your account" },
@@ -37,6 +38,7 @@ export function SetupPage() {
 
   function handleSkip() {
     completeSetup();
+    toast.info("You can start setup anytime from the Telegram page");
     navigate("/", { replace: true });
   }
 
@@ -105,7 +107,8 @@ export function SetupPage() {
                   <div>
                     <h2 className="text-base font-semibold">Connect Telegram</h2>
                     <p className="text-sm text-muted-foreground">
-                      Link your Telegram account to start receiving signals
+                      We connect to your Telegram account to read signals from channels you select.
+                      We never send messages or access private chats.
                     </p>
                   </div>
                   {tgLoading ? (

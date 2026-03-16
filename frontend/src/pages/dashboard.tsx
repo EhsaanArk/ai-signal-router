@@ -2,6 +2,7 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowDown,
+  ArrowRight,
   ArrowUp,
   Plus,
   RefreshCw,
@@ -147,6 +148,25 @@ export function DashboardPage() {
           <RefreshCw className={cn("h-3.5 w-3.5", anyFetching && "animate-spin")} />
         </Button>
       </div>
+
+      {/* Empty state for users with no routes */}
+      {!rulesLoading && (rules?.length ?? 0) === 0 && (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center py-10 space-y-3">
+            <p className="text-sm font-medium">Create your first signal route to get started</p>
+            <p className="text-xs text-muted-foreground text-center max-w-sm">
+              Connect a Telegram channel to a SageMaster webhook and start routing trading signals automatically.
+            </p>
+            <Button
+              size="sm"
+              onClick={() => navigate(isConnected ? "/routing-rules/new" : "/telegram")}
+            >
+              {isConnected ? "Create Route" : "Connect Telegram & Create Route"}
+              <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Routes Overview */}
       {rules && rules.length > 0 && (

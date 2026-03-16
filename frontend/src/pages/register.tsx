@@ -86,6 +86,7 @@ export function RegisterPage() {
                 <FormControl>
                   <Input type="password" placeholder="••••••••" disabled={loading} {...field} />
                 </FormControl>
+                <p className="text-[10px] text-muted-foreground">Min. 8 characters</p>
                 <FormMessage />
               </FormItem>
             )}
