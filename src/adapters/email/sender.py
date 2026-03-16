@@ -6,6 +6,7 @@ dispatch summary emails via the Resend API.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import resend
@@ -69,7 +70,7 @@ class ResendNotifier:
 
         try:
             resend.api_key = self._api_key
-            resend.Emails.send({
+            await asyncio.to_thread(resend.Emails.send, {
                 "from": self._from_address,
                 "to": [user_email],
                 "subject": subject,
