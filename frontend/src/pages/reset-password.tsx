@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/form";
 import { toast } from "sonner";
 import { usePageTitle } from "@/hooks/use-page-title";
-import { API_BASE_URL } from "@/lib/constants";
+import { apiFetch } from "@/lib/api";
 
 const schema = z
   .object({
@@ -36,6 +36,7 @@ export function ResetPasswordPage() {
   const navigate = useNavigate();
   const token = searchParams.get("token");
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -59,25 +60,19 @@ export function ResetPasswordPage() {
 
   async function onSubmit(values: FormValues) {
     setLoading(true);
+    setFormError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/auth/reset-password`, {
+      await apiFetch("/auth/reset-password", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           token,
           new_password: values.new_password,
         }),
       });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || "Failed to reset password");
-      }
-
       toast.success("Password reset successfully. Please sign in.");
       navigate("/login");
     } catch (err) {
-      toast.error(
+      setFormError(
         err instanceof Error ? err.message : "Failed to reset password"
       );
     } finally {
@@ -89,6 +84,11 @@ export function ResetPasswordPage() {
     <AuthLayout>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {formError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {formError}
+            </div>
+          )}
           <FormField
             control={form.control}
             name="new_password"
@@ -138,3 +138,5 @@ export function ResetPasswordPage() {
     </AuthLayout>
   );
 }
+
+export default ResetPasswordPage;
