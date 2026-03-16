@@ -56,7 +56,9 @@ function parseJsonToFields(json: string): FieldState[] | null {
         fields.push({ key, value: JSON.stringify(val), isDynamic: false, isCustom: !KNOWN_KEYS.has(key) });
       } else {
         const knownField = KNOWN_FIELDS.find((f) => f.key === key);
-        const dynamic = knownField?.dynamic !== undefined && isDynamicValue(val);
+        // Symbol fields default to dynamic — users rarely want a hardcoded symbol
+        const isSymbolField = knownField?.dynamic === "{{ticker}}";
+        const dynamic = knownField?.dynamic !== undefined && (isDynamicValue(val) || isSymbolField);
         fields.push({ key, value: val, isDynamic: dynamic, isCustom: !KNOWN_KEYS.has(key) });
       }
     }
