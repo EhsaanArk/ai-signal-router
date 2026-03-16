@@ -22,18 +22,30 @@ export async function apiFetch<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new Error(
+      "Unable to connect to the server. Please check your internet connection and try again."
+    );
+  }
 
   if (response.status === 401) {
-    throw new Error("Unauthorized");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "Session expired. Please sign in again.");
   }
 
   if (response.status === 403) {
     const data = await response.json();
     throw new TierLimitError(data.detail || "Tier limit reached");
+  }
+
+  if (response.status === 429) {
+    throw new Error("Too many attempts. Please wait a moment and try again.");
   }
 
   if (response.status === 204) {

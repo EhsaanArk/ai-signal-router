@@ -35,6 +35,7 @@ export function RegisterPage() {
   usePageTitle("Create Account");
   const { register: registerUser, token } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -45,11 +46,12 @@ export function RegisterPage() {
 
   async function onSubmit(values: FormValues) {
     setLoading(true);
+    setFormError(null);
     try {
       await registerUser(values.email, values.password);
       toast.success("Account created successfully");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Registration failed");
+      setFormError(err instanceof Error ? err.message : "Registration failed");
     } finally {
       setLoading(false);
     }
@@ -59,6 +61,11 @@ export function RegisterPage() {
     <AuthLayout>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {formError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {formError}
+            </div>
+          )}
           <FormField
             control={form.control}
             name="email"
@@ -118,3 +125,5 @@ export function RegisterPage() {
     </AuthLayout>
   );
 }
+
+export default RegisterPage;

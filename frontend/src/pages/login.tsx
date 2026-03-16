@@ -29,6 +29,7 @@ export function LoginPage() {
   usePageTitle("Sign In");
   const { login, token } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -39,11 +40,12 @@ export function LoginPage() {
 
   async function onSubmit(values: FormValues) {
     setLoading(true);
+    setFormError(null);
     try {
       await login(values.email, values.password);
       toast.success("Logged in successfully");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Login failed");
+      setFormError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setLoading(false);
     }
@@ -53,6 +55,11 @@ export function LoginPage() {
     <AuthLayout>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {formError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {formError}
+            </div>
+          )}
           <FormField
             control={form.control}
             name="email"
@@ -106,3 +113,5 @@ export function LoginPage() {
     </AuthLayout>
   );
 }
+
+export default LoginPage;
