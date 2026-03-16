@@ -8,6 +8,7 @@ export interface UserMe {
   email: string;
   subscription_tier: string;
   is_admin: boolean;
+  email_verified: boolean;
   created_at: string;
 }
 

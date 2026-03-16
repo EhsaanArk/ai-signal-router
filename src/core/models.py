@@ -77,6 +77,7 @@ class User(BaseModel):
     subscription_tier: SubscriptionTier = SubscriptionTier.free
     is_admin: bool = False
     is_disabled: bool = False
+    email_verified: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
