@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import { CheckCircle2, Lightbulb, Loader2, Pencil, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, HelpCircle, Lightbulb, Loader2, Pencil, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,6 +76,7 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
   const [urlLocked, setUrlLocked] = useState(() => !!extractAccountIdFromUrl(initialData?.destination_webhook_url ?? ""));
   const [templateLocked, setTemplateLocked] = useState(() => !!extractTemplateMetadata(initialTemplateText).assistId);
   const [suggestionDismissed, setSuggestionDismissed] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
 
   const accountId = extractAccountIdFromUrl(url);
   const templateMeta = extractTemplateMetadata(templateText);
@@ -291,6 +292,110 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
         )}
         {testStatus === "failed" && testError && (
           <p className="text-[11px] text-destructive">{testError}</p>
+        )}
+
+        {/* Inline webhook guide — only for SageMaster destinations */}
+        {destinationType !== "custom" && (
+          <div>
+            <button
+              type="button"
+              className="flex items-center gap-1 text-[11px] text-primary hover:underline"
+              onClick={() => setShowGuide(!showGuide)}
+            >
+              {showGuide ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              <HelpCircle className="h-3 w-3" />
+              How to get your webhook URL
+            </button>
+            {showGuide && (
+              <div className="mt-2 rounded-md border border-border/50 bg-muted/20 px-3 py-3 space-y-3">
+                {destinationType === "sagemaster_forex" ? (
+                  <ol className="list-decimal list-inside space-y-2.5 text-[11px] text-muted-foreground">
+                    <li>
+                      <span className="font-medium text-foreground">Log in to SageMaster Forex</span>
+                      <br />
+                      <span className="ml-4">
+                        Go to{" "}
+                        <a href="https://sfx.sagemaster.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                          sfx.sagemaster.io
+                        </a>
+                        {" "}and sign in to your account.
+                      </span>
+                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
+                        Screenshot coming soon
+                      </div>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">Navigate to your AI Assist bot</span>
+                      <br />
+                      <span className="ml-4">Open the AI Assist section and select the bot you want to connect.</span>
+                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
+                        Screenshot coming soon
+                      </div>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">Copy the Webhook URL and JSON template</span>
+                      <br />
+                      <span className="ml-4">
+                        Find the Deals Idea URL (looks like{" "}
+                        <code className="rounded bg-muted px-1 py-0.5 text-[10px] font-mono">https://api.sagemaster.io/deals_idea/xxxx</code>
+                        ) and copy it.
+                      </span>
+                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
+                        Screenshot coming soon
+                      </div>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">Paste it above</span>
+                      <br />
+                      <span className="ml-4">We'll auto-detect your account ID and lock the field for safety.</span>
+                    </li>
+                  </ol>
+                ) : (
+                  <ol className="list-decimal list-inside space-y-2.5 text-[11px] text-muted-foreground">
+                    <li>
+                      <span className="font-medium text-foreground">Log in to SageMaster Crypto</span>
+                      <br />
+                      <span className="ml-4">
+                        Go to{" "}
+                        <a href="https://app.sagemaster.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                          app.sagemaster.io
+                        </a>
+                        {" "}and sign in to your account.
+                      </span>
+                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
+                        Screenshot coming soon
+                      </div>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">Navigate to your AI Assist bot</span>
+                      <br />
+                      <span className="ml-4">Open the AI Assist section and select the bot you want to connect.</span>
+                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
+                        Screenshot coming soon
+                      </div>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">Copy the Webhook URL and JSON template</span>
+                      <br />
+                      <span className="ml-4">
+                        Find the Deals Idea URL (looks like{" "}
+                        <code className="rounded bg-muted px-1 py-0.5 text-[10px] font-mono">https://api.sagemaster.io/deals_idea/xxxx</code>
+                        ) and copy it.
+                      </span>
+                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
+                        Screenshot coming soon
+                      </div>
+                    </li>
+                    <li>
+                      <span className="font-medium text-foreground">Paste it above</span>
+                      <br />
+                      <span className="ml-4">We'll auto-detect your account ID and lock the field for safety.</span>
+                    </li>
+                  </ol>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
