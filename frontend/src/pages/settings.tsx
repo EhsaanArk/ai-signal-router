@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, LogOut, Mail, Calendar, Shield, MessageCircle, ExternalLink } from "lucide-react";
+import { AlertTriangle, Bell, Download, LogOut, Mail, Calendar, Shield, MessageCircle, ExternalLink, Trash2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -22,7 +22,7 @@ import {
 import { useAuth } from "@/contexts/auth-context";
 import { Button } from "@/components/ui/button";
 import { PageLoader } from "@/components/shared/loading-spinner";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, deleteAccount, exportAccountData } from "@/lib/api";
 import { getTierDisplayName, TIER_COMPARISON } from "@/lib/tier";
 import { cn } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -144,6 +144,9 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Data & Privacy */}
+      <DataPrivacyCard />
 
       {/* Logout dialog */}
       <AlertDialog open={showLogout} onOpenChange={setShowLogout}>
@@ -401,5 +404,139 @@ function NotificationsCard() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function DataPrivacyCard() {
+  const { logout } = useAuth();
+  const [showDelete, setShowDelete] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  async function handleExport() {
+    setIsExporting(true);
+    try {
+      const data = await exportAccountData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sage-radar-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Data exported");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deletePassword) {
+      setDeleteError("Enter your password to confirm");
+      return;
+    }
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      await deleteAccount(deletePassword);
+      toast.success("Account deleted");
+      logout();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete account");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  return (
+    <>
+      <Card className="border-destructive/20">
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+            Data &amp; Privacy
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium">Export your data</p>
+              <p className="text-[10px] text-muted-foreground">Download all your data as a JSON file</p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={handleExport}
+              disabled={isExporting}
+            >
+              <Download className="mr-1.5 h-3 w-3" />
+              {isExporting ? "Exporting..." : "Export"}
+            </Button>
+          </div>
+          <Separator />
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-destructive">Delete account</p>
+              <p className="text-[10px] text-muted-foreground">Permanently remove your account and all data</p>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setShowDelete(true)}
+            >
+              <Trash2 className="mr-1.5 h-3 w-3" />
+              Delete
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={showDelete} onOpenChange={(open) => {
+        setShowDelete(open);
+        if (!open) { setDeletePassword(""); setDeleteError(""); }
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete your account and all associated data including routing rules, signal logs, and your Telegram session. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="delete-password" className="text-xs">Enter your password to confirm</Label>
+            <Input
+              id="delete-password"
+              type="password"
+              className="h-8 text-sm"
+              value={deletePassword}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                setDeletePassword(e.target.value);
+                if (deleteError) setDeleteError("");
+              }}
+              placeholder="Your current password"
+            />
+            {deleteError && <p className="text-[11px] text-destructive">{deleteError}</p>}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel variant="outline" size="default">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="default"
+              size="default"
+              onClick={handleDelete}
+              disabled={isDeleting || !deletePassword}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "Deleting..." : "Delete My Account"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

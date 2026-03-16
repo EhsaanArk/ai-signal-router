@@ -85,6 +85,10 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class DeleteAccountRequest(BaseModel):
+    current_password: str
+
+
 # --- Telegram ---------------------------------------------------------------
 
 class SendCodeRequest(BaseModel):
@@ -587,6 +591,106 @@ async def change_password(
 
     user_row.password_hash = pwd_context.hash(body.new_password)
     return MessageResponse(message="Password changed successfully.")
+
+
+@router.post("/auth/account/delete", response_model=MessageResponse)
+@limiter.limit("3/minute")
+async def delete_account(
+    request: Request,
+    body: DeleteAccountRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    """Permanently delete the authenticated user's account and all data."""
+    result = await db.execute(
+        select(UserModel).where(UserModel.id == current_user.id)
+    )
+    user_row = result.scalar_one()
+
+    if not pwd_context.verify(body.current_password, user_row.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is incorrect",
+        )
+
+    await db.delete(user_row)
+    logger.info("User %s deleted their account", current_user.id)
+    return MessageResponse(message="Account deleted successfully.")
+
+
+@router.get("/auth/account/export")
+@limiter.limit("3/minute")
+async def export_account_data(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Export all user data as JSON for GDPR compliance."""
+    # Profile
+    profile = {
+        "email": current_user.email,
+        "subscription_tier": current_user.subscription_tier,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+    }
+
+    # Routing rules
+    rules_result = await db.execute(
+        select(RoutingRuleModel)
+        .where(RoutingRuleModel.user_id == current_user.id)
+        .order_by(RoutingRuleModel.created_at.desc())
+    )
+    rules = [
+        {
+            "id": str(r.id),
+            "source_channel_id": r.source_channel_id,
+            "source_channel_name": r.source_channel_name,
+            "destination_webhook_url": r.destination_webhook_url,
+            "destination_type": r.destination_type,
+            "rule_name": r.rule_name,
+            "is_active": r.is_active,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rules_result.scalars().all()
+    ]
+
+    # Signal logs (capped at 10,000)
+    logs_result = await db.execute(
+        select(SignalLogModel)
+        .where(SignalLogModel.user_id == current_user.id)
+        .order_by(SignalLogModel.processed_at.desc())
+        .limit(10_000)
+    )
+    logs = [
+        {
+            "id": str(l.id),
+            "raw_message": l.raw_message,
+            "parsed_data": l.parsed_data,
+            "webhook_payload": l.webhook_payload,
+            "status": l.status,
+            "error_message": l.error_message,
+            "processed_at": l.processed_at.isoformat() if l.processed_at else None,
+        }
+        for l in logs_result.scalars().all()
+    ]
+
+    # Telegram session metadata (not the encrypted session itself)
+    tg_result = await db.execute(
+        select(TelegramSessionModel)
+        .where(TelegramSessionModel.user_id == current_user.id)
+    )
+    tg_row = tg_result.scalar_one_or_none()
+    telegram = {
+        "connected": tg_row is not None and tg_row.is_active,
+        "phone_number": tg_row.phone_number if tg_row else None,
+    }
+
+    return {
+        "profile": profile,
+        "routing_rules": rules,
+        "signal_logs": logs,
+        "telegram": telegram,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # ============================================================================
