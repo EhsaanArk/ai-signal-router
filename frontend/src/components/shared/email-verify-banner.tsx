@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { AlertTriangle, Loader2, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/auth-context";
 import { apiFetch } from "@/lib/api";
 import { toast } from "sonner";
