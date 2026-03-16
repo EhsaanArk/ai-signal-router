@@ -27,7 +27,7 @@ class ResendNotifier:
     def __init__(
         self,
         api_key: str,
-        from_address: str = "SageMaster Copier <noreply@sagemaster.io>",
+        from_address: str = "Sage Radar AI <noreply@radar.sagemaster.com>",
     ) -> None:
         self._api_key = api_key
         self._from_address = from_address

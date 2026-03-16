@@ -353,7 +353,7 @@ async def register(
             import resend
             resend.api_key = settings.RESEND_API_KEY
             await asyncio.to_thread(resend.Emails.send, {
-                "from": "Sage Radar AI <noreply@sagemaster.io>",
+                "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                 "to": [body.email],
                 "subject": "Verify your email",
                 "html": (
@@ -409,7 +409,7 @@ async def forgot_password(
 
                 resend.api_key = settings.RESEND_API_KEY
                 await asyncio.to_thread(resend.Emails.send, {
-                    "from": "Sage Radar AI <noreply@sagemaster.io>",
+                    "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                     "to": [body.email],
                     "subject": "Reset your password",
                     "html": (
@@ -544,7 +544,7 @@ async def resend_verification(
             import resend
             resend.api_key = settings.RESEND_API_KEY
             await asyncio.to_thread(resend.Emails.send, {
-                "from": "Sage Radar AI <noreply@sagemaster.io>",
+                "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                 "to": [current_user.email],
                 "subject": "Verify your email",
                 "html": (
