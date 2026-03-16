@@ -173,3 +173,5 @@ export function SetupPage() {
     </div>
   );
 }
+
+export default SetupPage;

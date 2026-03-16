@@ -16,7 +16,7 @@ export function useLogs(
       apiFetch<PaginatedLogs>(
         `/logs?limit=${limit}&offset=${offset}${statusParam}${ruleParam}`,
       ),
-    refetchInterval: 5000,
+    refetchInterval: false,
   });
 }
 
@@ -25,6 +25,7 @@ export function useRecentLogs(limit: number = 5) {
     queryKey: ["logs", limit, 0],
     queryFn: () => apiFetch<PaginatedLogs>(`/logs?limit=${limit}&offset=0`),
     refetchInterval: 10000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -33,5 +34,6 @@ export function useLogStats() {
     queryKey: ["log-stats"],
     queryFn: () => apiFetch<LogStatsResponse>("/logs/stats"),
     refetchInterval: 10000,
+    refetchIntervalInBackground: false,
   });
 }

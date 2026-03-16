@@ -54,3 +54,5 @@ export function AdminHealthPage() {
     </div>
   );
 }
+
+export default AdminHealthPage;

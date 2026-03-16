@@ -2,7 +2,7 @@ import { Loader2 } from "lucide-react";
 
 export function LoadingSpinner() {
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-3 bg-background">
+    <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[#09090b]">
       <img src="/logo.svg" alt="" className="h-10 w-10 animate-pulse" />
       <p className="text-xs text-muted-foreground">Loading...</p>
     </div>
