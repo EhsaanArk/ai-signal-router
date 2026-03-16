@@ -12,7 +12,7 @@ from src.core.models import (
 
 def test_subscription_tier_max_destinations():
     """Each tier should report the correct max_destinations value."""
-    assert SubscriptionTier.free.max_destinations == 1
+    assert SubscriptionTier.free.max_destinations == 5
     assert SubscriptionTier.starter.max_destinations == 2
     assert SubscriptionTier.pro.max_destinations == 5
     assert SubscriptionTier.elite.max_destinations == 15

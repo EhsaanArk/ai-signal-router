@@ -635,8 +635,10 @@ class TestAuthPIIMasking:
             assert FAKE_PHONE not in record.getMessage(), (
                 f"Raw phone number found in log: {record.getMessage()}"
             )
-        # Masked suffix should appear
-        assert any("1234" in r.getMessage() for r in caplog.records)
+        # SHA-256 hash prefix should appear (no phone digits)
+        import hashlib
+        expected_id = hashlib.sha256(FAKE_PHONE.encode()).hexdigest()[:8]
+        assert any(expected_id in r.getMessage() for r in caplog.records)
 
     @pytest.mark.asyncio
     @patch("src.adapters.telegram.auth.TelegramClient")

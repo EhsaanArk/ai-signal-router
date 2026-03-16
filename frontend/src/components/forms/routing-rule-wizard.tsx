@@ -60,6 +60,11 @@ export function RoutingRuleWizard({ onComplete }: Props) {
     setStep((s) => s + 1);
   }
 
+  function handleBack(partial: Partial<WizardData>) {
+    setData((prev) => ({ ...prev, ...partial }));
+    setStep((s) => s - 1);
+  }
+
   async function handleFinish(mappings: Record<string, string>) {
     const payload: RoutingRuleCreate = {
       source_channel_id: data.source_channel_id!,
@@ -195,7 +200,15 @@ export function RoutingRuleWizard({ onComplete }: Props) {
               destination_label: destinationLabel,
             })
           }
-          onBack={() => setStep((s) => s - 1)}
+          onBack={(url, version, webhookBodyTemplate, destinationType, destinationLabel) =>
+            handleBack({
+              destination_webhook_url: url,
+              payload_version: version,
+              webhook_body_template: webhookBodyTemplate,
+              destination_type: destinationType,
+              destination_label: destinationLabel,
+            })
+          }
         />
       )}
       {currentStepId === "actions" && (
@@ -213,7 +226,13 @@ export function RoutingRuleWizard({ onComplete }: Props) {
               keyword_blacklist: keywordBlacklist,
             })
           }
-          onBack={() => setStep((s) => s - 1)}
+          onBack={(enabledActions, riskOverrides, keywordBlacklist) =>
+            handleBack({
+              enabled_actions: enabledActions,
+              risk_overrides: riskOverrides,
+              keyword_blacklist: keywordBlacklist,
+            })
+          }
           isFinalStep={isFinalActions}
           onFinish={handleActionsFinish}
           isSubmitting={createRule.isPending}
@@ -225,7 +244,9 @@ export function RoutingRuleWizard({ onComplete }: Props) {
             symbol_mappings: data.symbol_mappings,
           }}
           onFinish={handleFinish}
-          onBack={() => setStep((s) => s - 1)}
+          onBack={(mappings) =>
+            handleBack({ symbol_mappings: mappings })
+          }
           isSubmitting={createRule.isPending}
         />
       )}

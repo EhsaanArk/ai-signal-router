@@ -4,12 +4,19 @@ import { APP_NAME } from "@/lib/constants";
 
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+    <div className="dark flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardContent className="pt-6">
-          <h1 className="mb-6 text-center text-2xl font-semibold">
-            {APP_NAME}
-          </h1>
+          <div className="mb-6 flex flex-col items-center gap-1.5 group cursor-pointer">
+            <img src="/logo.svg" alt={APP_NAME} className="h-12 w-12 mb-1 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-12" />
+            <h1 className="text-center text-2xl font-semibold transition-colors duration-200 group-hover:text-primary">
+              {APP_NAME}
+            </h1>
+            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
+            <p className="text-xs text-muted-foreground text-center mt-1">
+              Automate your Telegram trading signals to SageMaster
+            </p>
+          </div>
           {children}
         </CardContent>
       </Card>

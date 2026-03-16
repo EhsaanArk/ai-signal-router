@@ -246,3 +246,5 @@ export function AdminSystemRulesPage() {
     </div>
   );
 }
+
+export default AdminSystemRulesPage;

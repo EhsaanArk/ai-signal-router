@@ -1,10 +1,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, MessageSquare, Search } from "lucide-react";
+import { Check, Info, MessageSquare, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useChannels } from "@/hooks/use-channels";
 import { cn } from "@/lib/utils";
 
@@ -61,6 +67,20 @@ export function StepSelectChannel({ initialData, onNext }: Props) {
 
   return (
     <div className="space-y-3">
+      <div className="flex items-center gap-1.5">
+        <p className="text-xs font-medium">Select a signal channel</p>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+            </TooltipTrigger>
+            <TooltipContent side="right" className="max-w-[220px]">
+              <p className="text-xs">Choose the Telegram channel that posts trading signals. Only channels you're subscribed to will appear.</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+
       {/* Search */}
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />

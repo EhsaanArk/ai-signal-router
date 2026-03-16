@@ -186,3 +186,5 @@ export function AdminUsersPage() {
     </div>
   );
 }
+
+export default AdminUsersPage;

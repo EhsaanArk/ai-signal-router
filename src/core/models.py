@@ -31,7 +31,7 @@ class SubscriptionTier(str, Enum):
     def max_destinations(self) -> int:
         """Return the maximum number of webhook destinations for this tier."""
         return {
-            SubscriptionTier.free: 1,
+            SubscriptionTier.free: 5,
             SubscriptionTier.starter: 2,
             SubscriptionTier.pro: 5,
             SubscriptionTier.elite: 15,
@@ -77,6 +77,7 @@ class User(BaseModel):
     subscription_tier: SubscriptionTier = SubscriptionTier.free
     is_admin: bool = False
     is_disabled: bool = False
+    email_verified: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

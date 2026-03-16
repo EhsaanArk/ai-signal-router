@@ -11,6 +11,7 @@ import logging
 import random
 
 import httpx
+import sentry_sdk
 
 from src.core.mapper import apply_symbol_mapping, build_webhook_payload
 from src.core.models import DispatchResult, ParsedSignal, RoutingRule
@@ -127,6 +128,10 @@ class WebhookDispatcher:
             MAX_RETRIES,
             rule.id,
             last_error,
+        )
+        sentry_sdk.capture_message(
+            f"Webhook dispatch failed after {MAX_RETRIES} retries for rule {rule.id}: {last_error}",
+            level="error",
         )
         return DispatchResult(
             routing_rule_id=rule.id,

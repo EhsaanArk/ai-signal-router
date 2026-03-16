@@ -5,6 +5,7 @@ import {
   Circle,
   Copy,
   Reply,
+  Route,
   XCircle,
 } from "lucide-react";
 import {
@@ -13,12 +14,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useCopyToClipboard } from "@/hooks/use-clipboard";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
 import { cn, humanizeAction } from "@/lib/utils";
-import type { SignalLogResponse } from "@/types/api";
+import type { RoutingRuleResponse, SignalLogResponse } from "@/types/api";
 
 interface Props {
   log: SignalLogResponse | null;
@@ -32,19 +34,68 @@ interface PipelineStep {
   status: "done" | "failed" | "skipped";
 }
 
-function getPipelineSteps(log: SignalLogResponse, channelName: string | null): PipelineStep[] {
+function humanizeErrorMessage(msg: string): string {
+  if (msg === "Not an actionable trade signal." || msg === "Not an actionable trade signal") {
+    return "AI parser: message too brief or ambiguous to extract a trade signal";
+  }
+
+  const assetMatch = msg.match(/Signal asset class '(.+?)' is not supported by (.+?) destinations/);
+  if (assetMatch) {
+    return `Asset mismatch: ${assetMatch[1]} signals can't be routed to ${assetMatch[2]} destinations`;
+  }
+
+  const actionMatch = msg.match(/Action '(.+?)' is not enabled for this route/);
+  if (actionMatch) {
+    return `Action disabled: "${actionMatch[1]}" is turned off in this route's settings`;
+  }
+
+  const symbolMatch = msg.match(/Symbol '(.+?)' is blacklisted/);
+  if (symbolMatch) {
+    return `Symbol blocked: "${symbolMatch[1]}" is in this route's keyword blacklist`;
+  }
+
+  return msg;
+}
+
+function getReceivedStepDetail(
+  log: SignalLogResponse,
+  matchedRule: RoutingRuleResponse | null,
+): string {
+  if (matchedRule) {
+    const ruleName = matchedRule.rule_name || matchedRule.source_channel_name || "Rule";
+    const destLabel = matchedRule.destination_label
+      || destinationTypeLabel(matchedRule.destination_type);
+    return `Rule: ${ruleName} → ${destLabel}`;
+  }
+  return log.channel_id || "Source channel";
+}
+
+function destinationTypeLabel(type: string): string {
+  switch (type) {
+    case "sagemaster_forex": return "SageMaster Forex";
+    case "sagemaster_crypto": return "SageMaster Crypto";
+    case "custom": return "Custom";
+    default: return type;
+  }
+}
+
+function getPipelineSteps(
+  log: SignalLogResponse,
+  matchedRule: RoutingRuleResponse | null,
+): PipelineStep[] {
   const steps: PipelineStep[] = [];
 
   steps.push({
     label: "Signal Received",
-    detail: channelName || log.channel_id || "Source channel",
+    detail: getReceivedStepDetail(log, matchedRule),
     status: "done",
   });
 
   if (log.status === "ignored") {
+    const isParserRejection = !log.routing_rule_id;
     steps.push({
-      label: "Signal Parsed",
-      detail: log.error_message || "Ignored",
+      label: isParserRejection ? "AI Parser Filtered" : "Rule Rejected",
+      detail: humanizeErrorMessage(log.error_message || "Ignored"),
       status: "skipped",
     });
     return steps;
@@ -70,7 +121,7 @@ function getPipelineSteps(log: SignalLogResponse, channelName: string | null): P
     label: log.status === "success" ? "Routed" : "Failed",
     detail: log.status === "success"
       ? new Date(log.processed_at).toLocaleString()
-      : log.error_message || "Unknown error",
+      : humanizeErrorMessage(log.error_message || "Unknown error"),
     status: log.status === "success" ? "done" : "failed",
   });
 
@@ -96,7 +147,6 @@ export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
   const matchedRule = log.routing_rule_id && rules
     ? rules.find((r) => r.id === log.routing_rule_id) ?? null
     : null;
-  const channelName = matchedRule?.rule_name || matchedRule?.source_channel_name || null;
 
   const parsed = log.parsed_data;
   const symbol = parsed?.symbol as string | undefined;
@@ -109,7 +159,7 @@ export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
   const assetClass = parsed?.source_asset_class as string | undefined;
   const isFollow = action !== "entry";
 
-  const steps = getPipelineSteps(log, channelName);
+  const steps = getPipelineSteps(log, matchedRule);
 
   const statusColor =
     log.status === "success" ? "text-emerald-500" :
@@ -156,7 +206,7 @@ export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
           {/* Error banner */}
           {log.error_message && log.status === "failed" && (
             <div className="rounded-md bg-rose-500/10 border border-rose-500/20 p-3">
-              <p className="text-xs text-rose-600 dark:text-rose-400">{log.error_message}</p>
+              <p className="text-xs text-rose-600 dark:text-rose-400">{humanizeErrorMessage(log.error_message)}</p>
             </div>
           )}
 
@@ -215,6 +265,34 @@ export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
               <Separator />
             </>
           )}
+
+          {/* Route Attribution */}
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Route</p>
+            {matchedRule ? (
+              <div className="flex items-center gap-2">
+                <Route className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-xs font-medium truncate">
+                    {matchedRule.rule_name || matchedRule.source_channel_name || "Unnamed rule"}
+                  </span>
+                  <Badge variant="secondary" className="text-[9px] px-1.5 py-0 shrink-0">
+                    {destinationTypeLabel(matchedRule.destination_type)}
+                  </Badge>
+                  <span className={cn(
+                    "h-1.5 w-1.5 rounded-full shrink-0",
+                    matchedRule.is_active ? "bg-emerald-500" : "bg-muted-foreground"
+                  )} />
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No rule evaluated — signal was filtered by the AI parser
+              </p>
+            )}
+          </div>
+
+          <Separator />
 
           {/* Pipeline */}
           <div>
@@ -313,7 +391,7 @@ export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
           {log.error_message && log.status === "ignored" && (
             <div>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Reason</p>
-              <p className="text-xs text-amber-600 dark:text-amber-400">{log.error_message}</p>
+              <p className="text-xs text-amber-600 dark:text-amber-400">{humanizeErrorMessage(log.error_message)}</p>
             </div>
           )}
         </div>

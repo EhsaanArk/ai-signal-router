@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Callable, Awaitable
 from uuid import UUID
 
+import sentry_sdk
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
@@ -98,8 +99,10 @@ class TelegramListener:
             events.MessageEdited(),
         )
 
-        # Catch up on any missed updates so Telethon's update loop is primed.
-        await self._client.catch_up()
+        # Fetch dialogs to prime Telethon's internal state and entity cache.
+        # Unlike catch_up(), this works reliably even with no prior update
+        # state (StringSession does not persist pts/qts/date).
+        await self._client.get_dialogs()
 
         logger.info("Telegram listener started for user %s (new messages + edits)", user_id)
 
@@ -152,12 +155,13 @@ class TelegramListener:
                     message.id,
                     channel_id,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "Failed to enqueue message %d from channel %s",
                     message.id,
                     channel_id,
                 )
+                sentry_sdk.capture_exception(exc)
 
     def update_monitored_channels(self, channels: set[str]) -> None:
         """Update the set of channel IDs this listener should process."""
@@ -296,8 +300,25 @@ if __name__ == "__main__":
                     updated = await _load_monitored_channels()
                     if updated != listener._monitored_channels:
                         listener.update_monitored_channels(updated)
-                except Exception:
+                except Exception as exc:
                     logger.exception("Failed to refresh monitored channels")
+                    sentry_sdk.capture_exception(exc)
+
+                # Heartbeat: verify Telethon connection is alive
+                if listener._client and listener._client.is_connected():
+                    logger.info(
+                        "Heartbeat: listener alive, monitoring %d channel(s)",
+                        len(listener._monitored_channels),
+                    )
+                else:
+                    logger.warning("Heartbeat: Telethon client disconnected, attempting reconnect...")
+                    try:
+                        await listener._client.connect()
+                        await listener._client.get_dialogs()
+                        logger.info("Reconnected successfully")
+                    except Exception as exc:
+                        logger.exception("Reconnect failed")
+                        sentry_sdk.capture_exception(exc)
         except (KeyboardInterrupt, asyncio.CancelledError):
             await listener.stop()
 

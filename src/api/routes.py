@@ -1,5 +1,6 @@
 """Public API router — /api/v1 endpoints for the SGM Telegram Signal Copier."""
 
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
+    EmailVerificationTokenModel,
     PasswordResetTokenModel,
     RoutingRuleModel,
     SignalLogModel,
@@ -30,6 +32,8 @@ from src.api.deps import (
     get_settings,
     limiter,
 )
+import sentry_sdk
+
 from src.core.models import RoutingRule, SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
@@ -67,6 +71,7 @@ class UserMeResponse(BaseModel):
     email: str
     subscription_tier: str
     is_admin: bool = False
+    email_verified: bool = False
     created_at: str
 
 
@@ -81,6 +86,10 @@ class ResetPasswordRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class DeleteAccountRequest(BaseModel):
+    current_password: str
 
 
 # --- Telegram ---------------------------------------------------------------
@@ -295,6 +304,7 @@ async def get_me(
         email=current_user.email,
         subscription_tier=current_user.subscription_tier.value,
         is_admin=current_user.is_admin,
+        email_verified=current_user.email_verified,
         created_at=current_user.created_at.isoformat(),
     )
 
@@ -326,6 +336,38 @@ async def register(
     new_user = UserModel(email=body.email, password_hash=hashed)
     db.add(new_user)
     await db.flush()
+
+    # Send email verification
+    raw_verify_token = secrets.token_urlsafe(32)
+    verify_token_hash = pwd_context.hash(raw_verify_token)
+    db.add(EmailVerificationTokenModel(
+        user_id=new_user.id,
+        token_hash=verify_token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+    ))
+    await db.flush()
+
+    verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_verify_token}"
+    if settings.RESEND_API_KEY:
+        try:
+            import resend
+            resend.api_key = settings.RESEND_API_KEY
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
+                "to": [body.email],
+                "subject": "Verify your email",
+                "html": (
+                    "<p>Welcome to Sage Radar AI! Please verify your email address "
+                    "by clicking the link below.</p>"
+                    f'<p><a href="{verify_link}">Verify Email</a></p>'
+                    "<p>This link expires in 24 hours.</p>"
+                ),
+            })
+        except Exception as exc:
+            logger.exception("Failed to send verification email")
+            sentry_sdk.capture_exception(exc)
+    else:
+        logger.warning("RESEND_API_KEY not set — verify link: %s", verify_link)
 
     token = create_access_token(
         data={"sub": str(new_user.id)}, settings=settings
@@ -366,20 +408,19 @@ async def forgot_password(
                 import resend
 
                 resend.api_key = settings.RESEND_API_KEY
-                resend.Emails.send(
-                    {
-                        "from": "SageMaster <noreply@sagemaster.io>",
-                        "to": [body.email],
-                        "subject": "Reset your password",
-                        "html": (
-                            f"<p>Click the link below to reset your password. "
-                            f"This link expires in 1 hour.</p>"
-                            f'<p><a href="{reset_link}">Reset Password</a></p>'
-                        ),
-                    }
-                )
-            except Exception:
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
+                    "to": [body.email],
+                    "subject": "Reset your password",
+                    "html": (
+                        "<p>Click the link below to reset your password. "
+                        "This link expires in 1 hour.</p>"
+                        f'<p><a href="{reset_link}">Reset Password</a></p>'
+                    ),
+                })
+            except Exception as exc:
                 logger.exception("Failed to send password reset email")
+                sentry_sdk.capture_exception(exc)
         else:
             logger.warning(
                 "RESEND_API_KEY not set — reset link: %s", reset_link
@@ -431,6 +472,96 @@ async def reset_password(
     return MessageResponse(message="Password has been reset successfully.")
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
+@router.post("/auth/verify-email", response_model=MessageResponse)
+@limiter.limit("10/minute")
+async def verify_email(
+    request: Request,
+    body: VerifyEmailRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    """Verify a user's email using the token from the verification link."""
+    result = await db.execute(
+        select(EmailVerificationTokenModel).where(
+            EmailVerificationTokenModel.expires_at > datetime.now(timezone.utc),
+            EmailVerificationTokenModel.used_at.is_(None),
+        )
+    )
+    token_rows = result.scalars().all()
+
+    matched_token: EmailVerificationTokenModel | None = None
+    for row in token_rows:
+        if pwd_context.verify(body.token, row.token_hash):
+            matched_token = row
+            break
+
+    if matched_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token",
+        )
+
+    # Mark user as verified
+    user_result = await db.execute(
+        select(UserModel).where(UserModel.id == matched_token.user_id)
+    )
+    user_row = user_result.scalar_one()
+    user_row.email_verified = True
+
+    # Mark token as used
+    matched_token.used_at = datetime.now(timezone.utc)
+
+    return MessageResponse(message="Email verified successfully.")
+
+
+@router.post("/auth/resend-verification", response_model=MessageResponse)
+@limiter.limit("3/minute")
+async def resend_verification(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> MessageResponse:
+    """Resend the verification email for the current user."""
+    if current_user.email_verified:
+        return MessageResponse(message="Email is already verified.")
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = pwd_context.hash(raw_token)
+    db.add(EmailVerificationTokenModel(
+        user_id=current_user.id,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+    ))
+    await db.flush()
+
+    verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_token}"
+    if settings.RESEND_API_KEY:
+        try:
+            import resend
+            resend.api_key = settings.RESEND_API_KEY
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
+                "to": [current_user.email],
+                "subject": "Verify your email",
+                "html": (
+                    "<p>Please verify your email address by clicking the link below.</p>"
+                    f'<p><a href="{verify_link}">Verify Email</a></p>'
+                    "<p>This link expires in 24 hours.</p>"
+                ),
+            })
+        except Exception as exc:
+            logger.exception("Failed to send verification email")
+            sentry_sdk.capture_exception(exc)
+    else:
+        logger.warning("RESEND_API_KEY not set — verify link: %s", verify_link)
+
+    return MessageResponse(message="Verification email sent.")
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
@@ -464,6 +595,106 @@ async def change_password(
 
     user_row.password_hash = pwd_context.hash(body.new_password)
     return MessageResponse(message="Password changed successfully.")
+
+
+@router.post("/auth/account/delete", response_model=MessageResponse)
+@limiter.limit("3/minute")
+async def delete_account(
+    request: Request,
+    body: DeleteAccountRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    """Permanently delete the authenticated user's account and all data."""
+    result = await db.execute(
+        select(UserModel).where(UserModel.id == current_user.id)
+    )
+    user_row = result.scalar_one()
+
+    if not pwd_context.verify(body.current_password, user_row.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is incorrect",
+        )
+
+    await db.delete(user_row)
+    logger.info("User %s deleted their account", current_user.id)
+    return MessageResponse(message="Account deleted successfully.")
+
+
+@router.get("/auth/account/export")
+@limiter.limit("3/minute")
+async def export_account_data(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Export all user data as JSON for GDPR compliance."""
+    # Profile
+    profile = {
+        "email": current_user.email,
+        "subscription_tier": current_user.subscription_tier,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+    }
+
+    # Routing rules
+    rules_result = await db.execute(
+        select(RoutingRuleModel)
+        .where(RoutingRuleModel.user_id == current_user.id)
+        .order_by(RoutingRuleModel.created_at.desc())
+    )
+    rules = [
+        {
+            "id": str(r.id),
+            "source_channel_id": r.source_channel_id,
+            "source_channel_name": r.source_channel_name,
+            "destination_webhook_url": r.destination_webhook_url,
+            "destination_type": r.destination_type,
+            "rule_name": r.rule_name,
+            "is_active": r.is_active,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rules_result.scalars().all()
+    ]
+
+    # Signal logs (capped at 10,000)
+    logs_result = await db.execute(
+        select(SignalLogModel)
+        .where(SignalLogModel.user_id == current_user.id)
+        .order_by(SignalLogModel.processed_at.desc())
+        .limit(10_000)
+    )
+    logs = [
+        {
+            "id": str(l.id),
+            "raw_message": l.raw_message,
+            "parsed_data": l.parsed_data,
+            "webhook_payload": l.webhook_payload,
+            "status": l.status,
+            "error_message": l.error_message,
+            "processed_at": l.processed_at.isoformat() if l.processed_at else None,
+        }
+        for l in logs_result.scalars().all()
+    ]
+
+    # Telegram session metadata (not the encrypted session itself)
+    tg_result = await db.execute(
+        select(TelegramSessionModel)
+        .where(TelegramSessionModel.user_id == current_user.id)
+    )
+    tg_row = tg_result.scalar_one_or_none()
+    telegram = {
+        "connected": tg_row is not None and tg_row.is_active,
+        "phone_number": tg_row.phone_number if tg_row else None,
+    }
+
+    return {
+        "profile": profile,
+        "routing_rules": rules,
+        "signal_logs": logs,
+        "telegram": telegram,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # ============================================================================

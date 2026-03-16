@@ -30,7 +30,7 @@ interface Props {
     payload_version?: "V1" | "V2";
   };
   onNext: (enabledActions: string[], riskOverrides: Record<string, unknown>, keywordBlacklist: string[]) => void;
-  onBack: () => void;
+  onBack: (enabledActions: string[], riskOverrides: Record<string, unknown>, keywordBlacklist: string[]) => void;
   isFinalStep?: boolean;
   onFinish?: (enabledActions: string[], riskOverrides: Record<string, unknown>, keywordBlacklist: string[]) => void;
   isSubmitting?: boolean;
@@ -257,7 +257,11 @@ export function StepActions({ initialData, wizardData, onNext, onBack, isFinalSt
       </div>
 
       <div className="flex gap-2 pt-2">
-        <Button variant="outline" size="sm" onClick={onBack}>
+        <Button variant="outline" size="sm" onClick={() => {
+          const riskOverrides: Record<string, unknown> = {};
+          if (lotSize.trim()) riskOverrides.lots = lotSize.trim();
+          onBack(Array.from(enabledActions), riskOverrides, keywords);
+        }}>
           Back
         </Button>
         <Button size="sm" onClick={handleNext} disabled={isSubmitting}>

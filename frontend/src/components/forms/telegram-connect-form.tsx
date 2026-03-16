@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,8 +24,18 @@ export function TelegramConnectForm({ onSuccess }: TelegramConnectFormProps = {}
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [phoneCodeHash, setPhoneCodeHash] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const sendCode = useSendCode();
+
+  // Cooldown timer
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
   const verifyCode = useVerifyCode();
 
   const stepInfo = STEP_LABELS[step];
@@ -41,6 +51,7 @@ export function TelegramConnectForm({ onSuccess }: TelegramConnectFormProps = {}
       const res = await sendCode.mutateAsync(phone);
       setPhoneCodeHash(res.phone_code_hash);
       setStep("code");
+      setResendCooldown(60);
       toast.success("Verification code sent");
     } catch (err) {
       toast.error(
@@ -48,6 +59,17 @@ export function TelegramConnectForm({ onSuccess }: TelegramConnectFormProps = {}
       );
     }
   }
+
+  const handleResendCode = useCallback(async () => {
+    try {
+      const res = await sendCode.mutateAsync(phone);
+      setPhoneCodeHash(res.phone_code_hash);
+      setResendCooldown(60);
+      toast.success("New verification code sent");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to resend code");
+    }
+  }, [phone, sendCode]);
 
   async function handleVerifyCode(e: React.FormEvent) {
     e.preventDefault();
@@ -136,7 +158,7 @@ export function TelegramConnectForm({ onSuccess }: TelegramConnectFormProps = {}
               className="h-8 text-sm"
             />
             <p className="text-[10px] text-muted-foreground">
-              Include country code (e.g., +1 for US)
+              Enter the phone number linked to your personal Telegram account, including country code (e.g., +1 for US)
             </p>
           </div>
           <Button type="submit" size="sm" className="h-7 text-xs" disabled={sendCode.isPending}>
@@ -162,6 +184,21 @@ export function TelegramConnectForm({ onSuccess }: TelegramConnectFormProps = {}
               Check your Telegram app for the code.
             </p>
           </div>
+          <p className="text-[10px] text-muted-foreground">
+            Didn't receive it?{" "}
+            {resendCooldown > 0 ? (
+              <span className="text-muted-foreground/60">Resend code in {resendCooldown}s</span>
+            ) : (
+              <button
+                type="button"
+                className="text-primary hover:underline"
+                onClick={handleResendCode}
+                disabled={sendCode.isPending}
+              >
+                {sendCode.isPending ? "Sending..." : "Resend code"}
+              </button>
+            )}
+          </p>
           <div className="flex gap-2">
             <Button
               type="button"

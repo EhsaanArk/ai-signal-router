@@ -1,8 +1,8 @@
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "") + "/api/v1";
-export const APP_NAME = "Signal Copier";
+export const APP_NAME = "Sage Radar AI";
 
 export const TIER_LIMITS: Record<string, number> = {
-  free: 1,
+  free: 5,
   starter: 2,
   pro: 5,
   elite: 15,

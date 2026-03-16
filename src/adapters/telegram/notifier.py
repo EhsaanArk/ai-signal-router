@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 import httpx
+import sentry_sdk
 
 from src.core.models import DispatchResult
 
@@ -74,6 +75,7 @@ class TelegramNotifier:
                     logger.info("Telegram notification sent to chat_id=%s", chat_id)
         except Exception as exc:
             logger.error("Failed to send Telegram notification: %s", exc)
+            sentry_sdk.capture_exception(exc)
 
 
 def _escape_md(text: str) -> str:

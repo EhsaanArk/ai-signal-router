@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -66,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     removeToken();
+    localStorage.removeItem("sgm_setup_complete");
     setTokenState(null);
     setUser(null);
   }, []);
@@ -112,10 +114,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => timers.forEach(clearTimeout);
   }, [token, logout]);
 
+  const value = useMemo(
+    () => ({ user, token, isLoading, login, register, logout }),
+    [user, token, isLoading, login, register, logout],
+  );
+
   return (
-    <AuthContext.Provider
-      value={{ user, token, isLoading, login, register, logout }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

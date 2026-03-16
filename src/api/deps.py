@@ -200,6 +200,7 @@ async def get_current_user(
         subscription_tier=SubscriptionTier(user_row.subscription_tier),
         is_admin=getattr(user_row, "is_admin", False),
         is_disabled=getattr(user_row, "is_disabled", False),
+        email_verified=getattr(user_row, "email_verified", False),
         created_at=user_row.created_at,
     )
 

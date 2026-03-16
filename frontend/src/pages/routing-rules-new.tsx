@@ -25,3 +25,5 @@ export function RoutingRulesNewPage() {
     </div>
   );
 }
+
+export default RoutingRulesNewPage;

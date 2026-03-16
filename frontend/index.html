@@ -4,10 +4,25 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SageMaster Signal Copier</title>
+    <title>Sage Radar AI</title>
+    <meta property="og:title" content="Sage Radar AI" />
+    <meta property="og:description" content="Automate your Telegram trading signals to SageMaster" />
+    <meta property="og:image" content="/og-image.png" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Sage Radar AI" />
+    <meta name="twitter:description" content="Automate your Telegram trading signals to SageMaster" />
+    <meta name="twitter:image" content="/og-image.png" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Pre-React branded loading — replaced when app mounts -->
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#09090b;gap:12px;">
+        <img src="/logo.svg" width="48" height="48" alt="" style="animation:pulse 2s ease-in-out infinite;" />
+        <span style="color:#a1a1aa;font-size:13px;font-family:system-ui,sans-serif;">Loading...</span>
+      </div>
+      <style>@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}</style>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

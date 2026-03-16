@@ -8,6 +8,7 @@ import { RoutingRuleWizard } from "@/components/forms/routing-rule-wizard";
 import { useTelegramStatus } from "@/hooks/use-telegram";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 const STEPS = [
   { label: "Connect Telegram", description: "Link your account" },
@@ -37,6 +38,7 @@ export function SetupPage() {
 
   function handleSkip() {
     completeSetup();
+    toast.info("You can start setup anytime from the Telegram page");
     navigate("/", { replace: true });
   }
 
@@ -49,7 +51,7 @@ export function SetupPage() {
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
       <div className="border-b px-6 py-4">
-        <h1 className="text-lg font-semibold">Setup your Signal Copier</h1>
+        <h1 className="text-lg font-semibold">Setup your Sage Radar AI</h1>
         <p className="text-sm text-muted-foreground">
           Complete these steps to start routing signals
         </p>
@@ -105,7 +107,8 @@ export function SetupPage() {
                   <div>
                     <h2 className="text-base font-semibold">Connect Telegram</h2>
                     <p className="text-sm text-muted-foreground">
-                      Link your Telegram account to start receiving signals
+                      We connect to your Telegram account to read signals from channels you select.
+                      We never send messages or access private chats.
                     </p>
                   </div>
                   {tgLoading ? (
@@ -170,3 +173,5 @@ export function SetupPage() {
     </div>
   );
 }
+
+export default SetupPage;
