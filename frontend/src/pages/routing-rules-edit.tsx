@@ -752,3 +752,5 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
     </div>
   );
 }
+
+export default RoutingRulesEditPage;

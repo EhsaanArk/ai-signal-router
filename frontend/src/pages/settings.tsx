@@ -540,3 +540,5 @@ function DataPrivacyCard() {
     </>
   );
 }
+
+export default SettingsPage;

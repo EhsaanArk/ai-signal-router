@@ -209,3 +209,5 @@ export function TelegramPage() {
     </div>
   );
 }
+
+export default TelegramPage;

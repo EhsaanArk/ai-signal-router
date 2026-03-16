@@ -61,3 +61,5 @@ export function RoutingRulesPage() {
     </div>
   );
 }
+
+export default RoutingRulesPage;

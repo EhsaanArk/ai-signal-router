@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/auth-context";
 import { removeToken } from "@/lib/auth";
@@ -22,5 +22,5 @@ export function ProtectedRoute() {
   if (isLoading) return <LoadingSpinner />;
   if (!token || !user) return <Navigate to="/login" replace />;
 
-  return <Outlet />;
+  return <Suspense fallback={<LoadingSpinner />}><Outlet /></Suspense>;
 }

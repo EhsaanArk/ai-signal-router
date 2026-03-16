@@ -210,3 +210,5 @@ export function AdminSignalsPage() {
     </div>
   );
 }
+
+export default AdminSignalsPage;

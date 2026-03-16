@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { Link, Outlet } from "react-router-dom";
 import { ArrowRight, X } from "lucide-react";
 import { Sidebar } from "./sidebar";
 import { Header } from "./header";
 import { MobileNav } from "./mobile-nav";
 import { EmailVerifyBanner } from "@/components/shared/email-verify-banner";
+import { PageLoader } from "@/components/shared/loading-spinner";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
 
 function SetupIncompleteBanner() {
@@ -51,7 +52,9 @@ export function DashboardLayout() {
         <main className="flex-1 overflow-y-auto p-3 md:p-4 lg:p-5">
           <EmailVerifyBanner />
           <SetupIncompleteBanner />
-          <Outlet />
+          <Suspense fallback={<PageLoader />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>

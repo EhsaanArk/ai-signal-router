@@ -6,6 +6,7 @@ export function useChannels() {
   return useQuery({
     queryKey: ["channels"],
     queryFn: () => apiFetch<ChannelInfo[]>("/channels"),
+    staleTime: 5 * 60 * 1000,
     retry: false,
   });
 }
