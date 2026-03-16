@@ -309,90 +309,92 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
             {showGuide && (
               <div className="mt-2 rounded-md border border-border/50 bg-muted/20 px-3 py-3 space-y-3">
                 {destinationType === "sagemaster_forex" ? (
-                  <ol className="list-decimal list-inside space-y-2.5 text-[11px] text-muted-foreground">
-                    <li>
-                      <span className="font-medium text-foreground">Log in to SageMaster Forex</span>
-                      <br />
-                      <span className="ml-4">
-                        Go to{" "}
-                        <a href="https://sfx.sagemaster.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                          sfx.sagemaster.io
-                        </a>
-                        {" "}and sign in to your account.
-                      </span>
-                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
-                        Screenshot coming soon
+                  <>
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-medium text-foreground">Step 1: Create a Strategy</p>
+                      <ol className="list-decimal list-inside space-y-1 text-[11px] text-muted-foreground ml-1">
+                        <li>
+                          Log in at{" "}
+                          <a href="https://sfx.sagemaster.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                            sfx.sagemaster.io
+                          </a>
+                        </li>
+                        <li>Go to <span className="font-medium text-foreground">Strategies</span> → <span className="font-medium text-foreground">Create a Strategy</span></li>
+                        <li>In the Strategy Creation Wizard, find the <span className="font-medium text-foreground">Trigger Condition</span> dropdown</li>
+                      </ol>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-medium text-foreground">Step 2: Choose V1 or V2 Trigger</p>
+                      <div className="ml-1 space-y-1 text-[11px] text-muted-foreground">
+                        <p>Select either <span className="font-medium text-foreground">Custom TradingView Alert (V1)</span> or <span className="font-medium text-foreground">V2</span>:</p>
+                        <ul className="list-disc list-inside ml-2 space-y-0.5">
+                          <li><span className="font-medium">V1</span> — Fixed SL/TP, risk percentage or fixed lot</li>
+                          <li><span className="font-medium">V2</span> — Full signal control with any SL/TP type and all money management options</li>
+                        </ul>
+                        <p>Complete the remaining fields according to your trading preferences.</p>
                       </div>
-                    </li>
-                    <li>
-                      <span className="font-medium text-foreground">Navigate to your AI Assist bot</span>
-                      <br />
-                      <span className="ml-4">Open the AI Assist section and select the bot you want to connect.</span>
-                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
-                        Screenshot coming soon
-                      </div>
-                    </li>
-                    <li>
-                      <span className="font-medium text-foreground">Copy the Webhook URL and JSON template</span>
-                      <br />
-                      <span className="ml-4">
-                        Find the Deals Idea URL (looks like{" "}
-                        <code className="rounded bg-muted px-1 py-0.5 text-[10px] font-mono">https://api.sagemaster.io/deals_idea/xxxx</code>
-                        ) and copy it.
-                      </span>
-                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
-                        Screenshot coming soon
-                      </div>
-                    </li>
-                    <li>
-                      <span className="font-medium text-foreground">Paste it above</span>
-                      <br />
-                      <span className="ml-4">We'll auto-detect your account ID and lock the field for safety.</span>
-                    </li>
-                  </ol>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-medium text-foreground">Step 3: Get Your Webhook Details</p>
+                      <ol className="list-decimal list-inside space-y-1 text-[11px] text-muted-foreground ml-1">
+                        <li>After creating the strategy, go to the <span className="font-medium text-foreground">Alerts</span> tab</li>
+                        <li>
+                          Copy the <span className="font-medium text-foreground">Webhook URL</span> (looks like{" "}
+                          <code className="rounded bg-muted px-1 py-0.5 text-[10px] font-mono">https://api.sagemaster.io/deals_idea/...</code>
+                          ) → paste it in the <span className="font-medium text-foreground">Webhook URL</span> field above
+                        </li>
+                        <li>Copy the <span className="font-medium text-foreground">JSON Message</span> from the code block → paste it in the <span className="font-medium text-foreground">Webhook Body Template</span> below</li>
+                      </ol>
+                    </div>
+                  </>
                 ) : (
-                  <ol className="list-decimal list-inside space-y-2.5 text-[11px] text-muted-foreground">
-                    <li>
-                      <span className="font-medium text-foreground">Log in to SageMaster Crypto</span>
-                      <br />
-                      <span className="ml-4">
-                        Go to{" "}
-                        <a href="https://app.sagemaster.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                          app.sagemaster.io
-                        </a>
-                        {" "}and sign in to your account.
-                      </span>
-                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
-                        Screenshot coming soon
-                      </div>
-                    </li>
-                    <li>
-                      <span className="font-medium text-foreground">Navigate to your AI Assist bot</span>
-                      <br />
-                      <span className="ml-4">Open the AI Assist section and select the bot you want to connect.</span>
-                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
-                        Screenshot coming soon
-                      </div>
-                    </li>
-                    <li>
-                      <span className="font-medium text-foreground">Copy the Webhook URL and JSON template</span>
-                      <br />
-                      <span className="ml-4">
-                        Find the Deals Idea URL (looks like{" "}
-                        <code className="rounded bg-muted px-1 py-0.5 text-[10px] font-mono">https://api.sagemaster.io/deals_idea/xxxx</code>
-                        ) and copy it.
-                      </span>
-                      <div className="ml-4 mt-1.5 rounded border border-dashed border-border/50 bg-muted/30 px-3 py-4 text-center text-[10px] text-muted-foreground/50">
-                        Screenshot coming soon
-                      </div>
-                    </li>
-                    <li>
-                      <span className="font-medium text-foreground">Paste it above</span>
-                      <br />
-                      <span className="ml-4">We'll auto-detect your account ID and lock the field for safety.</span>
-                    </li>
-                  </ol>
+                  <>
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-medium text-foreground">Step 1: Create a DCA Assist</p>
+                      <ol className="list-decimal list-inside space-y-1 text-[11px] text-muted-foreground ml-1">
+                        <li>
+                          Log in at{" "}
+                          <a href="https://app.sagemaster.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                            app.sagemaster.io
+                          </a>
+                        </li>
+                        <li>In the left sidebar under <span className="font-medium text-foreground">AI ASSISTS</span>, click <span className="font-medium text-foreground">AI DCA</span></li>
+                        <li>Click <span className="font-medium text-foreground">+ Create DCA Assist</span> in the top right</li>
+                      </ol>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-medium text-foreground">Step 2: Configure Your Strategy</p>
+                      <ol className="list-decimal list-inside space-y-1 text-[11px] text-muted-foreground ml-1">
+                        <li>Name your assist (e.g., "Telegram Signal Router")</li>
+                        <li>Select your <span className="font-medium text-foreground">Exchange</span> and <span className="font-medium text-foreground">Direction</span> (Long/Short)</li>
+                        <li>
+                          Type: choose <span className="font-medium text-foreground">Multi Pair</span> (recommended) to accept signals for multiple pairs, or{" "}
+                          <span className="font-medium text-foreground">Single Pair</span> for one asset
+                        </li>
+                        <li>Under Strategy → Trigger Condition, select <span className="font-medium text-foreground">TradingView alerts</span></li>
+                        <li>Save your DCA Assist</li>
+                      </ol>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-medium text-foreground">Step 3: Get Your Webhook Details</p>
+                      <ol className="list-decimal list-inside space-y-1 text-[11px] text-muted-foreground ml-1">
+                        <li>Open the <span className="font-medium text-foreground">TradingView Alerts</span> tab in your new DCA Assist</li>
+                        <li>
+                          Copy the <span className="font-medium text-foreground">Webhook URL</span> (looks like{" "}
+                          <code className="rounded bg-muted px-1 py-0.5 text-[10px] font-mono">https://api.sagemaster.io/deals_idea/...</code>
+                          ) → paste it in the <span className="font-medium text-foreground">Webhook URL</span> field above
+                        </li>
+                        <li>Copy the <span className="font-medium text-foreground">JSON Message</span> from the code block → paste it in the <span className="font-medium text-foreground">Webhook Body Template</span> below</li>
+                      </ol>
+                    </div>
+                  </>
                 )}
+                <div className="flex items-start gap-1.5 rounded bg-primary/5 border border-primary/20 px-2.5 py-2 mt-1">
+                  <Lightbulb className="h-3 w-3 text-primary mt-0.5 shrink-0" />
+                  <p className="text-[10px] text-muted-foreground">
+                    <span className="font-medium text-foreground">Smart Paste:</span> When you paste your Webhook URL, we auto-detect your account ID. When you paste the JSON template, we auto-detect your Assist ID and exchange.
+                  </p>
+                </div>
               </div>
             )}
           </div>
