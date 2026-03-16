@@ -8,6 +8,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
       <Card className="w-full max-w-md">
         <CardContent className="pt-6">
           <div className="mb-6 flex flex-col items-center gap-1.5">
+            <img src="/logo.svg" alt={APP_NAME} className="h-12 w-12 mb-1" />
             <h1 className="text-center text-2xl font-semibold">
               {APP_NAME}
             </h1>
