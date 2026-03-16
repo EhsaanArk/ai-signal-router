@@ -1,5 +1,6 @@
 """Public API router — /api/v1 endpoints for the SGM Telegram Signal Copier."""
 
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -31,6 +32,8 @@ from src.api.deps import (
     get_settings,
     limiter,
 )
+import sentry_sdk
+
 from src.core.models import RoutingRule, SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
@@ -349,8 +352,8 @@ async def register(
         try:
             import resend
             resend.api_key = settings.RESEND_API_KEY
-            resend.Emails.send({
-                "from": "Sage Radar AI <onboarding@resend.dev>",
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                 "to": [body.email],
                 "subject": "Verify your email",
                 "html": (
@@ -360,8 +363,9 @@ async def register(
                     "<p>This link expires in 24 hours.</p>"
                 ),
             })
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to send verification email")
+            sentry_sdk.capture_exception(exc)
     else:
         logger.warning("RESEND_API_KEY not set — verify link: %s", verify_link)
 
@@ -404,20 +408,19 @@ async def forgot_password(
                 import resend
 
                 resend.api_key = settings.RESEND_API_KEY
-                resend.Emails.send(
-                    {
-                        "from": "SageMaster <noreply@sagemaster.io>",
-                        "to": [body.email],
-                        "subject": "Reset your password",
-                        "html": (
-                            f"<p>Click the link below to reset your password. "
-                            f"This link expires in 1 hour.</p>"
-                            f'<p><a href="{reset_link}">Reset Password</a></p>'
-                        ),
-                    }
-                )
-            except Exception:
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
+                    "to": [body.email],
+                    "subject": "Reset your password",
+                    "html": (
+                        "<p>Click the link below to reset your password. "
+                        "This link expires in 1 hour.</p>"
+                        f'<p><a href="{reset_link}">Reset Password</a></p>'
+                    ),
+                })
+            except Exception as exc:
                 logger.exception("Failed to send password reset email")
+                sentry_sdk.capture_exception(exc)
         else:
             logger.warning(
                 "RESEND_API_KEY not set — reset link: %s", reset_link
@@ -540,8 +543,8 @@ async def resend_verification(
         try:
             import resend
             resend.api_key = settings.RESEND_API_KEY
-            resend.Emails.send({
-                "from": "Sage Radar AI <onboarding@resend.dev>",
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                 "to": [current_user.email],
                 "subject": "Verify your email",
                 "html": (
@@ -550,8 +553,9 @@ async def resend_verification(
                     "<p>This link expires in 24 hours.</p>"
                 ),
             })
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to send verification email")
+            sentry_sdk.capture_exception(exc)
     else:
         logger.warning("RESEND_API_KEY not set — verify link: %s", verify_link)
 

@@ -6,6 +6,7 @@ dispatch summary emails via the Resend API.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import resend
@@ -26,7 +27,7 @@ class ResendNotifier:
     def __init__(
         self,
         api_key: str,
-        from_address: str = "SageMaster Copier <noreply@sagemaster.io>",
+        from_address: str = "Sage Radar AI <noreply@radar.sagemaster.com>",
     ) -> None:
         self._api_key = api_key
         self._from_address = from_address
@@ -69,7 +70,7 @@ class ResendNotifier:
 
         try:
             resend.api_key = self._api_key
-            resend.Emails.send({
+            await asyncio.to_thread(resend.Emails.send, {
                 "from": self._from_address,
                 "to": [user_email],
                 "subject": subject,
