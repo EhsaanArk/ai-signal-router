@@ -155,12 +155,13 @@ class TelegramListener:
                     message.id,
                     channel_id,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "Failed to enqueue message %d from channel %s",
                     message.id,
                     channel_id,
                 )
+                sentry_sdk.capture_exception(exc)
 
     def update_monitored_channels(self, channels: set[str]) -> None:
         """Update the set of channel IDs this listener should process."""
@@ -299,8 +300,9 @@ if __name__ == "__main__":
                     updated = await _load_monitored_channels()
                     if updated != listener._monitored_channels:
                         listener.update_monitored_channels(updated)
-                except Exception:
+                except Exception as exc:
                     logger.exception("Failed to refresh monitored channels")
+                    sentry_sdk.capture_exception(exc)
 
                 # Heartbeat: verify Telethon connection is alive
                 if listener._client and listener._client.is_connected():
@@ -314,8 +316,9 @@ if __name__ == "__main__":
                         await listener._client.connect()
                         await listener._client.get_dialogs()
                         logger.info("Reconnected successfully")
-                    except Exception:
+                    except Exception as exc:
                         logger.exception("Reconnect failed")
+                        sentry_sdk.capture_exception(exc)
         except (KeyboardInterrupt, asyncio.CancelledError):
             await listener.stop()
 

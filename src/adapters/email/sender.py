@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 import resend
+import sentry_sdk
 
 from src.core.models import DispatchResult
 
@@ -77,3 +78,4 @@ class ResendNotifier:
             logger.info("Dispatch summary email sent to %s", user_email)
         except Exception as exc:
             logger.error("Failed to send notification email: %s", exc)
+            sentry_sdk.capture_exception(exc)
