@@ -49,10 +49,10 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
         </SheetHeader>
         <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
           {/* Logo */}
-          <div className="flex h-12 items-center gap-2 px-4 border-b border-sidebar-border">
-            <img src="/logo.svg" alt="Sage Radar AI" className="h-6 w-6" />
-            <span className="text-sm font-bold text-primary">Sage Radar AI</span>
-            <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
+          <div className="flex h-12 items-center gap-2 px-4 border-b border-sidebar-border group">
+            <img src="/logo.svg" alt="Sage Radar AI" className="h-6 w-6 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-12" />
+            <span className="text-sm font-bold text-primary transition-colors duration-200 group-hover:text-primary">Sage Radar AI</span>
+            <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20 transition-colors duration-200 group-hover:text-primary">Beta</span>
           </div>
 
           {/* Nav */}

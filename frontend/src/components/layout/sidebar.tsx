@@ -55,9 +55,9 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
       )}
     >
       {/* Logo */}
-      <div className="flex h-14 flex-col items-center justify-center border-b border-sidebar-border gap-0.5">
-        <img src="/logo.svg" alt="Sage Radar AI" className="h-7 w-7" />
-        <span className="text-[7px] font-bold uppercase tracking-wider px-1 py-px rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
+      <div className="flex h-14 flex-col items-center justify-center border-b border-sidebar-border gap-0.5 group cursor-pointer">
+        <img src="/logo.svg" alt="Sage Radar AI" className="h-7 w-7 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-12" />
+        <span className="text-[7px] font-bold uppercase tracking-wider px-1 py-px rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20 transition-colors duration-200 group-hover:text-primary">Beta</span>
       </div>
 
       {/* Nav */}
