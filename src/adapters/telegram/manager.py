@@ -195,8 +195,12 @@ class MultiUserListenerManager:
             queue_port=self._queue_port,
         )
 
+        # Load channels if not pre-loaded (e.g. restart scenario)
+        if channels is None:
+            channels = await self._load_monitored_channels(user_id)
+
         try:
-            await listener.start(user_id, session_string)
+            await listener.start(user_id, session_string, monitored_channels=channels)
         except FloodWaitError as e:
             logger.warning(
                 "User %s: flood-wait %ds on startup, retrying after delay",
@@ -204,7 +208,7 @@ class MultiUserListenerManager:
             )
             await asyncio.sleep(e.seconds + 1)
             try:
-                await listener.start(user_id, session_string)
+                await listener.start(user_id, session_string, monitored_channels=channels)
             except Exception as retry_exc:
                 logger.error(
                     "User %s: retry after flood-wait failed: %s",
@@ -232,9 +236,6 @@ class MultiUserListenerManager:
             _capture_user_exception(exc, user_id)
             return False
 
-        # Load monitored channels if not pre-loaded
-        if channels is None:
-            channels = await self._load_monitored_channels(user_id)
         listener.update_monitored_channels(channels)
 
         self._listeners[user_id] = listener
@@ -416,7 +417,12 @@ class MultiUserListenerManager:
             )
             try:
                 await listener._client.connect()
-                await listener._client.get_dialogs()
+                # Re-prime entity cache for monitored channels only (lightweight)
+                for ch_id in self._monitored_channels.get(user_id, set()):
+                    try:
+                        await listener._client.get_entity(int(ch_id))
+                    except Exception:
+                        pass
                 self._failure_counts[user_id] = 0
                 connected += 1
                 logger.info("Reconnected user %s successfully", user_id)

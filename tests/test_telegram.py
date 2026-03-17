@@ -423,6 +423,57 @@ class TestTelegramListenerStart:
     @pytest.mark.asyncio
     @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
+    async def test_start_with_channels_uses_get_entity(self, mock_client_cls, _mock_ss):
+        """start() with monitored_channels should use get_entity instead of get_dialogs."""
+        mock_client = _make_mock_client()
+        mock_client.get_entity = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        queue_port = AsyncMock()
+        listener = TelegramListener(
+            api_id=FAKE_API_ID,
+            api_hash=FAKE_API_HASH,
+            queue_port=queue_port,
+        )
+
+        await listener.start(
+            user_id=SAMPLE_USER_ID,
+            session_string=FAKE_SESSION_STRING,
+            monitored_channels={"12345", "67890"},
+        )
+
+        # get_entity should be called for each channel
+        assert mock_client.get_entity.await_count == 2
+        mock_client.get_entity.assert_any_await(12345)
+        mock_client.get_entity.assert_any_await(67890)
+        # get_dialogs should NOT be called
+        mock_client.get_dialogs.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
+    @patch("src.adapters.telegram.listener.TelegramClient")
+    async def test_start_without_channels_falls_back_to_get_dialogs(self, mock_client_cls, _mock_ss):
+        """start() without monitored_channels should fall back to get_dialogs."""
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        queue_port = AsyncMock()
+        listener = TelegramListener(
+            api_id=FAKE_API_ID,
+            api_hash=FAKE_API_HASH,
+            queue_port=queue_port,
+        )
+
+        await listener.start(
+            user_id=SAMPLE_USER_ID,
+            session_string=FAKE_SESSION_STRING,
+        )
+
+        mock_client.get_dialogs.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
+    @patch("src.adapters.telegram.listener.TelegramClient")
     async def test_start_unauthorized_raises(self, mock_client_cls, _mock_ss):
         """start() should raise RuntimeError if the session is not authorised."""
         mock_client = _make_mock_client()
