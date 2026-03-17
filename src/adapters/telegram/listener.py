@@ -47,6 +47,7 @@ class TelegramListener:
         queue_port: QueuePort,
         get_session: Callable[[], Awaitable[dict[UUID, str]]] | None = None,
         monitored_channels: set[str] | None = None,
+        proxy: dict | None = None,
     ) -> None:
         self._api_id = api_id
         self._api_hash = api_hash
@@ -55,6 +56,7 @@ class TelegramListener:
         self._client: TelegramClient | None = None
         self._user_id: UUID | None = None
         self._monitored_channels: set[str] = monitored_channels or set()
+        self._proxy = proxy
 
     async def start(
         self,
@@ -83,6 +85,7 @@ class TelegramListener:
             connection_retries=5,
             retry_delay=1,
             auto_reconnect=True,
+            proxy=self._proxy,
         )
         await self._client.connect()
 
@@ -225,9 +228,12 @@ if __name__ == "__main__":
         logger.info("Sentry initialised (role=listener)")
 
     async def _main() -> None:
+        from src.adapters.telegram import parse_proxy_url
+
         api_id = int(os.environ["TELEGRAM_API_ID"])
         api_hash = os.environ["TELEGRAM_API_HASH"]
         local_mode = os.environ.get("LOCAL_MODE", "false").lower() == "true"
+        proxy = parse_proxy_url(os.environ.get("TELEGRAM_PROXY_URL"))
 
         # In production, publish to QStash; locally, POST to the co-located
         # API service so the full pipeline (parse → route → dispatch → log)
@@ -292,6 +298,7 @@ if __name__ == "__main__":
                 api_hash=api_hash,
                 queue_port=queue,
                 monitored_channels=monitored,
+                proxy=proxy,
             )
 
             await listener.start(user_id, session_string)
@@ -348,6 +355,7 @@ if __name__ == "__main__":
                 engine=engine,
                 enc_key=enc_key,
                 email_notifier=email_notifier,
+                proxy=proxy,
             )
 
             logger.info("Starting multi-user listener manager...")

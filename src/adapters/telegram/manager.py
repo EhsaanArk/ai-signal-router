@@ -72,12 +72,14 @@ class MultiUserListenerManager:
         engine: AsyncEngine,
         enc_key: bytes,
         email_notifier: object | None = None,
+        proxy: dict | None = None,
     ) -> None:
         self._api_id = api_id
         self._api_hash = api_hash
         self._queue_port = queue_port
         self._engine = engine
         self._enc_key = enc_key
+        self._proxy = proxy
         self._email_notifier = email_notifier
 
         self._listeners: dict[UUID, TelegramListener] = {}
@@ -196,6 +198,7 @@ class MultiUserListenerManager:
             api_id=self._api_id,
             api_hash=self._api_hash,
             queue_port=self._queue_port,
+            proxy=self._proxy,
         )
 
         # Load channels if not pre-loaded (e.g. restart scenario)
