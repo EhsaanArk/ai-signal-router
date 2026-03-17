@@ -43,13 +43,14 @@ export function TelegramConnectForm({ onSuccess, defaultPhone }: TelegramConnect
 
   async function handleSendCode(e: React.FormEvent) {
     e.preventDefault();
+    const normalized = phone.replace(/[\s\-()]/g, "");
     const phoneRegex = /^\+\d{7,15}$/;
-    if (!phoneRegex.test(phone.replace(/\s/g, ""))) {
+    if (!phoneRegex.test(normalized)) {
       toast.error("Enter a valid phone number with country code (e.g., +1234567890)");
       return;
     }
     try {
-      const res = await sendCode.mutateAsync(phone);
+      const res = await sendCode.mutateAsync(normalized);
       setPhoneCodeHash(res.phone_code_hash);
       setStep("code");
       setResendCooldown(60);
@@ -63,7 +64,7 @@ export function TelegramConnectForm({ onSuccess, defaultPhone }: TelegramConnect
 
   const handleResendCode = useCallback(async () => {
     try {
-      const res = await sendCode.mutateAsync(phone);
+      const res = await sendCode.mutateAsync(phone.replace(/[\s\-()]/g, ""));
       setPhoneCodeHash(res.phone_code_hash);
       setResendCooldown(60);
       toast.success("New verification code sent");
@@ -76,7 +77,7 @@ export function TelegramConnectForm({ onSuccess, defaultPhone }: TelegramConnect
     e.preventDefault();
     try {
       const res = await verifyCode.mutateAsync({
-        phone_number: phone,
+        phone_number: phone.replace(/[\s\-()]/g, ""),
         code,
         phone_code_hash: phoneCodeHash,
       });
@@ -98,7 +99,7 @@ export function TelegramConnectForm({ onSuccess, defaultPhone }: TelegramConnect
     e.preventDefault();
     try {
       const res = await verifyCode.mutateAsync({
-        phone_number: phone,
+        phone_number: phone.replace(/[\s\-()]/g, ""),
         code,
         phone_code_hash: phoneCodeHash,
         password,
