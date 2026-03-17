@@ -855,6 +855,8 @@ async def telegram_verify_code(
     if existing:
         existing.session_string_encrypted = encrypted
         existing.is_active = True
+        existing.disconnected_reason = None
+        existing.disconnected_at = None
     else:
         db.add(
             TelegramSessionModel(
