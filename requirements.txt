@@ -25,3 +25,4 @@ opentelemetry-instrumentation-sqlalchemy==0.48b0
 opentelemetry-instrumentation-httpx==0.48b0
 opentelemetry-instrumentation-logging==0.48b0
 sentry-sdk[fastapi]==2.19.2
+pysocks>=1.7.1

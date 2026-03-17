@@ -16,6 +16,8 @@ export interface TelegramStatusResponse {
   connected: boolean;
   phone_number: string | null;
   connected_at: string | null;
+  disconnected_at: string | null;
+  disconnected_reason: string | null;
 }
 
 export interface SendCodeResponse {
@@ -91,6 +93,7 @@ export interface RoutingRuleResponse {
 export interface NotificationPreferences {
   email_on_success: boolean;
   email_on_failure: boolean;
+  email_on_disconnect: boolean;
   telegram_on_success: boolean;
   telegram_on_failure: boolean;
   telegram_bot_chat_id: number | null;

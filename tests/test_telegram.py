@@ -11,6 +11,7 @@ from uuid import UUID
 
 import pytest
 
+from src.adapters.telegram import parse_proxy_url
 from src.adapters.telegram.auth import TelegramAuth
 from src.adapters.telegram.channels import get_user_channels
 from src.adapters.telegram.listener import TelegramListener
@@ -423,6 +424,57 @@ class TestTelegramListenerStart:
     @pytest.mark.asyncio
     @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
+    async def test_start_with_channels_uses_get_entity(self, mock_client_cls, _mock_ss):
+        """start() with monitored_channels should use get_entity instead of get_dialogs."""
+        mock_client = _make_mock_client()
+        mock_client.get_entity = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        queue_port = AsyncMock()
+        listener = TelegramListener(
+            api_id=FAKE_API_ID,
+            api_hash=FAKE_API_HASH,
+            queue_port=queue_port,
+        )
+
+        await listener.start(
+            user_id=SAMPLE_USER_ID,
+            session_string=FAKE_SESSION_STRING,
+            monitored_channels={"12345", "67890"},
+        )
+
+        # get_entity should be called for each channel
+        assert mock_client.get_entity.await_count == 2
+        mock_client.get_entity.assert_any_await(12345)
+        mock_client.get_entity.assert_any_await(67890)
+        # get_dialogs should NOT be called
+        mock_client.get_dialogs.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
+    @patch("src.adapters.telegram.listener.TelegramClient")
+    async def test_start_without_channels_falls_back_to_get_dialogs(self, mock_client_cls, _mock_ss):
+        """start() without monitored_channels should fall back to get_dialogs."""
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        queue_port = AsyncMock()
+        listener = TelegramListener(
+            api_id=FAKE_API_ID,
+            api_hash=FAKE_API_HASH,
+            queue_port=queue_port,
+        )
+
+        await listener.start(
+            user_id=SAMPLE_USER_ID,
+            session_string=FAKE_SESSION_STRING,
+        )
+
+        mock_client.get_dialogs.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
+    @patch("src.adapters.telegram.listener.TelegramClient")
     async def test_start_unauthorized_raises(self, mock_client_cls, _mock_ss):
         """start() should raise RuntimeError if the session is not authorised."""
         mock_client = _make_mock_client()
@@ -538,6 +590,41 @@ class TestTelegramListenerOnNewMessage:
         # When get_chat() returns None, the listener uses abs(event.chat_id)
         # to strip the -100 prefix and match channels.py format
         assert enqueued_signal.channel_id == str(abs(-1009876543210))
+
+    @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
+    @patch("src.adapters.telegram.listener.TelegramClient")
+    async def test_on_new_message_handles_user_chat_type(self, mock_client_cls, _mock_ss):
+        """A User object (DM) without .title should not crash _on_new_message."""
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        queue_port = AsyncMock()
+        listener = TelegramListener(
+            api_id=FAKE_API_ID,
+            api_hash=FAKE_API_HASH,
+            queue_port=queue_port,
+            monitored_channels=set(),  # No channels monitored — message will be skipped
+        )
+        await listener.start(user_id=SAMPLE_USER_ID, session_string=FAKE_SESSION_STRING)
+
+        # Build a mock event where get_chat() returns a User (DM) — no .title attribute
+        event = AsyncMock()
+        event.message = MagicMock()
+        event.message.text = "Hello from DM"
+        event.message.id = 100
+        event.chat_id = 99999
+
+        mock_user_chat = MagicMock(spec=[])  # Empty spec — no .title
+        mock_user_chat.id = 99999
+        mock_user_chat.first_name = "Alice"
+        event.get_chat = AsyncMock(return_value=mock_user_chat)
+
+        # Should NOT raise AttributeError — the getattr fallback handles it
+        await listener._on_new_message(event)
+
+        # Message from unmonitored channel → skipped, not enqueued
+        queue_port.enqueue.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch(_LISTENER_STRING_SESSION)
@@ -680,3 +767,127 @@ class TestAuthPIIMasking:
             assert FAKE_PHONE not in record.getMessage(), (
                 f"Raw phone number found in log: {record.getMessage()}"
             )
+
+
+# =========================================================================
+# parse_proxy_url
+# =========================================================================
+
+
+class TestParseProxyUrl:
+    """Tests for ``parse_proxy_url()``."""
+
+    def test_none_returns_none(self):
+        assert parse_proxy_url(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert parse_proxy_url("") is None
+
+    def test_socks5_with_auth(self):
+        result = parse_proxy_url("socks5://user:pass@proxy.example.com:1080")
+        assert result == {
+            "proxy_type": "socks5",
+            "addr": "proxy.example.com",
+            "port": 1080,
+            "rdns": True,
+            "username": "user",
+            "password": "pass",
+        }
+
+    def test_socks5_without_auth(self):
+        result = parse_proxy_url("socks5://proxy.example.com:9050")
+        assert result == {
+            "proxy_type": "socks5",
+            "addr": "proxy.example.com",
+            "port": 9050,
+            "rdns": True,
+        }
+
+    def test_default_port(self):
+        result = parse_proxy_url("socks5://proxy.example.com")
+        assert result["port"] == 1080
+
+
+# =========================================================================
+# TelegramAuth — Telethon error propagation
+# =========================================================================
+
+
+class TestTelegramAuthErrors:
+    """Verify that specific Telethon errors propagate correctly from auth methods."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_send_code_propagates_flood_wait(self, mock_client_cls):
+        """FloodWaitError from send_code_request should propagate."""
+        from telethon.errors import FloodWaitError
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+        mock_client.send_code_request = AsyncMock(
+            side_effect=FloodWaitError(request=None, capture=42)
+        )
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        with pytest.raises(FloodWaitError):
+            await auth.send_code(FAKE_PHONE)
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_send_code_propagates_phone_number_invalid(self, mock_client_cls):
+        """PhoneNumberInvalidError from send_code_request should propagate."""
+        from telethon.errors import PhoneNumberInvalidError
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+        mock_client.send_code_request = AsyncMock(
+            side_effect=PhoneNumberInvalidError(request=None)
+        )
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        with pytest.raises(PhoneNumberInvalidError):
+            await auth.send_code(FAKE_PHONE)
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_verify_code_propagates_phone_code_invalid(self, mock_client_cls):
+        """PhoneCodeInvalidError from sign_in should propagate."""
+        from telethon.errors import PhoneCodeInvalidError
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        sent = MagicMock()
+        sent.phone_code_hash = FAKE_CODE_HASH
+        mock_client.send_code_request.return_value = sent
+        mock_client.sign_in = AsyncMock(
+            side_effect=PhoneCodeInvalidError(request=None)
+        )
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        await auth.send_code(FAKE_PHONE)
+
+        with pytest.raises(PhoneCodeInvalidError):
+            await auth.verify_code(FAKE_PHONE, FAKE_CODE, FAKE_CODE_HASH)
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_verify_code_propagates_phone_code_expired(self, mock_client_cls):
+        """PhoneCodeExpiredError from sign_in should propagate."""
+        from telethon.errors import PhoneCodeExpiredError
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        sent = MagicMock()
+        sent.phone_code_hash = FAKE_CODE_HASH
+        mock_client.send_code_request.return_value = sent
+        mock_client.sign_in = AsyncMock(
+            side_effect=PhoneCodeExpiredError(request=None)
+        )
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        await auth.send_code(FAKE_PHONE)
+
+        with pytest.raises(PhoneCodeExpiredError):
+            await auth.verify_code(FAKE_PHONE, FAKE_CODE, FAKE_CODE_HASH)

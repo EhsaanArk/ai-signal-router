@@ -20,11 +20,23 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { TelegramConnectForm } from "@/components/forms/telegram-connect-form";
+import { AlertTriangle } from "lucide-react";
 import { useTelegramStatus, useDisconnectTelegram } from "@/hooks/use-telegram";
 import { useChannels } from "@/hooks/use-channels";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
+
+const DISCONNECT_MESSAGES: Record<string, string> = {
+  session_expired:
+    "Your Telegram session expired. This can happen when you log out from another device or Telegram revokes the session.",
+  flood_wait_exhausted:
+    "Telegram temporarily rate-limited your account. Please wait a few minutes before reconnecting.",
+  user_disconnected: "You disconnected your Telegram account.",
+  decrypt_failed:
+    "There was an issue with your session data. Please reconnect.",
+};
 
 export function TelegramPage() {
   usePageTitle("Telegram");
@@ -71,6 +83,7 @@ export function TelegramPage() {
           {isLoading ? (
             <Skeleton className="h-24 w-full" />
           ) : status?.connected ? (
+            /* ---- Connected state ---- */
             <div className="space-y-4">
               {/* Account info */}
               <div className="space-y-1.5">
@@ -82,9 +95,12 @@ export function TelegramPage() {
                 )}
                 {status.connected_at && (
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Connected since</span>
+                    <span className="text-muted-foreground">Connected</span>
                     <span className="font-medium">
-                      {new Date(status.connected_at).toLocaleDateString()}
+                      {formatRelativeTime(status.connected_at)}
+                      <span className="text-muted-foreground ml-1">
+                        ({new Date(status.connected_at).toLocaleDateString()})
+                      </span>
                     </span>
                   </div>
                 )}
@@ -178,7 +194,28 @@ export function TelegramPage() {
               </Button>
             </div>
           ) : (
-            <TelegramConnectForm />
+            /* ---- Disconnected state ---- */
+            <div className="space-y-4">
+              {status?.disconnected_reason && status.disconnected_reason !== "user_disconnected" && (
+                <div className="flex gap-2 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-2.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      {DISCONNECT_MESSAGES[status.disconnected_reason] ||
+                        "Your Telegram session was disconnected."}
+                    </p>
+                    {status.disconnected_at && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Disconnected {formatRelativeTime(status.disconnected_at)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+              <TelegramConnectForm
+                defaultPhone={status?.phone_number ?? undefined}
+              />
+            </div>
           )}
         </CardContent>
       </Card>

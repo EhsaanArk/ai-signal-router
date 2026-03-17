@@ -118,6 +118,8 @@ class TelegramStatusResponse(BaseModel):
     connected: bool
     phone_number: str | None = None
     connected_at: str | None = None
+    disconnected_at: str | None = None
+    disconnected_reason: str | None = None
 
 
 # --- Channels ---------------------------------------------------------------
@@ -702,18 +704,22 @@ async def export_account_data(
 # ============================================================================
 
 _telegram_auth_instance: "TelegramAuth | None" = None
+_telegram_auth_lock = asyncio.Lock()
 
 
-def _get_telegram_auth(settings: Settings) -> "TelegramAuth":
+async def _get_telegram_auth(settings: Settings) -> "TelegramAuth":
     """Return a shared TelegramAuth singleton so pending clients persist across requests."""
     global _telegram_auth_instance
-    if _telegram_auth_instance is None:
-        from src.adapters.telegram import TelegramAuth
+    async with _telegram_auth_lock:
+        if _telegram_auth_instance is None:
+            import os
+            from src.adapters.telegram import TelegramAuth, parse_proxy_url
 
-        _telegram_auth_instance = TelegramAuth(
-            api_id=settings.TELEGRAM_API_ID,
-            api_hash=settings.TELEGRAM_API_HASH,
-        )
+            _telegram_auth_instance = TelegramAuth(
+                api_id=settings.TELEGRAM_API_ID,
+                api_hash=settings.TELEGRAM_API_HASH,
+                proxy=parse_proxy_url(os.environ.get("TELEGRAM_PROXY_URL")),
+            )
     return _telegram_auth_instance
 
 
@@ -724,8 +730,28 @@ async def telegram_send_code(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> SendCodeResponse:
     """Send a Telegram verification code to the given phone number."""
-    auth = _get_telegram_auth(settings)
-    result = await auth.send_code(body.phone_number)
+    from telethon.errors import FloodWaitError, PhoneNumberInvalidError
+
+    auth = await _get_telegram_auth(settings)
+    try:
+        result = await auth.send_code(body.phone_number)
+    except PhoneNumberInvalidError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid phone number format.",
+        )
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited by Telegram. Retry after {exc.seconds} seconds.",
+            headers={"Retry-After": str(exc.seconds)},
+        )
+    except Exception:
+        logger.exception("Telegram send_code failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Telegram service unavailable. Please try again later.",
+        )
     return SendCodeResponse(phone_code_hash=result["phone_code_hash"])
 
 
@@ -739,9 +765,14 @@ async def telegram_verify_code(
     cache=Depends(get_cache),
 ) -> VerifyCodeResponse:
     """Verify the Telegram code and persist the encrypted session string."""
-    from telethon.errors import SessionPasswordNeededError
+    from telethon.errors import (
+        FloodWaitError,
+        PhoneCodeExpiredError,
+        PhoneCodeInvalidError,
+        SessionPasswordNeededError,
+    )
 
-    auth = _get_telegram_auth(settings)
+    auth = await _get_telegram_auth(settings)
     try:
         session_string = await auth.verify_code(
             phone_number=body.phone_number,
@@ -752,7 +783,32 @@ async def telegram_verify_code(
     except (SessionPasswordNeededError, ValueError) as exc:
         if "password" in str(exc).lower() or isinstance(exc, SessionPasswordNeededError):
             return VerifyCodeResponse(status="2fa_required", requires_2fa=True)
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except PhoneCodeInvalidError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid verification code.",
+        )
+    except PhoneCodeExpiredError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code has expired. Please request a new one.",
+        )
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited by Telegram. Retry after {exc.seconds} seconds.",
+            headers={"Retry-After": str(exc.seconds)},
+        )
+    except Exception:
+        logger.exception("Telegram verify_code failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Telegram verification failed. Please try again.",
+        )
 
     # Encrypt the session string before storing
     from src.core.security import encrypt_session
@@ -762,7 +818,14 @@ async def telegram_verify_code(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="ENCRYPTION_KEY not configured",
         )
-    encrypted = encrypt_session(session_string, settings.ENCRYPTION_KEY.encode())
+    try:
+        encrypted = encrypt_session(session_string, settings.ENCRYPTION_KEY.encode())
+    except Exception:
+        logger.exception("Failed to encrypt Telegram session")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to encrypt session. Check ENCRYPTION_KEY configuration.",
+        )
 
     # Upsert the telegram session record
     result = await db.execute(
@@ -811,14 +874,34 @@ async def telegram_status(
         )
     )
     session = result.scalar_one_or_none()
-    if session is None:
-        return TelegramStatusResponse(connected=False)
+    if session is not None:
+        return TelegramStatusResponse(
+            connected=True,
+            phone_number=session.phone_number,
+            connected_at=session.created_at.isoformat() if session.created_at else None,
+        )
 
-    return TelegramStatusResponse(
-        connected=True,
-        phone_number=session.phone_number,
-        connected_at=session.created_at.isoformat() if session.created_at else None,
+    # No active session — check for the most recent inactive session
+    # to provide disconnection context to the frontend.
+    result = await db.execute(
+        select(TelegramSessionModel)
+        .where(TelegramSessionModel.user_id == current_user.id)
+        .order_by(TelegramSessionModel.updated_at.desc())
+        .limit(1)
     )
+    last_session = result.scalar_one_or_none()
+    if last_session and last_session.disconnected_reason:
+        return TelegramStatusResponse(
+            connected=False,
+            phone_number=last_session.phone_number,
+            disconnected_at=(
+                last_session.disconnected_at.isoformat()
+                if last_session.disconnected_at else None
+            ),
+            disconnected_reason=last_session.disconnected_reason,
+        )
+
+    return TelegramStatusResponse(connected=False)
 
 
 @router.post("/telegram/disconnect", response_model=MessageResponse)
@@ -844,6 +927,8 @@ async def telegram_disconnect(
 
     for session in sessions:
         session.is_active = False
+        session.disconnected_reason = "user_disconnected"
+        session.disconnected_at = datetime.now(timezone.utc)
 
     # Remove cached session and invalidate status cache
     try:
@@ -899,16 +984,44 @@ async def list_channels(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="ENCRYPTION_KEY not configured",
         )
-    session_string = decrypt_session_auto(session_encrypted, settings.ENCRYPTION_KEY.encode())
+    try:
+        session_string = decrypt_session_auto(session_encrypted, settings.ENCRYPTION_KEY.encode())
+    except Exception:
+        logger.exception("Failed to decrypt Telegram session for user %s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Telegram session is corrupted or invalid. Please disconnect and reconnect.",
+        )
 
     # Fetch channels via adapter
-    from src.adapters.telegram import get_user_channels
+    import os
+    from src.adapters.telegram import get_user_channels, parse_proxy_url
+    from telethon.errors import FloodWaitError
 
-    raw_channels = await get_user_channels(
-        session_string=session_string,
-        api_id=settings.TELEGRAM_API_ID,
-        api_hash=settings.TELEGRAM_API_HASH,
-    )
+    try:
+        raw_channels = await get_user_channels(
+            session_string=session_string,
+            api_id=settings.TELEGRAM_API_ID,
+            api_hash=settings.TELEGRAM_API_HASH,
+            proxy=parse_proxy_url(os.environ.get("TELEGRAM_PROXY_URL")),
+        )
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limited by Telegram. Retry after {exc.seconds} seconds.",
+            headers={"Retry-After": str(exc.seconds)},
+        )
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram session has expired. Please reconnect.",
+        )
+    except Exception:
+        logger.exception("Failed to fetch Telegram channels for user %s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch channels from Telegram. Please try again.",
+        )
     return [
         ChannelInfo(id=ch["channel_id"], title=ch["channel_name"], username=ch.get("username"))
         for ch in raw_channels

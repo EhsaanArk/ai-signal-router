@@ -47,6 +47,7 @@ class TelegramListener:
         queue_port: QueuePort,
         get_session: Callable[[], Awaitable[dict[UUID, str]]] | None = None,
         monitored_channels: set[str] | None = None,
+        proxy: dict | None = None,
     ) -> None:
         self._api_id = api_id
         self._api_hash = api_hash
@@ -55,8 +56,14 @@ class TelegramListener:
         self._client: TelegramClient | None = None
         self._user_id: UUID | None = None
         self._monitored_channels: set[str] = monitored_channels or set()
+        self._proxy = proxy
 
-    async def start(self, user_id: UUID, session_string: str) -> None:
+    async def start(
+        self,
+        user_id: UUID,
+        session_string: str,
+        monitored_channels: set[str] | None = None,
+    ) -> None:
         """Connect to Telegram and start listening for new messages.
 
         Parameters
@@ -65,6 +72,10 @@ class TelegramListener:
             The application user who owns this Telegram session.
         session_string:
             A Telethon ``StringSession`` token.
+        monitored_channels:
+            Optional set of channel IDs to pre-fetch into Telethon's entity
+            cache.  When provided, only these channels are fetched (lightweight)
+            instead of the full dialog list (heavy, triggers flood-wait).
         """
         self._user_id = user_id
         self._client = TelegramClient(
@@ -74,6 +85,7 @@ class TelegramListener:
             connection_retries=5,
             retry_delay=1,
             auto_reconnect=True,
+            proxy=self._proxy,
         )
         await self._client.connect()
 
@@ -99,10 +111,20 @@ class TelegramListener:
             events.MessageEdited(),
         )
 
-        # Fetch dialogs to prime Telethon's internal state and entity cache.
-        # Unlike catch_up(), this works reliably even with no prior update
-        # state (StringSession does not persist pts/qts/date).
-        await self._client.get_dialogs()
+        # Prime Telethon's entity cache so it can deserialise incoming updates.
+        # When we know which channels to monitor, fetch only those entities
+        # (lightweight) instead of the full dialog list (heavy, flood-wait prone).
+        if monitored_channels:
+            for ch_id in monitored_channels:
+                try:
+                    await self._client.get_entity(int(ch_id))
+                except Exception:
+                    logger.warning(
+                        "Could not pre-fetch entity for channel %s (user %s)",
+                        ch_id, user_id,
+                    )
+        else:
+            await self._client.get_dialogs()
 
         logger.info("Telegram listener started for user %s (new messages + edits)", user_id)
 
@@ -127,7 +149,9 @@ class TelegramListener:
         if channel_id not in self._monitored_channels:
             logger.info(
                 "Skipping message from unmonitored channel %s (chat=%s)",
-                channel_id, chat.title if chat else "unknown",
+                channel_id,
+                getattr(chat, 'title', None)
+                or getattr(chat, 'first_name', 'unknown'),
             )
             return
         logger.info("Message from monitored channel %s (msg_id=%s)", channel_id, message.id)
@@ -204,9 +228,12 @@ if __name__ == "__main__":
         logger.info("Sentry initialised (role=listener)")
 
     async def _main() -> None:
+        from src.adapters.telegram import parse_proxy_url
+
         api_id = int(os.environ["TELEGRAM_API_ID"])
         api_hash = os.environ["TELEGRAM_API_HASH"]
         local_mode = os.environ.get("LOCAL_MODE", "false").lower() == "true"
+        proxy = parse_proxy_url(os.environ.get("TELEGRAM_PROXY_URL"))
 
         # In production, publish to QStash; locally, POST to the co-located
         # API service so the full pipeline (parse → route → dispatch → log)
@@ -236,7 +263,7 @@ if __name__ == "__main__":
                 qstash_url=os.environ.get("QSTASH_URL", ""),
             )
 
-        # -- Resolve session: prefer env vars, fall back to DB lookup ----------
+        # -- Resolve session mode -----------------------------------------------
         from src.adapters.db.session import get_engine
         from src.adapters.db.models import TelegramSessionModel, RoutingRuleModel
         from sqlalchemy import select
@@ -249,78 +276,97 @@ if __name__ == "__main__":
         session_string_env = os.environ.get("TELEGRAM_SESSION_STRING")
 
         if user_id_env and session_string_env:
+            # ── Single-user override mode (backward compatible) ──────────
             user_id = UUID(user_id_env)
             session_string = session_string_env
-        else:
-            logger.info("No LISTENER_USER_ID / TELEGRAM_SESSION_STRING in env; "
-                        "querying DB for active session...")
-            enc_key = os.environ["ENCRYPTION_KEY"].encode()
-            async with SASession(engine, expire_on_commit=False) as db:
-                stmt = select(TelegramSessionModel).where(
-                    TelegramSessionModel.is_active.is_(True)
-                ).limit(1)
-                result = await db.execute(stmt)
-                row = result.scalar_one_or_none()
-            if row is None:
-                raise RuntimeError("No active Telegram session found in database.")
-            user_id = row.user_id
-            session_string = decrypt_session_auto(row.session_string_encrypted, enc_key)
-            logger.info("Loaded session for user %s from database.", user_id)
 
-        # -- Load monitored channels from routing rules ----------------------
-        async def _load_monitored_channels() -> set[str]:
-            async with SASession(engine, expire_on_commit=False) as db:
-                result = await db.execute(
-                    select(RoutingRuleModel.source_channel_id).where(
-                        RoutingRuleModel.user_id == user_id,
-                        RoutingRuleModel.is_active.is_(True),
-                    ).distinct()
-                )
-                channels = {row[0] for row in result.all()}
-            return channels
-
-        monitored = await _load_monitored_channels()
-        logger.info("Monitoring %d channel(s): %s", len(monitored), monitored)
-
-        listener = TelegramListener(
-            api_id=api_id,
-            api_hash=api_hash,
-            queue_port=queue,
-            monitored_channels=monitored,
-        )
-
-        await listener.start(user_id, session_string)
-
-        logger.info("Listener running. Press Ctrl+C to stop.")
-        try:
-            # Periodically refresh monitored channels (every 60s)
-            while True:
-                await asyncio.sleep(60)
-                try:
-                    updated = await _load_monitored_channels()
-                    if updated != listener._monitored_channels:
-                        listener.update_monitored_channels(updated)
-                except Exception as exc:
-                    logger.exception("Failed to refresh monitored channels")
-                    sentry_sdk.capture_exception(exc)
-
-                # Heartbeat: verify Telethon connection is alive
-                if listener._client and listener._client.is_connected():
-                    logger.info(
-                        "Heartbeat: listener alive, monitoring %d channel(s)",
-                        len(listener._monitored_channels),
+            async def _load_monitored_channels() -> set[str]:
+                async with SASession(engine, expire_on_commit=False) as db:
+                    result = await db.execute(
+                        select(RoutingRuleModel.source_channel_id).where(
+                            RoutingRuleModel.user_id == user_id,
+                            RoutingRuleModel.is_active.is_(True),
+                        ).distinct()
                     )
-                else:
-                    logger.warning("Heartbeat: Telethon client disconnected, attempting reconnect...")
+                    return {row[0] for row in result.all()}
+
+            monitored = await _load_monitored_channels()
+            logger.info("Single-user mode: monitoring %d channel(s): %s", len(monitored), monitored)
+
+            listener = TelegramListener(
+                api_id=api_id,
+                api_hash=api_hash,
+                queue_port=queue,
+                monitored_channels=monitored,
+                proxy=proxy,
+            )
+
+            await listener.start(user_id, session_string)
+
+            logger.info("Listener running (single-user). Press Ctrl+C to stop.")
+            try:
+                while True:
+                    await asyncio.sleep(60)
                     try:
-                        await listener._client.connect()
-                        await listener._client.get_dialogs()
-                        logger.info("Reconnected successfully")
+                        updated = await _load_monitored_channels()
+                        if updated != listener._monitored_channels:
+                            listener.update_monitored_channels(updated)
                     except Exception as exc:
-                        logger.exception("Reconnect failed")
+                        logger.exception("Failed to refresh monitored channels")
                         sentry_sdk.capture_exception(exc)
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            await listener.stop()
+
+                    if listener._client and listener._client.is_connected():
+                        logger.info(
+                            "Heartbeat: listener alive, monitoring %d channel(s)",
+                            len(listener._monitored_channels),
+                        )
+                    else:
+                        logger.warning("Heartbeat: Telethon client disconnected, attempting reconnect...")
+                        try:
+                            await listener._client.connect()
+                            for ch_id in listener._monitored_channels:
+                                try:
+                                    await listener._client.get_entity(int(ch_id))
+                                except Exception:
+                                    pass
+                            logger.info("Reconnected successfully")
+                        except Exception as exc:
+                            logger.exception("Reconnect failed")
+                            sentry_sdk.capture_exception(exc)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                await listener.stop()
+        else:
+            # ── Multi-user mode (SaaS) ───────────────────────────────────
+            from src.adapters.telegram.manager import MultiUserListenerManager
+
+            enc_key = os.environ["ENCRYPTION_KEY"].encode()
+
+            # Optional email notifier for disconnect alerts
+            email_notifier = None
+            resend_key = os.environ.get("RESEND_API_KEY", "")
+            if resend_key:
+                from src.adapters.email.sender import ResendNotifier
+                email_notifier = ResendNotifier(api_key=resend_key)
+
+            manager = MultiUserListenerManager(
+                api_id=api_id,
+                api_hash=api_hash,
+                queue_port=queue,
+                engine=engine,
+                enc_key=enc_key,
+                email_notifier=email_notifier,
+                proxy=proxy,
+            )
+
+            logger.info("Starting multi-user listener manager...")
+            await manager.start()
+
+            logger.info("Multi-user listener running. Press Ctrl+C to stop.")
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                await manager.stop()
 
     logging.basicConfig(level=logging.INFO)
     asyncio.run(_main())

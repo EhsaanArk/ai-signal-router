@@ -11,6 +11,7 @@ async def get_user_channels(
     api_id: int,
     api_hash: str,
     session_string: str,
+    proxy: dict | None = None,
 ) -> list[dict]:
     """Return a list of channels and supergroups the session user has joined.
 
@@ -29,6 +30,7 @@ async def get_user_channels(
         StringSession(session_string),
         api_id,
         api_hash,
+        proxy=proxy,
     )
     await client.connect()
 

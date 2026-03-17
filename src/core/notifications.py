@@ -19,6 +19,7 @@ class NotificationPreference(BaseModel):
 
     email_on_success: bool = False
     email_on_failure: bool = True
+    email_on_disconnect: bool = True
     telegram_on_success: bool = False
     telegram_on_failure: bool = False
     telegram_bot_chat_id: int | None = None

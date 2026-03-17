@@ -37,9 +37,15 @@ class TelegramAuth:
         Telegram application API hash.
     """
 
-    def __init__(self, api_id: int, api_hash: str) -> None:
+    def __init__(
+        self,
+        api_id: int,
+        api_hash: str,
+        proxy: dict | None = None,
+    ) -> None:
         self._api_id = api_id
         self._api_hash = api_hash
+        self._proxy = proxy
         self._pending_clients: dict[str, TelegramClient] = {}
 
     async def send_code(self, phone_number: str) -> dict:
@@ -57,6 +63,7 @@ class TelegramAuth:
             StringSession(),
             self._api_id,
             self._api_hash,
+            proxy=self._proxy,
         )
         await client.connect()
 

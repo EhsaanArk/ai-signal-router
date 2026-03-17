@@ -134,3 +134,56 @@ Telegram → Listener → QStash → API Workflow → OpenAI Parser → Mapper �
 - DevOps runbook: `@docs/launch/DEVOPS_RUNBOOK.md`
 - Support playbook: `@docs/launch/SUPPORT_PLAYBOOK.md`
 - User guide: `@docs/launch/USER_GUIDE.md`
+
+## Tooling & Workflow
+
+This project uses **gstack skills** for development workflows and **specialist agents** for post-deploy monitoring. Together they cover the full lifecycle.
+
+### Development Lifecycle
+
+| Phase | Tool | Trigger |
+|-------|------|---------|
+| **Plan** | `/plan-eng-review` | Before starting implementation of a non-trivial feature |
+| **Plan (strategic)** | `/plan-ceo-review` | When scoping a new product initiative or major pivot |
+| **Build & Browse** | `/browse` | For all web browsing and manual QA — **NEVER use `mcp__claude-in-chrome__*` tools directly** |
+| **Test** | `/qa` | Test web app flows, find + fix bugs iteratively |
+| **Review** | `/review` | Before merging any PR — check for structural issues |
+| **Ship** | `/ship` | Automated merge + test + version bump + PR creation |
+| **Document** | `/document-release` | After shipping — sync docs with shipped code |
+| **Monitor** | `sentry-monitor` agent | After deploy — check for new errors |
+| **Verify** | `railway-ops` agent | After deploy — confirm services healthy |
+| **Investigate** | `db-expert` agent | When debugging data issues |
+
+### Specialist Agents (`.claude/agents/`)
+
+Use these **proactively** — don't wait for the user to ask.
+
+| Agent | When to invoke |
+|-------|----------------|
+| `sentry-monitor` | After deployments, when errors mentioned, post-deploy verification |
+| `railway-ops` | Deployment status, service health, "is it deployed", "check staging" |
+| `db-expert` | Data integrity, "check the DB", SQL queries, duplicate records |
+
+### Auto-invoke triggers
+- **After merging a PR to staging/main** → `railway-ops` to verify deploy, then `sentry-monitor` for errors
+- **After `/ship` completes** → `railway-ops` to verify deploy, then `sentry-monitor` for errors
+- **When debugging a Sentry error** → `sentry-monitor` first, then `db-expert` if data-related
+- **When user asks "what's happening"** → `railway-ops` for service health
+
+### gstack Skills Reference
+
+All gstack skills live in `.claude/skills/gstack/`. If skills aren't working, run:
+```
+cd .claude/skills/gstack && ./setup
+```
+
+Available skills:
+- `/browse` — Persistent headless browser for QA and web interaction
+- `/plan-ceo-review` — CEO/founder-mode plan review
+- `/plan-eng-review` — Engineering plan review (architecture, data flow, edge cases)
+- `/review` — Pre-landing PR diff review
+- `/ship` — Automated ship workflow (merge, test, version, PR)
+- `/qa` — QA test + iterative bug fixing
+- `/setup-browser-cookies` — Import cookies for authenticated browse sessions
+- `/retro` — Weekly engineering retrospective
+- `/document-release` — Post-ship documentation sync
