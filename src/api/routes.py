@@ -237,7 +237,7 @@ async def login(
     Accepts standard OAuth2 form data (``username`` field = email).
     """
     result = await db.execute(
-        select(UserModel).where(UserModel.email == form_data.username)
+        select(UserModel).where(UserModel.email == form_data.username.lower())
     )
     user_row = result.scalar_one_or_none()
 
@@ -272,7 +272,7 @@ async def login_json(
 ) -> TokenResponse:
     """JSON-based login endpoint (convenience wrapper around the form login)."""
     result = await db.execute(
-        select(UserModel).where(UserModel.email == body.email)
+        select(UserModel).where(UserModel.email == body.email.lower())
     )
     user_row = result.scalar_one_or_none()
 
@@ -324,9 +324,10 @@ async def register(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TokenResponse:
     """Register a new user and return a JWT."""
-    # Check email uniqueness
+    # Check email uniqueness (case-insensitive)
+    normalised_email = body.email.lower()
     result = await db.execute(
-        select(UserModel).where(UserModel.email == body.email)
+        select(UserModel).where(UserModel.email == normalised_email)
     )
     if result.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -335,7 +336,7 @@ async def register(
         )
 
     hashed = pwd_context.hash(body.password)
-    new_user = UserModel(email=body.email, password_hash=hashed)
+    new_user = UserModel(email=normalised_email, password_hash=hashed)
     db.add(new_user)
     await db.flush()
 
@@ -387,7 +388,7 @@ async def forgot_password(
 ) -> MessageResponse:
     """Send a password reset link if the email exists. Always returns 200."""
     result = await db.execute(
-        select(UserModel).where(UserModel.email == body.email)
+        select(UserModel).where(UserModel.email == body.email.lower())
     )
     user_row = result.scalar_one_or_none()
 
