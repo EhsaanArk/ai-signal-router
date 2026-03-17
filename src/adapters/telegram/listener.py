@@ -236,7 +236,7 @@ if __name__ == "__main__":
                 qstash_url=os.environ.get("QSTASH_URL", ""),
             )
 
-        # -- Resolve session: prefer env vars, fall back to DB lookup ----------
+        # -- Resolve session mode -----------------------------------------------
         from src.adapters.db.session import get_engine
         from src.adapters.db.models import TelegramSessionModel, RoutingRuleModel
         from sqlalchemy import select
@@ -249,78 +249,83 @@ if __name__ == "__main__":
         session_string_env = os.environ.get("TELEGRAM_SESSION_STRING")
 
         if user_id_env and session_string_env:
+            # ── Single-user override mode (backward compatible) ──────────
             user_id = UUID(user_id_env)
             session_string = session_string_env
-        else:
-            logger.info("No LISTENER_USER_ID / TELEGRAM_SESSION_STRING in env; "
-                        "querying DB for active session...")
-            enc_key = os.environ["ENCRYPTION_KEY"].encode()
-            async with SASession(engine, expire_on_commit=False) as db:
-                stmt = select(TelegramSessionModel).where(
-                    TelegramSessionModel.is_active.is_(True)
-                ).limit(1)
-                result = await db.execute(stmt)
-                row = result.scalar_one_or_none()
-            if row is None:
-                raise RuntimeError("No active Telegram session found in database.")
-            user_id = row.user_id
-            session_string = decrypt_session_auto(row.session_string_encrypted, enc_key)
-            logger.info("Loaded session for user %s from database.", user_id)
 
-        # -- Load monitored channels from routing rules ----------------------
-        async def _load_monitored_channels() -> set[str]:
-            async with SASession(engine, expire_on_commit=False) as db:
-                result = await db.execute(
-                    select(RoutingRuleModel.source_channel_id).where(
-                        RoutingRuleModel.user_id == user_id,
-                        RoutingRuleModel.is_active.is_(True),
-                    ).distinct()
-                )
-                channels = {row[0] for row in result.all()}
-            return channels
-
-        monitored = await _load_monitored_channels()
-        logger.info("Monitoring %d channel(s): %s", len(monitored), monitored)
-
-        listener = TelegramListener(
-            api_id=api_id,
-            api_hash=api_hash,
-            queue_port=queue,
-            monitored_channels=monitored,
-        )
-
-        await listener.start(user_id, session_string)
-
-        logger.info("Listener running. Press Ctrl+C to stop.")
-        try:
-            # Periodically refresh monitored channels (every 60s)
-            while True:
-                await asyncio.sleep(60)
-                try:
-                    updated = await _load_monitored_channels()
-                    if updated != listener._monitored_channels:
-                        listener.update_monitored_channels(updated)
-                except Exception as exc:
-                    logger.exception("Failed to refresh monitored channels")
-                    sentry_sdk.capture_exception(exc)
-
-                # Heartbeat: verify Telethon connection is alive
-                if listener._client and listener._client.is_connected():
-                    logger.info(
-                        "Heartbeat: listener alive, monitoring %d channel(s)",
-                        len(listener._monitored_channels),
+            async def _load_monitored_channels() -> set[str]:
+                async with SASession(engine, expire_on_commit=False) as db:
+                    result = await db.execute(
+                        select(RoutingRuleModel.source_channel_id).where(
+                            RoutingRuleModel.user_id == user_id,
+                            RoutingRuleModel.is_active.is_(True),
+                        ).distinct()
                     )
-                else:
-                    logger.warning("Heartbeat: Telethon client disconnected, attempting reconnect...")
+                    return {row[0] for row in result.all()}
+
+            monitored = await _load_monitored_channels()
+            logger.info("Single-user mode: monitoring %d channel(s): %s", len(monitored), monitored)
+
+            listener = TelegramListener(
+                api_id=api_id,
+                api_hash=api_hash,
+                queue_port=queue,
+                monitored_channels=monitored,
+            )
+
+            await listener.start(user_id, session_string)
+
+            logger.info("Listener running (single-user). Press Ctrl+C to stop.")
+            try:
+                while True:
+                    await asyncio.sleep(60)
                     try:
-                        await listener._client.connect()
-                        await listener._client.get_dialogs()
-                        logger.info("Reconnected successfully")
+                        updated = await _load_monitored_channels()
+                        if updated != listener._monitored_channels:
+                            listener.update_monitored_channels(updated)
                     except Exception as exc:
-                        logger.exception("Reconnect failed")
+                        logger.exception("Failed to refresh monitored channels")
                         sentry_sdk.capture_exception(exc)
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            await listener.stop()
+
+                    if listener._client and listener._client.is_connected():
+                        logger.info(
+                            "Heartbeat: listener alive, monitoring %d channel(s)",
+                            len(listener._monitored_channels),
+                        )
+                    else:
+                        logger.warning("Heartbeat: Telethon client disconnected, attempting reconnect...")
+                        try:
+                            await listener._client.connect()
+                            await listener._client.get_dialogs()
+                            logger.info("Reconnected successfully")
+                        except Exception as exc:
+                            logger.exception("Reconnect failed")
+                            sentry_sdk.capture_exception(exc)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                await listener.stop()
+        else:
+            # ── Multi-user mode (SaaS) ───────────────────────────────────
+            from src.adapters.telegram.manager import MultiUserListenerManager
+
+            enc_key = os.environ["ENCRYPTION_KEY"].encode()
+
+            manager = MultiUserListenerManager(
+                api_id=api_id,
+                api_hash=api_hash,
+                queue_port=queue,
+                engine=engine,
+                enc_key=enc_key,
+            )
+
+            logger.info("Starting multi-user listener manager...")
+            await manager.start()
+
+            logger.info("Multi-user listener running. Press Ctrl+C to stop.")
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                await manager.stop()
 
     logging.basicConfig(level=logging.INFO)
     asyncio.run(_main())
