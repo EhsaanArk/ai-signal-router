@@ -891,3 +891,146 @@ class TestTelegramAuthErrors:
 
         with pytest.raises(PhoneCodeExpiredError):
             await auth.verify_code(FAKE_PHONE, FAKE_CODE, FAKE_CODE_HASH)
+
+
+# =========================================================================
+# Auth TTL eviction
+# =========================================================================
+
+
+class TestAuthTTLEviction:
+    """Tests for TelegramAuth pending client TTL cleanup."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.StringSession")
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_stale_clients_are_evicted(self, mock_client_cls, _mock_ss):
+        """Pending clients older than TTL should be disconnected and removed."""
+        import time
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        sent = MagicMock()
+        sent.phone_code_hash = FAKE_CODE_HASH
+        mock_client.send_code_request.return_value = sent
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        auth._pending_ttl = 0  # Expire immediately
+
+        # First send_code stores the client
+        await auth.send_code("+10000000001")
+        assert "+10000000001" in auth._pending_clients
+
+        # Second send_code triggers eviction of the first
+        await auth.send_code("+10000000002")
+        assert "+10000000001" not in auth._pending_clients
+        assert "+10000000002" in auth._pending_clients
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.StringSession")
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_fresh_clients_are_not_evicted(self, mock_client_cls, _mock_ss):
+        """Clients within TTL should not be evicted."""
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        sent = MagicMock()
+        sent.phone_code_hash = FAKE_CODE_HASH
+        mock_client.send_code_request.return_value = sent
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        auth._pending_ttl = 9999  # Very long TTL
+
+        await auth.send_code("+10000000001")
+        await auth.send_code("+10000000002")
+
+        # Both should still be present
+        assert "+10000000001" in auth._pending_clients
+        assert "+10000000002" in auth._pending_clients
+
+
+# =========================================================================
+# Listener get_chat() fallback
+# =========================================================================
+
+
+class TestListenerGetChatFallback:
+    """Tests for the get_chat() crash fix in _on_new_message."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.listener.sentry_sdk")
+    @patch(_LISTENER_STRING_SESSION)
+    @patch("src.adapters.telegram.listener.TelegramClient")
+    async def test_get_chat_failure_falls_back_to_chat_id(
+        self, mock_client_cls, _mock_ss, _mock_sentry
+    ):
+        """When get_chat() raises, the handler should fall back to abs(event.chat_id)."""
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_entity = AsyncMock()
+
+        queue = AsyncMock()
+        listener = TelegramListener(
+            api_id=FAKE_API_ID,
+            api_hash=FAKE_API_HASH,
+            queue_port=queue,
+        )
+        await listener.start(
+            SAMPLE_USER_ID, FAKE_SESSION_STRING,
+            monitored_channels={"1001"},
+        )
+
+        # Build a mock event where get_chat() raises
+        event = AsyncMock()
+        event.message = MagicMock()
+        event.message.text = "BUY XAUUSD"
+        event.message.id = 42
+        event.message.reply_to = None
+        event.chat_id = -1001001  # Telethon-style negative ID
+        event.get_chat = AsyncMock(side_effect=ValueError("Entity not found"))
+
+        await listener._on_new_message(event)
+
+        # Should NOT crash, and should use abs(chat_id) = 1001001
+        # But since "1001001" is not in monitored_channels (only "1001"),
+        # the message is skipped. The key assertion is it didn't crash.
+        # No exception raised = success.
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.listener.sentry_sdk")
+    @patch(_LISTENER_STRING_SESSION)
+    @patch("src.adapters.telegram.listener.TelegramClient")
+    async def test_get_chat_failure_with_matching_channel_enqueues(
+        self, mock_client_cls, _mock_ss, _mock_sentry
+    ):
+        """When get_chat() fails but chat_id matches a monitored channel, the signal is enqueued."""
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_entity = AsyncMock()
+
+        queue = AsyncMock()
+        listener = TelegramListener(
+            api_id=FAKE_API_ID,
+            api_hash=FAKE_API_HASH,
+            queue_port=queue,
+            monitored_channels={"1001"},
+        )
+        await listener.start(
+            SAMPLE_USER_ID, FAKE_SESSION_STRING,
+            monitored_channels={"1001"},
+        )
+
+        event = AsyncMock()
+        event.message = MagicMock()
+        event.message.text = "BUY XAUUSD"
+        event.message.id = 42
+        event.message.reply_to = None
+        event.chat_id = -1001  # abs() → 1001 → matches monitored channel
+        event.get_chat = AsyncMock(side_effect=ValueError("Entity not found"))
+
+        await listener._on_new_message(event)
+
+        queue.enqueue.assert_awaited_once()
+        enqueued_signal = queue.enqueue.call_args[0][0]
+        assert enqueued_signal.channel_id == "1001"

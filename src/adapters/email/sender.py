@@ -80,3 +80,68 @@ class ResendNotifier:
         except Exception as exc:
             logger.error("Failed to send notification email: %s", exc)
             sentry_sdk.capture_exception(exc)
+
+    # Reason code → (user-friendly headline, actionable guidance)
+    _DISCONNECT_COPY: dict[str, tuple[str, str]] = {
+        "session_expired": (
+            "Your Telegram session expired",
+            "This usually happens when you log out of Telegram on another device "
+            "or revoke active sessions in Telegram's privacy settings. "
+            "Reconnect your account to resume signal routing.",
+        ),
+        "flood_wait_exhausted": (
+            "Telegram temporarily blocked your account",
+            "Telegram rate-limited your account due to too many requests. "
+            "This is temporary — wait 30 minutes, then reconnect.",
+        ),
+        "decrypt_failed": (
+            "Session data could not be decrypted",
+            "This can happen after a server-side encryption key rotation. "
+            "Please reconnect your Telegram account to create a new session.",
+        ),
+    }
+
+    async def send_disconnect_alert(
+        self,
+        user_email: str,
+        reason: str,
+    ) -> None:
+        """Send a disconnect notification email with actionable guidance.
+
+        Parameters
+        ----------
+        user_email:
+            Recipient email address.
+        reason:
+            Disconnect reason code (``session_expired``, ``flood_wait_exhausted``,
+            ``decrypt_failed``).
+        """
+        if not self._api_key:
+            return
+
+        headline, guidance = self._DISCONNECT_COPY.get(
+            reason,
+            ("Your Telegram session was disconnected", "Please reconnect to resume signal routing."),
+        )
+
+        subject = "Sage Radar AI — Telegram disconnected"
+        html = (
+            f"<h2>Telegram Disconnected</h2>"
+            f"<p><strong>{headline}.</strong></p>"
+            f"<p>{guidance}</p>"
+            f"<p>Signal routing has been paused until you reconnect.</p>"
+            f"<p><a href='https://app.sageradar.ai/telegram'>Reconnect now →</a></p>"
+        )
+
+        try:
+            resend.api_key = self._api_key
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": self._from_address,
+                "to": [user_email],
+                "subject": subject,
+                "html": html,
+            })
+            logger.info("Disconnect alert email sent to %s (reason=%s)", user_email, reason)
+        except Exception as exc:
+            logger.error("Failed to send disconnect alert email: %s", exc)
+            sentry_sdk.capture_exception(exc)

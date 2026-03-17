@@ -808,3 +808,64 @@ class TestErrorCases:
             headers={"Authorization": "Bearer garbage-token-value"},
         )
         assert resp.status_code == 401
+
+
+# ===========================================================================
+# Cross-user phone uniqueness
+# ===========================================================================
+
+
+class TestPhoneUniqueness:
+    """Verify that the same phone number cannot be active for two different users."""
+
+    async def test_verify_code_rejects_duplicate_phone(
+        self, authed_app
+    ):
+        """If another user already has an active session with this phone, verify returns 409."""
+        app, session_factory = authed_app
+
+        # Seed an active session for a DIFFERENT user with the same phone
+        other_user_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+        async with session_factory() as session:
+            session.add(
+                UserModel(
+                    id=other_user_id,
+                    email="other@example.com",
+                    password_hash=SAMPLE_PASSWORD_HASH,
+                )
+            )
+            session.add(
+                TelegramSessionModel(
+                    user_id=other_user_id,
+                    phone_number="+14155559999",
+                    session_string_encrypted="enc_session_data",
+                    is_active=True,
+                )
+            )
+            await session.commit()
+
+        # Override settings to provide an encryption key
+        settings = _make_test_settings()
+        settings.ENCRYPTION_KEY = "test-encryption-key-32-bytes-ok!"
+        app.dependency_overrides[get_settings] = lambda: settings
+
+        # Mock the Telegram auth to return a session string and encryption
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            with patch("src.api.routes._get_telegram_auth") as mock_get_auth, \
+                 patch("src.core.security.encrypt_session", return_value="encrypted"):
+                mock_auth = AsyncMock()
+                mock_auth.verify_code = AsyncMock(return_value="fake_session_string")
+                mock_get_auth.return_value = mock_auth
+
+                resp = await client.post(
+                    "/api/v1/telegram/verify-code",
+                    json={
+                        "phone_number": "+14155559999",
+                        "code": "12345",
+                        "phone_code_hash": "hash123",
+                    },
+                )
+
+        assert resp.status_code == 409
+        assert "already connected" in resp.json()["detail"]
