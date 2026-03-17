@@ -71,7 +71,9 @@ class TestManagerStart:
         manager._load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
-        manager._load_monitored_channels = AsyncMock(return_value={"123", "456"})
+        manager._load_all_monitored_channels = AsyncMock(
+            return_value={USER_A: {"123"}, USER_B: {"456"}},
+        )
 
         mock_listener = _mock_listener()
         MockListener.return_value = mock_listener
@@ -98,7 +100,7 @@ class TestManagerStart:
         """Manager should start gracefully with zero active sessions."""
         manager = _make_manager()
         manager._load_active_sessions = AsyncMock(return_value=[])
-        manager._load_monitored_channels = AsyncMock(return_value=set())
+        manager._load_all_monitored_channels = AsyncMock(return_value={})
 
         await manager.start()
 
@@ -123,7 +125,9 @@ class TestManagerStart:
         )
 
         channels_a = {"111", "222"}
-        manager._load_monitored_channels = AsyncMock(return_value=channels_a)
+        manager._load_all_monitored_channels = AsyncMock(
+            return_value={USER_A: channels_a},
+        )
 
         mock_listener = _mock_listener()
         MockListener.return_value = mock_listener
@@ -173,7 +177,7 @@ class TestErrorIsolation:
         manager._load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
-        manager._load_monitored_channels = AsyncMock(return_value=set())
+        manager._load_all_monitored_channels = AsyncMock(return_value={})
 
         await manager.start()
 
@@ -264,7 +268,9 @@ class TestChannelRefresh:
         manager._monitored_channels = {USER_A: {"old_channel"}}
 
         new_channels = {"new_channel_1", "new_channel_2"}
-        manager._load_monitored_channels = AsyncMock(return_value=new_channels)
+        manager._load_all_monitored_channels = AsyncMock(
+            return_value={USER_A: new_channels},
+        )
 
         await manager._refresh_all_channels()
 
@@ -281,7 +287,9 @@ class TestChannelRefresh:
         manager._listeners = {USER_A: mock_listener}
         manager._monitored_channels = {USER_A: existing}
 
-        manager._load_monitored_channels = AsyncMock(return_value=existing)
+        manager._load_all_monitored_channels = AsyncMock(
+            return_value={USER_A: existing},
+        )
 
         await manager._refresh_all_channels()
 
@@ -410,3 +418,157 @@ class TestGetStatus:
         assert status["users"][str(USER_A)]["connected"] is True
         assert status["users"][str(USER_B)]["connected"] is False
         assert status["users"][str(USER_B)]["failure_count"] == 2
+
+
+# =========================================================================
+# Expired session deactivation
+# =========================================================================
+
+
+class TestExpiredSessionDeactivation:
+    """Tests for auto-deactivating expired Telegram sessions."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_expired_session_is_deactivated(self, MockListener):
+        """A 'not authorised' failure should trigger session deactivation."""
+        mock_listener = _mock_listener()
+        mock_listener.start = AsyncMock(
+            side_effect=RuntimeError(
+                "Session for user xxx is not authorised. Re-authenticate via the auth flow."
+            ),
+        )
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._deactivate_session = AsyncMock()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels=set(),
+        )
+
+        assert result is False
+        manager._deactivate_session.assert_awaited_once_with(USER_A)
+        assert USER_A not in manager._listeners
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_non_auth_runtime_error_does_not_deactivate(self, MockListener):
+        """A RuntimeError that isn't about auth should NOT deactivate the session."""
+        mock_listener = _mock_listener()
+        mock_listener.start = AsyncMock(
+            side_effect=RuntimeError("Some other error"),
+        )
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._deactivate_session = AsyncMock()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels=set(),
+        )
+
+        assert result is False
+        manager._deactivate_session.assert_not_awaited()
+
+
+# =========================================================================
+# FloodWaitError handling
+# =========================================================================
+
+
+class TestFloodWaitHandling:
+    """Tests for explicit FloodWaitError catch and retry."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.asyncio.sleep", new_callable=AsyncMock)
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_flood_wait_retries_successfully(self, MockListener, mock_sleep):
+        """FloodWaitError should trigger a sleep then successful retry."""
+        from telethon.errors import FloodWaitError
+
+        mock_listener = _mock_listener()
+        # First call raises FloodWaitError, second succeeds
+        mock_listener.start = AsyncMock(
+            side_effect=[FloodWaitError(request=None, capture=10), None],
+        )
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels={"ch1"},
+        )
+
+        assert result is True
+        assert USER_A in manager._listeners
+        assert mock_listener.start.await_count == 2
+        # Should have slept for flood_wait_seconds + 1
+        mock_sleep.assert_awaited_once_with(11)
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.asyncio.sleep", new_callable=AsyncMock)
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_flood_wait_retry_fails(self, MockListener, mock_sleep):
+        """If retry after flood-wait also fails, user should not be started."""
+        from telethon.errors import FloodWaitError
+
+        mock_listener = _mock_listener()
+        mock_listener.start = AsyncMock(
+            side_effect=[
+                FloodWaitError(request=None, capture=5),
+                RuntimeError("Still failing"),
+            ],
+        )
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels=set(),
+        )
+
+        assert result is False
+        assert USER_A not in manager._listeners
+
+
+# =========================================================================
+# Batch channel loading
+# =========================================================================
+
+
+class TestBatchChannelLoading:
+    """Tests for ``_load_all_monitored_channels()`` batch query."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_start_uses_batch_channel_loading(self, MockListener):
+        """start() should use _load_all_monitored_channels instead of per-user."""
+        mock_listener = _mock_listener()
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._load_active_sessions = AsyncMock(
+            return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
+        )
+        manager._load_all_monitored_channels = AsyncMock(
+            return_value={USER_A: {"ch1"}, USER_B: {"ch2", "ch3"}},
+        )
+        # Ensure per-user method is NOT called during start()
+        manager._load_monitored_channels = AsyncMock(
+            side_effect=AssertionError("Should not be called during start()"),
+        )
+
+        await manager.start()
+
+        manager._load_all_monitored_channels.assert_awaited_once()
+        assert manager._monitored_channels[USER_A] == {"ch1"}
+        assert manager._monitored_channels[USER_B] == {"ch2", "ch3"}
+
+        manager._running = False
+        if manager._refresh_task:
+            manager._refresh_task.cancel()
+            try:
+                await manager._refresh_task
+            except asyncio.CancelledError:
+                pass

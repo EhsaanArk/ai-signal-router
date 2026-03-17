@@ -12,8 +12,9 @@ import logging
 from uuid import UUID
 
 import sentry_sdk
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from telethon.errors import FloodWaitError
 
 from src.adapters.db.models import RoutingRuleModel, TelegramSessionModel
 from src.adapters.telegram.listener import TelegramListener
@@ -41,8 +42,8 @@ MAX_CONSECUTIVE_FAILURES = 5
 # How often (seconds) to refresh sessions, channels, and run heartbeat.
 REFRESH_INTERVAL = 30
 
-# Delay between starting individual user clients to avoid Telegram flood-wait.
-STARTUP_STAGGER_SECONDS = 1.0
+# Max concurrent listener startups (limits parallel get_dialogs() calls).
+MAX_CONCURRENT_STARTUPS = 3
 
 
 class MultiUserListenerManager:
@@ -81,6 +82,7 @@ class MultiUserListenerManager:
         self._failure_counts: dict[UUID, int] = {}
         self._refresh_task: asyncio.Task | None = None
         self._running = False
+        self._startup_semaphore = asyncio.Semaphore(MAX_CONCURRENT_STARTUPS)
 
     # ------------------------------------------------------------------
     # Public API
@@ -91,14 +93,22 @@ class MultiUserListenerManager:
         self._running = True
 
         sessions = await self._load_active_sessions()
+        all_channels = await self._load_all_monitored_channels()
         logger.info(
             "Found %d active Telegram session(s) in database", len(sessions),
         )
 
-        for i, (user_id, session_string) in enumerate(sessions):
-            if i > 0:
-                await asyncio.sleep(STARTUP_STAGGER_SECONDS)
-            await self._start_listener_for_user(user_id, session_string)
+        async def _bounded_start(user_id: UUID, session_string: str) -> None:
+            async with self._startup_semaphore:
+                channels = all_channels.get(user_id, set())
+                await self._start_listener_for_user(
+                    user_id, session_string, channels,
+                )
+
+        await asyncio.gather(
+            *[_bounded_start(uid, ss) for uid, ss in sessions],
+            return_exceptions=True,
+        )
 
         logger.info(
             "Multi-user listener manager started: %d listener(s) active",
@@ -160,9 +170,18 @@ class MultiUserListenerManager:
     # ------------------------------------------------------------------
 
     async def _start_listener_for_user(
-        self, user_id: UUID, session_string: str,
+        self,
+        user_id: UUID,
+        session_string: str,
+        channels: set[str] | None = None,
     ) -> bool:
         """Create, start, and register a listener for a single user.
+
+        Parameters
+        ----------
+        channels:
+            Pre-loaded monitored channels.  When ``None`` (e.g. during a
+            single-user restart) the channels are fetched from the database.
 
         Returns True on success, False on failure.
         """
@@ -178,6 +197,34 @@ class MultiUserListenerManager:
 
         try:
             await listener.start(user_id, session_string)
+        except FloodWaitError as e:
+            logger.warning(
+                "User %s: flood-wait %ds on startup, retrying after delay",
+                user_id, e.seconds,
+            )
+            await asyncio.sleep(e.seconds + 1)
+            try:
+                await listener.start(user_id, session_string)
+            except Exception as retry_exc:
+                logger.error(
+                    "User %s: retry after flood-wait failed: %s",
+                    user_id, retry_exc,
+                )
+                _capture_user_exception(retry_exc, user_id)
+                return False
+        except RuntimeError as exc:
+            if "not authorised" in str(exc).lower():
+                logger.warning(
+                    "Session expired for user %s — deactivating in DB",
+                    user_id,
+                )
+                await self._deactivate_session(user_id)
+            else:
+                logger.error(
+                    "Failed to start listener for user %s: %s", user_id, exc,
+                )
+            _capture_user_exception(exc, user_id)
+            return False
         except Exception as exc:
             logger.error(
                 "Failed to start listener for user %s: %s", user_id, exc,
@@ -185,8 +232,9 @@ class MultiUserListenerManager:
             _capture_user_exception(exc, user_id)
             return False
 
-        # Load monitored channels for this user
-        channels = await self._load_monitored_channels(user_id)
+        # Load monitored channels if not pre-loaded
+        if channels is None:
+            channels = await self._load_monitored_channels(user_id)
         listener.update_monitored_channels(channels)
 
         self._listeners[user_id] = listener
@@ -215,6 +263,30 @@ class MultiUserListenerManager:
                 _capture_user_exception(exc, user_id)
 
         logger.info("Listener stopped for user %s", user_id)
+
+    async def _deactivate_session(self, user_id: UUID) -> None:
+        """Mark a user's Telegram session as inactive in the database.
+
+        Called when a session is permanently invalid (e.g. revoked by the
+        user in Telegram settings).  The user must re-authenticate via the
+        frontend to create a new session.
+        """
+        try:
+            async with AsyncSession(self._engine, expire_on_commit=False) as db:
+                await db.execute(
+                    update(TelegramSessionModel)
+                    .where(TelegramSessionModel.user_id == user_id)
+                    .values(is_active=False)
+                )
+                await db.commit()
+            logger.warning(
+                "Deactivated expired session for user %s — user must re-authenticate",
+                user_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to deactivate session for user %s: %s", user_id, exc,
+            )
 
     async def _restart_listener_for_user(self, user_id: UUID) -> None:
         """Stop and restart a listener from scratch (re-reads session from DB)."""
@@ -278,13 +350,22 @@ class MultiUserListenerManager:
         active_user_ids = {uid for uid, _ in sessions}
         current_user_ids = set(self._listeners.keys())
 
-        # Start listeners for new users
+        # Start listeners for new users (bounded concurrency)
         new_users = active_user_ids - current_user_ids
-        for user_id, session_string in sessions:
-            if user_id in new_users:
-                logger.info("New active session detected for user %s", user_id)
-                await self._start_listener_for_user(user_id, session_string)
-                await asyncio.sleep(STARTUP_STAGGER_SECONDS)
+        if new_users:
+            new_sessions = [
+                (uid, ss) for uid, ss in sessions if uid in new_users
+            ]
+
+            async def _bounded_start(uid: UUID, ss: str) -> None:
+                async with self._startup_semaphore:
+                    logger.info("New active session detected for user %s", uid)
+                    await self._start_listener_for_user(uid, ss)
+
+            await asyncio.gather(
+                *[_bounded_start(uid, ss) for uid, ss in new_sessions],
+                return_exceptions=True,
+            )
 
         # Stop listeners for removed/deactivated users
         removed_users = current_user_ids - active_user_ids
@@ -293,17 +374,18 @@ class MultiUserListenerManager:
             await self._stop_listener_for_user(user_id)
 
     async def _refresh_all_channels(self) -> None:
-        """Refresh monitored channels for all active listeners."""
+        """Refresh monitored channels for all active listeners (batch query)."""
+        try:
+            all_channels = await self._load_all_monitored_channels()
+        except Exception as exc:
+            logger.error("Failed to batch-load monitored channels: %s", exc)
+            return
+
         for user_id, listener in list(self._listeners.items()):
-            try:
-                updated = await self._load_monitored_channels(user_id)
-                if updated != self._monitored_channels.get(user_id, set()):
-                    listener.update_monitored_channels(updated)
-                    self._monitored_channels[user_id] = updated
-            except Exception as exc:
-                logger.error(
-                    "Failed to refresh channels for user %s: %s", user_id, exc,
-                )
+            updated = all_channels.get(user_id, set())
+            if updated != self._monitored_channels.get(user_id, set()):
+                listener.update_monitored_channels(updated)
+                self._monitored_channels[user_id] = updated
 
     async def _heartbeat(self) -> None:
         """Check connectivity and attempt reconnect for disconnected clients."""
@@ -392,3 +474,22 @@ class MultiUserListenerManager:
                 ).distinct()
             )
             return {row[0] for row in result.all()}
+
+    async def _load_all_monitored_channels(self) -> dict[UUID, set[str]]:
+        """Load monitored channels for ALL users in a single query.
+
+        Returns a mapping of ``{user_id: {channel_id, ...}}``.
+        """
+        async with AsyncSession(self._engine, expire_on_commit=False) as db:
+            result = await db.execute(
+                select(
+                    RoutingRuleModel.user_id,
+                    RoutingRuleModel.source_channel_id,
+                ).where(
+                    RoutingRuleModel.is_active.is_(True),
+                )
+            )
+            channels_map: dict[UUID, set[str]] = {}
+            for user_id, channel_id in result.all():
+                channels_map.setdefault(user_id, set()).add(channel_id)
+            return channels_map
