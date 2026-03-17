@@ -56,7 +56,12 @@ class TelegramListener:
         self._user_id: UUID | None = None
         self._monitored_channels: set[str] = monitored_channels or set()
 
-    async def start(self, user_id: UUID, session_string: str) -> None:
+    async def start(
+        self,
+        user_id: UUID,
+        session_string: str,
+        monitored_channels: set[str] | None = None,
+    ) -> None:
         """Connect to Telegram and start listening for new messages.
 
         Parameters
@@ -65,6 +70,10 @@ class TelegramListener:
             The application user who owns this Telegram session.
         session_string:
             A Telethon ``StringSession`` token.
+        monitored_channels:
+            Optional set of channel IDs to pre-fetch into Telethon's entity
+            cache.  When provided, only these channels are fetched (lightweight)
+            instead of the full dialog list (heavy, triggers flood-wait).
         """
         self._user_id = user_id
         self._client = TelegramClient(
@@ -99,10 +108,20 @@ class TelegramListener:
             events.MessageEdited(),
         )
 
-        # Fetch dialogs to prime Telethon's internal state and entity cache.
-        # Unlike catch_up(), this works reliably even with no prior update
-        # state (StringSession does not persist pts/qts/date).
-        await self._client.get_dialogs()
+        # Prime Telethon's entity cache so it can deserialise incoming updates.
+        # When we know which channels to monitor, fetch only those entities
+        # (lightweight) instead of the full dialog list (heavy, flood-wait prone).
+        if monitored_channels:
+            for ch_id in monitored_channels:
+                try:
+                    await self._client.get_entity(int(ch_id))
+                except Exception:
+                    logger.warning(
+                        "Could not pre-fetch entity for channel %s (user %s)",
+                        ch_id, user_id,
+                    )
+        else:
+            await self._client.get_dialogs()
 
         logger.info("Telegram listener started for user %s (new messages + edits)", user_id)
 
