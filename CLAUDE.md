@@ -135,34 +135,55 @@ Telegram → Listener → QStash → API Workflow → OpenAI Parser → Mapper �
 - Support playbook: `@docs/launch/SUPPORT_PLAYBOOK.md`
 - User guide: `@docs/launch/USER_GUIDE.md`
 
-## Available Specialist Agents
+## Tooling & Workflow
 
-You have 3 specialist agents in `.claude/agents/`. Use them **proactively** — don't wait for the user to ask.
+This project uses **gstack skills** for development workflows and **specialist agents** for post-deploy monitoring. Together they cover the full lifecycle.
 
-| Agent | When to invoke automatically |
-|-------|------------------------------|
-| `sentry-monitor` | When user mentions errors, crashes, Sentry, production issues, "check what's happening", post-deploy verification, or when you just deployed code to staging/production |
-| `railway-ops` | When user mentions deployment, Railway, logs, service health, "is it deployed", "check staging", environment variables, or when you need to verify a deploy took effect |
-| `db-expert` | When user mentions database, sessions, data integrity, "check the DB", SQL queries, duplicate records, or when investigating a bug that might be data-related |
+### Development Lifecycle
 
-### Auto-invoke triggers:
-- **After merging a PR to staging/main** → invoke `railway-ops` to verify deploy, then `sentry-monitor` to check for new errors
-- **When debugging a Sentry error** → invoke `sentry-monitor` first, then `db-expert` if it's data-related
-- **When user asks "what's happening" or "check status"** → invoke `railway-ops` for service health
-- **When investigating user-specific issues** → invoke `db-expert` to query their data
+| Phase | Tool | Trigger |
+|-------|------|---------|
+| **Plan** | `/plan-eng-review` | Before starting implementation of a non-trivial feature |
+| **Plan (strategic)** | `/plan-ceo-review` | When scoping a new product initiative or major pivot |
+| **Build & Browse** | `/browse` | For all web browsing and manual QA — **NEVER use `mcp__claude-in-chrome__*` tools directly** |
+| **Test** | `/qa` | Test web app flows, find + fix bugs iteratively |
+| **Review** | `/review` | Before merging any PR — check for structural issues |
+| **Ship** | `/ship` | Automated merge + test + version bump + PR creation |
+| **Document** | `/document-release` | After shipping — sync docs with shipped code |
+| **Monitor** | `sentry-monitor` agent | After deploy — check for new errors |
+| **Verify** | `railway-ops` agent | After deploy — confirm services healthy |
+| **Investigate** | `db-expert` agent | When debugging data issues |
 
-## gstack Skills
+### Specialist Agents (`.claude/agents/`)
 
-**For all web browsing, use the `/browse` skill from gstack. NEVER use `mcp__claude-in-chrome__*` tools directly.**
+Use these **proactively** — don't wait for the user to ask.
 
-Available gstack skills:
-- `/browse` — Web browsing (use this instead of mcp__claude-in-chrome tools)
-- `/plan-ceo-review` — CEO-perspective plan review
-- `/plan-eng-review` — Engineering-perspective plan review
-- `/review` — Code review
-- `/ship` — Ship/deploy workflow
-- `/qa` — QA testing
-- `/qa-only` — QA testing only (no code changes)
-- `/setup-browser-cookies` — Configure browser cookies for automation
-- `/retro` — Retrospective
-- `/document-release` — Document a release
+| Agent | When to invoke |
+|-------|----------------|
+| `sentry-monitor` | After deployments, when errors mentioned, post-deploy verification |
+| `railway-ops` | Deployment status, service health, "is it deployed", "check staging" |
+| `db-expert` | Data integrity, "check the DB", SQL queries, duplicate records |
+
+### Auto-invoke triggers
+- **After merging a PR to staging/main** → `railway-ops` to verify deploy, then `sentry-monitor` for errors
+- **After `/ship` completes** → `railway-ops` to verify deploy, then `sentry-monitor` for errors
+- **When debugging a Sentry error** → `sentry-monitor` first, then `db-expert` if data-related
+- **When user asks "what's happening"** → `railway-ops` for service health
+
+### gstack Skills Reference
+
+All gstack skills live in `.claude/skills/gstack/`. If skills aren't working, run:
+```
+cd .claude/skills/gstack && ./setup
+```
+
+Available skills:
+- `/browse` — Persistent headless browser for QA and web interaction
+- `/plan-ceo-review` — CEO/founder-mode plan review
+- `/plan-eng-review` — Engineering plan review (architecture, data flow, edge cases)
+- `/review` — Pre-landing PR diff review
+- `/ship` — Automated ship workflow (merge, test, version, PR)
+- `/qa` — QA test + iterative bug fixing
+- `/setup-browser-cookies` — Import cookies for authenticated browse sessions
+- `/retro` — Weekly engineering retrospective
+- `/document-release` — Post-ship documentation sync
