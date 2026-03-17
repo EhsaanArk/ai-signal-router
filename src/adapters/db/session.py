@@ -59,6 +59,7 @@ def get_engine() -> AsyncEngine:
             echo=os.environ.get("SQL_ECHO", "false").lower() == "true",
             pool_size=int(os.environ.get("DB_POOL_SIZE", "5")),
             max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "10")),
+            pool_pre_ping=True,
         )
     return _engine
 
