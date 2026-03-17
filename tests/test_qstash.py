@@ -49,7 +49,7 @@ async def test_qstash_publish_posts_to_correct_url(raw_signal: RawSignal):
 
     await publisher.enqueue(raw_signal)
 
-    expected_url = f"{QStashPublisher.QSTASH_PUBLISH_URL}{SAMPLE_WORKFLOW_URL}"
+    expected_url = f"{QStashPublisher.DEFAULT_QSTASH_URL}/v2/publish/{SAMPLE_WORKFLOW_URL}"
     publisher._client.post.assert_awaited_once_with(
         expected_url,
         content=raw_signal.model_dump_json(),
