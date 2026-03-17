@@ -868,10 +868,13 @@ async def telegram_status(
 ) -> TelegramStatusResponse:
     """Check whether the current user has an active Telegram session."""
     result = await db.execute(
-        select(TelegramSessionModel).where(
+        select(TelegramSessionModel)
+        .where(
             TelegramSessionModel.user_id == current_user.id,
             TelegramSessionModel.is_active.is_(True),
         )
+        .order_by(TelegramSessionModel.created_at.desc())
+        .limit(1)
     )
     session = result.scalar_one_or_none()
     if session is not None:
@@ -963,10 +966,13 @@ async def list_channels(
 
     if session_encrypted is None:
         result = await db.execute(
-            select(TelegramSessionModel).where(
+            select(TelegramSessionModel)
+            .where(
                 TelegramSessionModel.user_id == current_user.id,
                 TelegramSessionModel.is_active.is_(True),
             )
+            .order_by(TelegramSessionModel.created_at.desc())
+            .limit(1)
         )
         session_row = result.scalar_one_or_none()
         if session_row is None:
