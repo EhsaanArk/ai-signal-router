@@ -11,6 +11,7 @@ from uuid import UUID
 
 import pytest
 
+from src.adapters.telegram import parse_proxy_url
 from src.adapters.telegram.auth import TelegramAuth
 from src.adapters.telegram.channels import get_user_channels
 from src.adapters.telegram.listener import TelegramListener
@@ -766,3 +767,127 @@ class TestAuthPIIMasking:
             assert FAKE_PHONE not in record.getMessage(), (
                 f"Raw phone number found in log: {record.getMessage()}"
             )
+
+
+# =========================================================================
+# parse_proxy_url
+# =========================================================================
+
+
+class TestParseProxyUrl:
+    """Tests for ``parse_proxy_url()``."""
+
+    def test_none_returns_none(self):
+        assert parse_proxy_url(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert parse_proxy_url("") is None
+
+    def test_socks5_with_auth(self):
+        result = parse_proxy_url("socks5://user:pass@proxy.example.com:1080")
+        assert result == {
+            "proxy_type": "socks5",
+            "addr": "proxy.example.com",
+            "port": 1080,
+            "rdns": True,
+            "username": "user",
+            "password": "pass",
+        }
+
+    def test_socks5_without_auth(self):
+        result = parse_proxy_url("socks5://proxy.example.com:9050")
+        assert result == {
+            "proxy_type": "socks5",
+            "addr": "proxy.example.com",
+            "port": 9050,
+            "rdns": True,
+        }
+
+    def test_default_port(self):
+        result = parse_proxy_url("socks5://proxy.example.com")
+        assert result["port"] == 1080
+
+
+# =========================================================================
+# TelegramAuth — Telethon error propagation
+# =========================================================================
+
+
+class TestTelegramAuthErrors:
+    """Verify that specific Telethon errors propagate correctly from auth methods."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_send_code_propagates_flood_wait(self, mock_client_cls):
+        """FloodWaitError from send_code_request should propagate."""
+        from telethon.errors import FloodWaitError
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+        mock_client.send_code_request = AsyncMock(
+            side_effect=FloodWaitError(request=None, capture=42)
+        )
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        with pytest.raises(FloodWaitError):
+            await auth.send_code(FAKE_PHONE)
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_send_code_propagates_phone_number_invalid(self, mock_client_cls):
+        """PhoneNumberInvalidError from send_code_request should propagate."""
+        from telethon.errors import PhoneNumberInvalidError
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+        mock_client.send_code_request = AsyncMock(
+            side_effect=PhoneNumberInvalidError(request=None)
+        )
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        with pytest.raises(PhoneNumberInvalidError):
+            await auth.send_code(FAKE_PHONE)
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_verify_code_propagates_phone_code_invalid(self, mock_client_cls):
+        """PhoneCodeInvalidError from sign_in should propagate."""
+        from telethon.errors import PhoneCodeInvalidError
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        sent = MagicMock()
+        sent.phone_code_hash = FAKE_CODE_HASH
+        mock_client.send_code_request.return_value = sent
+        mock_client.sign_in = AsyncMock(
+            side_effect=PhoneCodeInvalidError(request=None)
+        )
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        await auth.send_code(FAKE_PHONE)
+
+        with pytest.raises(PhoneCodeInvalidError):
+            await auth.verify_code(FAKE_PHONE, FAKE_CODE, FAKE_CODE_HASH)
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.auth.TelegramClient")
+    async def test_verify_code_propagates_phone_code_expired(self, mock_client_cls):
+        """PhoneCodeExpiredError from sign_in should propagate."""
+        from telethon.errors import PhoneCodeExpiredError
+
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        sent = MagicMock()
+        sent.phone_code_hash = FAKE_CODE_HASH
+        mock_client.send_code_request.return_value = sent
+        mock_client.sign_in = AsyncMock(
+            side_effect=PhoneCodeExpiredError(request=None)
+        )
+
+        auth = TelegramAuth(api_id=FAKE_API_ID, api_hash=FAKE_API_HASH)
+        await auth.send_code(FAKE_PHONE)
+
+        with pytest.raises(PhoneCodeExpiredError):
+            await auth.verify_code(FAKE_PHONE, FAKE_CODE, FAKE_CODE_HASH)
