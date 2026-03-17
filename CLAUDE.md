@@ -152,6 +152,7 @@ This project uses **gstack skills** for development workflows and **specialist a
 | **Document** | `/document-release` | After shipping — sync docs with shipped code |
 | **Monitor** | `sentry-monitor` agent | After deploy — check for new errors |
 | **Verify** | `railway-ops` agent | After deploy — confirm services healthy |
+| **Smoke Test** | `smoke-test` agent | After deploy — verify app responds and pipeline works |
 | **Investigate** | `db-expert` agent | When debugging data issues |
 
 ### Specialist Agents (`.claude/agents/`)
@@ -163,10 +164,31 @@ Use these **proactively** — don't wait for the user to ask.
 | `sentry-monitor` | After deployments, when errors mentioned, post-deploy verification |
 | `railway-ops` | Deployment status, service health, "is it deployed", "check staging" |
 | `db-expert` | Data integrity, "check the DB", SQL queries, duplicate records |
+| `smoke-test` | After deployments, verify app responds and pipeline works end-to-end |
+
+### Post-Deploy Verification Chain
+
+After any deployment to staging or production, run these agents **in sequence**:
+
+```
+/ship completes (or PR merged)
+    │
+    ▼
+(1) railway-ops     → verify containers are running, correct version deployed
+    │
+    ▼
+(2) smoke-test      → verify /health responds, API docs load, pipeline processes signals
+    │
+    ▼
+(3) sentry-monitor  → check for new errors introduced by this deploy
+    │
+    ▼
+(4) db-expert       → only if sentry-monitor finds data-related errors
+```
 
 ### Auto-invoke triggers
-- **After merging a PR to staging/main** → `railway-ops` to verify deploy, then `sentry-monitor` for errors
-- **After `/ship` completes** → `railway-ops` to verify deploy, then `sentry-monitor` for errors
+- **After merging a PR to staging/main** → run the Post-Deploy Verification Chain above
+- **After `/ship` completes** → run the Post-Deploy Verification Chain above
 - **When debugging a Sentry error** → `sentry-monitor` first, then `db-expert` if data-related
 - **When user asks "what's happening"** → `railway-ops` for service health
 
