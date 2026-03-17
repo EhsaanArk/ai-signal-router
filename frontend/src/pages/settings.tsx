@@ -288,7 +288,7 @@ function NotificationsCard() {
   const isFreeTier = user?.subscription_tier === "free";
   const hasTelegramLinked = !!prefs?.telegram_bot_chat_id;
 
-  type NotifKey = "email_on_success" | "email_on_failure" | "telegram_on_success" | "telegram_on_failure";
+  type NotifKey = "email_on_success" | "email_on_failure" | "email_on_disconnect" | "telegram_on_success" | "telegram_on_failure";
 
   async function handleToggle(key: NotifKey, value: boolean) {
     try {
@@ -335,6 +335,18 @@ function NotificationsCard() {
             id="notif-success"
             checked={prefs?.email_on_success ?? false}
             onCheckedChange={(v) => handleToggle("email_on_success", v)}
+            disabled={updatePrefs.isPending}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <Label htmlFor="notif-disconnect" className="text-xs">Email me when Telegram disconnects</Label>
+            <p className="text-[10px] text-muted-foreground">Get alerted if your session expires or is revoked</p>
+          </div>
+          <Switch
+            id="notif-disconnect"
+            checked={prefs?.email_on_disconnect ?? true}
+            onCheckedChange={(v) => handleToggle("email_on_disconnect", v)}
             disabled={updatePrefs.isPending}
           />
         </div>

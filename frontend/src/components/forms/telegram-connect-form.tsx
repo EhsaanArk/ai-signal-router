@@ -16,11 +16,12 @@ const STEP_LABELS: Record<Step, { num: number; label: string }> = {
 
 interface TelegramConnectFormProps {
   onSuccess?: () => void;
+  defaultPhone?: string;
 }
 
-export function TelegramConnectForm({ onSuccess }: TelegramConnectFormProps = {}) {
+export function TelegramConnectForm({ onSuccess, defaultPhone }: TelegramConnectFormProps = {}) {
   const [step, setStep] = useState<Step>("phone");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(defaultPhone ?? "");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [phoneCodeHash, setPhoneCodeHash] = useState("");

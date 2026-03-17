@@ -9,6 +9,7 @@ import {
   Radio,
   RefreshCw,
   Reply,
+  WifiOff,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -150,6 +151,25 @@ export function DashboardPage() {
           <RefreshCw className={cn("h-3.5 w-3.5", anyFetching && "animate-spin")} />
         </Button>
       </div>
+
+      {/* Telegram disconnected banner */}
+      {!tgLoading && !isConnected && (rules?.length ?? 0) > 0 && (
+        <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 rounded-md px-3 py-2">
+          <WifiOff className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+          <p className="text-xs text-rose-600 dark:text-rose-400 flex-1">
+            Telegram is disconnected. Signal routing is paused.
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[11px] text-rose-600 hover:text-rose-700 dark:text-rose-400"
+            onClick={() => navigate("/telegram")}
+          >
+            Reconnect
+            <ArrowRight className="ml-1 h-3 w-3" />
+          </Button>
+        </div>
+      )}
 
       {/* Empty state for users with no routes */}
       {!rulesLoading && (rules?.length ?? 0) === 0 && (

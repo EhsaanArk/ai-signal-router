@@ -12,13 +12,14 @@ import logging
 from uuid import UUID
 
 import sentry_sdk
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from telethon.errors import FloodWaitError
 
-from src.adapters.db.models import RoutingRuleModel, TelegramSessionModel
+from src.adapters.db.models import RoutingRuleModel, TelegramSessionModel, UserModel
 from src.adapters.telegram.listener import TelegramListener
 from src.core.interfaces import QueuePort
+from src.core.notifications import NotificationPreference
 from src.core.security import decrypt_session_auto
 
 logger = logging.getLogger(__name__)
@@ -70,12 +71,14 @@ class MultiUserListenerManager:
         queue_port: QueuePort,
         engine: AsyncEngine,
         enc_key: bytes,
+        email_notifier: object | None = None,
     ) -> None:
         self._api_id = api_id
         self._api_hash = api_hash
         self._queue_port = queue_port
         self._engine = engine
         self._enc_key = enc_key
+        self._email_notifier = email_notifier
 
         self._listeners: dict[UUID, TelegramListener] = {}
         self._monitored_channels: dict[UUID, set[str]] = {}
@@ -268,28 +271,99 @@ class MultiUserListenerManager:
 
         logger.info("Listener stopped for user %s", user_id)
 
-    async def _deactivate_session(self, user_id: UUID) -> None:
+    async def _deactivate_session(
+        self, user_id: UUID, reason: str = "session_expired",
+    ) -> None:
         """Mark a user's Telegram session as inactive in the database.
 
         Called when a session is permanently invalid (e.g. revoked by the
         user in Telegram settings).  The user must re-authenticate via the
         frontend to create a new session.
+
+        Parameters
+        ----------
+        reason:
+            Why the session was deactivated.  Stored in the DB so the
+            frontend can display a user-friendly explanation.  Valid values:
+            ``session_expired``, ``flood_wait_exhausted``, ``decrypt_failed``,
+            ``user_disconnected``.
         """
         try:
             async with AsyncSession(self._engine, expire_on_commit=False) as db:
                 await db.execute(
                     update(TelegramSessionModel)
                     .where(TelegramSessionModel.user_id == user_id)
-                    .values(is_active=False)
+                    .values(
+                        is_active=False,
+                        disconnected_reason=reason,
+                        disconnected_at=func.now(),
+                    )
                 )
                 await db.commit()
             logger.warning(
-                "Deactivated expired session for user %s — user must re-authenticate",
-                user_id,
+                "Deactivated session for user %s (reason=%s) — user must re-authenticate",
+                user_id, reason,
             )
         except Exception as exc:
             logger.error(
                 "Failed to deactivate session for user %s: %s", user_id, exc,
+            )
+            return
+
+        # Send email notification if configured
+        if reason != "user_disconnected":
+            asyncio.create_task(
+                self._notify_disconnect(user_id, reason),
+                name=f"notify-disconnect-{user_id}",
+            )
+
+    async def _notify_disconnect(self, user_id: UUID, reason: str) -> None:
+        """Send a disconnect notification email if the user opted in."""
+        if self._email_notifier is None:
+            return
+        try:
+            async with AsyncSession(self._engine, expire_on_commit=False) as db:
+                user = (
+                    await db.execute(
+                        select(UserModel).where(UserModel.id == user_id)
+                    )
+                ).scalar_one_or_none()
+            if user is None:
+                return
+
+            prefs = NotificationPreference.model_validate(
+                user.notification_preferences or {}
+            )
+            if not prefs.email_on_disconnect:
+                return
+
+            reason_labels = {
+                "session_expired": "Your Telegram session expired",
+                "flood_wait_exhausted": "Telegram rate-limited your account",
+                "decrypt_failed": "Session data could not be decrypted",
+            }
+            subject = "Sage Radar AI — Telegram disconnected"
+            html = (
+                f"<h2>Telegram Disconnected</h2>"
+                f"<p>{reason_labels.get(reason, 'Your Telegram session was disconnected')}. "
+                f"Signal routing has been paused.</p>"
+                f"<p>Please log in to <a href='https://app.sageradar.ai/telegram'>"
+                f"Sage Radar AI</a> to reconnect.</p>"
+            )
+
+            import resend
+            resend.api_key = self._email_notifier._api_key  # type: ignore[attr-defined]
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": self._email_notifier._from_address,  # type: ignore[attr-defined]
+                "to": [user.email],
+                "subject": subject,
+                "html": html,
+            })
+            logger.info("Disconnect notification email sent to %s", user.email)
+        except Exception as exc:
+            logger.error(
+                "Failed to send disconnect notification for user %s: %s",
+                user_id, exc,
             )
 
     async def _restart_listener_for_user(self, user_id: UUID) -> None:

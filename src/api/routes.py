@@ -118,6 +118,8 @@ class TelegramStatusResponse(BaseModel):
     connected: bool
     phone_number: str | None = None
     connected_at: str | None = None
+    disconnected_at: str | None = None
+    disconnected_reason: str | None = None
 
 
 # --- Channels ---------------------------------------------------------------
@@ -811,14 +813,34 @@ async def telegram_status(
         )
     )
     session = result.scalar_one_or_none()
-    if session is None:
-        return TelegramStatusResponse(connected=False)
+    if session is not None:
+        return TelegramStatusResponse(
+            connected=True,
+            phone_number=session.phone_number,
+            connected_at=session.created_at.isoformat() if session.created_at else None,
+        )
 
-    return TelegramStatusResponse(
-        connected=True,
-        phone_number=session.phone_number,
-        connected_at=session.created_at.isoformat() if session.created_at else None,
+    # No active session — check for the most recent inactive session
+    # to provide disconnection context to the frontend.
+    result = await db.execute(
+        select(TelegramSessionModel)
+        .where(TelegramSessionModel.user_id == current_user.id)
+        .order_by(TelegramSessionModel.updated_at.desc())
+        .limit(1)
     )
+    last_session = result.scalar_one_or_none()
+    if last_session and last_session.disconnected_reason:
+        return TelegramStatusResponse(
+            connected=False,
+            phone_number=last_session.phone_number,
+            disconnected_at=(
+                last_session.disconnected_at.isoformat()
+                if last_session.disconnected_at else None
+            ),
+            disconnected_reason=last_session.disconnected_reason,
+        )
+
+    return TelegramStatusResponse(connected=False)
 
 
 @router.post("/telegram/disconnect", response_model=MessageResponse)
@@ -844,6 +866,8 @@ async def telegram_disconnect(
 
     for session in sessions:
         session.is_active = False
+        session.disconnected_reason = "user_disconnected"
+        session.disconnected_at = func.now()
 
     # Remove cached session and invalidate status cache
     try:

@@ -334,12 +334,20 @@ if __name__ == "__main__":
 
             enc_key = os.environ["ENCRYPTION_KEY"].encode()
 
+            # Optional email notifier for disconnect alerts
+            email_notifier = None
+            resend_key = os.environ.get("RESEND_API_KEY", "")
+            if resend_key:
+                from src.adapters.email.sender import ResendNotifier
+                email_notifier = ResendNotifier(api_key=resend_key)
+
             manager = MultiUserListenerManager(
                 api_id=api_id,
                 api_hash=api_hash,
                 queue_port=queue,
                 engine=engine,
                 enc_key=enc_key,
+                email_notifier=email_notifier,
             )
 
             logger.info("Starting multi-user listener manager...")
