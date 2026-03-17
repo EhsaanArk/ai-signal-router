@@ -351,6 +351,51 @@ class TestHeartbeat:
 
         manager._restart_listener_for_user.assert_awaited_once_with(USER_A)
 
+    @pytest.mark.asyncio
+    async def test_heartbeat_flood_wait_handled_gracefully(self):
+        """FloodWaitError during heartbeat reconnect should not crash or increment failures."""
+        from telethon.errors import FloodWaitError
+
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=False)
+        mock_listener._client.connect = AsyncMock(
+            side_effect=FloodWaitError(request=None, capture=30),
+        )
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        # Should not raise
+        await manager._heartbeat()
+
+        # Failure count should be decremented (or stay at 0), not incremented
+        assert manager._failure_counts[USER_A] == 0
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_not_authorised_deactivates_session(self):
+        """Expired session during heartbeat should deactivate and stop listener."""
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=False)
+        mock_listener._client.connect = AsyncMock(
+            side_effect=RuntimeError(
+                "Session for user xxx is not authorised. "
+                "Re-authenticate via the auth flow."
+            ),
+        )
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        manager._deactivate_session = AsyncMock()
+        manager._stop_listener_for_user = AsyncMock()
+
+        await manager._heartbeat()
+
+        manager._deactivate_session.assert_awaited_once_with(USER_A)
+        manager._stop_listener_for_user.assert_awaited_once_with(USER_A)
+
 
 # =========================================================================
 # Graceful shutdown
@@ -530,6 +575,38 @@ class TestFloodWaitHandling:
 
         assert result is False
         assert USER_A not in manager._listeners
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.asyncio.sleep", new_callable=AsyncMock)
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_flood_wait_retry_not_authorised_deactivates(
+        self, MockListener, mock_sleep,
+    ):
+        """If flood-wait retry raises 'not authorised', session must be deactivated."""
+        from telethon.errors import FloodWaitError
+
+        mock_listener = _mock_listener()
+        mock_listener.start = AsyncMock(
+            side_effect=[
+                FloodWaitError(request=None, capture=5),
+                RuntimeError(
+                    "Session for user xxx is not authorised. "
+                    "Re-authenticate via the auth flow."
+                ),
+            ],
+        )
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._deactivate_session = AsyncMock()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels=set(),
+        )
+
+        assert result is False
+        assert USER_A not in manager._listeners
+        manager._deactivate_session.assert_awaited_once_with(USER_A)
 
 
 # =========================================================================

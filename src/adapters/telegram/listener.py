@@ -146,7 +146,9 @@ class TelegramListener:
         if channel_id not in self._monitored_channels:
             logger.info(
                 "Skipping message from unmonitored channel %s (chat=%s)",
-                channel_id, chat.title if chat else "unknown",
+                channel_id,
+                getattr(chat, 'title', None)
+                or getattr(chat, 'first_name', 'unknown'),
             )
             return
         logger.info("Message from monitored channel %s (msg_id=%s)", channel_id, message.id)
@@ -315,7 +317,11 @@ if __name__ == "__main__":
                         logger.warning("Heartbeat: Telethon client disconnected, attempting reconnect...")
                         try:
                             await listener._client.connect()
-                            await listener._client.get_dialogs()
+                            for ch_id in listener._monitored_channels:
+                                try:
+                                    await listener._client.get_entity(int(ch_id))
+                                except Exception:
+                                    pass
                             logger.info("Reconnected successfully")
                         except Exception as exc:
                             logger.exception("Reconnect failed")

@@ -214,6 +214,9 @@ class MultiUserListenerManager:
                     "User %s: retry after flood-wait failed: %s",
                     user_id, retry_exc,
                 )
+                # Deactivate session if permanently invalid
+                if isinstance(retry_exc, RuntimeError) and "not authorised" in str(retry_exc).lower():
+                    await self._deactivate_session(user_id)
                 _capture_user_exception(retry_exc, user_id)
                 return False
         except RuntimeError as exc:
@@ -426,6 +429,27 @@ class MultiUserListenerManager:
                 self._failure_counts[user_id] = 0
                 connected += 1
                 logger.info("Reconnected user %s successfully", user_id)
+            except FloodWaitError as e:
+                logger.warning(
+                    "User %s: flood-wait %ds during heartbeat reconnect",
+                    user_id, e.seconds,
+                )
+                # Don't count as failure — Telegram is just rate-limiting
+                self._failure_counts[user_id] = max(
+                    self._failure_counts.get(user_id, 1) - 1, 0,
+                )
+                _capture_user_exception(e, user_id)
+            except RuntimeError as exc:
+                if "not authorised" in str(exc).lower():
+                    logger.warning(
+                        "User %s: session expired during reconnect — deactivating",
+                        user_id,
+                    )
+                    await self._deactivate_session(user_id)
+                    await self._stop_listener_for_user(user_id)
+                else:
+                    logger.error("Reconnect failed for user %s: %s", user_id, exc)
+                _capture_user_exception(exc, user_id)
             except Exception as exc:
                 logger.error("Reconnect failed for user %s: %s", user_id, exc)
                 _capture_user_exception(exc, user_id)

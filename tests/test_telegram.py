@@ -593,6 +593,41 @@ class TestTelegramListenerOnNewMessage:
     @pytest.mark.asyncio
     @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
+    async def test_on_new_message_handles_user_chat_type(self, mock_client_cls, _mock_ss):
+        """A User object (DM) without .title should not crash _on_new_message."""
+        mock_client = _make_mock_client()
+        mock_client_cls.return_value = mock_client
+
+        queue_port = AsyncMock()
+        listener = TelegramListener(
+            api_id=FAKE_API_ID,
+            api_hash=FAKE_API_HASH,
+            queue_port=queue_port,
+            monitored_channels=set(),  # No channels monitored — message will be skipped
+        )
+        await listener.start(user_id=SAMPLE_USER_ID, session_string=FAKE_SESSION_STRING)
+
+        # Build a mock event where get_chat() returns a User (DM) — no .title attribute
+        event = AsyncMock()
+        event.message = MagicMock()
+        event.message.text = "Hello from DM"
+        event.message.id = 100
+        event.chat_id = 99999
+
+        mock_user_chat = MagicMock(spec=[])  # Empty spec — no .title
+        mock_user_chat.id = 99999
+        mock_user_chat.first_name = "Alice"
+        event.get_chat = AsyncMock(return_value=mock_user_chat)
+
+        # Should NOT raise AttributeError — the getattr fallback handles it
+        await listener._on_new_message(event)
+
+        # Message from unmonitored channel → skipped, not enqueued
+        queue_port.enqueue.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch(_LISTENER_STRING_SESSION)
+    @patch("src.adapters.telegram.listener.TelegramClient")
     async def test_on_new_message_handles_enqueue_failure(self, mock_client_cls, _mock_ss):
         """If enqueue raises, the error should be caught (not crash the listener)."""
         mock_client = _make_mock_client()
