@@ -108,6 +108,12 @@ class TelegramSessionModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    disconnected_reason: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
+    disconnected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
     user: Mapped[UserModel] = relationship(back_populates="telegram_sessions")

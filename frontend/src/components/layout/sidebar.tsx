@@ -146,15 +146,14 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
         </Tooltip>
         <Tooltip delayDuration={0}>
           <TooltipTrigger asChild>
-            <span
-              className={cn(
-                "h-2 w-2 rounded-full",
-                connected ? "bg-emerald-500" : "bg-rose-500 animate-pulse"
-              )}
-            />
+            {connected ? (
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            ) : (
+              <Link to="/telegram" className="h-2 w-2 rounded-full bg-rose-500 animate-pulse block" />
+            )}
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={8}>
-            Telegram: {connected ? "Connected" : "Disconnected"}
+            {connected ? "Telegram: Connected" : "Telegram disconnected \u2014 click to reconnect"}
           </TooltipContent>
         </Tooltip>
       </div>

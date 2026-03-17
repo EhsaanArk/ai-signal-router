@@ -11,6 +11,8 @@ export function useTelegramStatus() {
   return useQuery({
     queryKey: ["telegram-status"],
     queryFn: () => apiFetch<TelegramStatusResponse>("/telegram/status"),
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 }
 

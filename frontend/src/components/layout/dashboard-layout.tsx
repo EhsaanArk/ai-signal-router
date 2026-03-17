@@ -7,6 +7,7 @@ import { MobileNav } from "./mobile-nav";
 import { EmailVerifyBanner } from "@/components/shared/email-verify-banner";
 import { PageLoader } from "@/components/shared/loading-spinner";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
+import { useTelegramDisconnectAlert } from "@/hooks/use-telegram-disconnect-alert";
 
 function SetupIncompleteBanner() {
   const [dismissed, setDismissed] = useState(
@@ -42,6 +43,7 @@ function SetupIncompleteBanner() {
 
 export function DashboardLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  useTelegramDisconnectAlert();
 
   return (
     <div className="flex h-screen overflow-hidden">
