@@ -54,6 +54,28 @@ async def process_signal(
     """
 
     # ------------------------------------------------------------------
+    # Step 0 — Deduplication check (prevents double-processing on
+    #          backfill or QStash retry)
+    # ------------------------------------------------------------------
+    if raw_signal.message_id:
+        existing = await db.execute(
+            select(SignalLogModel.id).where(
+                SignalLogModel.channel_id == raw_signal.channel_id,
+                SignalLogModel.message_id == raw_signal.message_id,
+                SignalLogModel.user_id == raw_signal.user_id,
+                SignalLogModel.status == "success",
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none() is not None:
+            logger.info(
+                "Duplicate signal skipped: channel=%s message_id=%s user=%s",
+                raw_signal.channel_id,
+                raw_signal.message_id,
+                raw_signal.user_id,
+            )
+            return []
+
+    # ------------------------------------------------------------------
     # Step 1 — Check routing rules FIRST (cheap DB query, avoids
     #          wasting an OpenAI call on unsubscribed channels)
     # ------------------------------------------------------------------

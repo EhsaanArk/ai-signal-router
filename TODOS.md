@@ -1,6 +1,8 @@
 # TODOS
 
-## P2 — Signal backfill with staleness filter on listener reconnect
+## ~~P2 — Signal backfill with staleness filter on listener reconnect~~ DONE (PR pending)
+
+Built in `feature/SGM-030-signal-backfill-on-reconnect`. Includes dedup check in workflow.py, staleness filter (60s default via `BACKFILL_MAX_AGE_SECONDS`), and 9 tests.
 
 **What:** When the listener process restarts (deploy, crash), fetch the last N messages from each monitored channel via Telegram's message history API and process any that were missed — but only if they're within a configurable time tolerance.
 
