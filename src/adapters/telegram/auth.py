@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -47,6 +48,8 @@ class TelegramAuth:
         self._api_hash = api_hash
         self._proxy = proxy
         self._pending_clients: dict[str, TelegramClient] = {}
+        self._pending_timestamps: dict[str, float] = {}
+        self._pending_ttl = 600  # 10 minutes
 
     async def send_code(self, phone_number: str) -> dict:
         """Initiate the login flow by sending a verification code via Telegram.
@@ -69,8 +72,12 @@ class TelegramAuth:
 
         sent_code = await client.send_code_request(phone_number)
 
+        # Evict stale pending clients before storing the new one
+        await self._evict_stale_clients()
+
         # Store client so verify_code can use the same session
         self._pending_clients[phone_number] = client
+        self._pending_timestamps[phone_number] = time.monotonic()
 
         logger.info("Verification code sent to %s", _phone_id(phone_number))
         return {"phone_code_hash": sent_code.phone_code_hash}
@@ -132,12 +139,31 @@ class TelegramAuth:
         # Cleanup: remove from pending but do NOT disconnect — the caller may
         # want to keep using the session.  We disconnect on explicit request.
         self._pending_clients.pop(phone_number, None)
+        self._pending_timestamps.pop(phone_number, None)
 
         return session_string
 
     async def disconnect(self, phone_number: str) -> None:
         """Disconnect and discard the pending client for *phone_number*."""
         client = self._pending_clients.pop(phone_number, None)
+        self._pending_timestamps.pop(phone_number, None)
         if client is not None:
             await client.disconnect()
             logger.debug("Disconnected pending client for %s", _phone_id(phone_number))
+
+    async def _evict_stale_clients(self) -> None:
+        """Disconnect and remove pending clients older than ``_pending_ttl``."""
+        now = time.monotonic()
+        stale = [
+            phone for phone, ts in self._pending_timestamps.items()
+            if now - ts > self._pending_ttl
+        ]
+        for phone in stale:
+            client = self._pending_clients.pop(phone, None)
+            self._pending_timestamps.pop(phone, None)
+            if client is not None:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+            logger.info("Evicted stale pending auth client for %s", _phone_id(phone))

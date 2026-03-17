@@ -827,6 +827,21 @@ async def telegram_verify_code(
             detail="Failed to encrypt session. Check ENCRYPTION_KEY configuration.",
         )
 
+    # Cross-user phone uniqueness check — prevent two different users from
+    # connecting the same Telegram account (Telegram kills competing sessions).
+    conflict = (await db.execute(
+        select(TelegramSessionModel).where(
+            TelegramSessionModel.phone_number == body.phone_number,
+            TelegramSessionModel.is_active.is_(True),
+            TelegramSessionModel.user_id != current_user.id,
+        ).limit(1)
+    )).scalar_one_or_none()
+    if conflict is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This phone number is already connected to another account.",
+        )
+
     # Upsert the telegram session record
     result = await db.execute(
         select(TelegramSessionModel).where(

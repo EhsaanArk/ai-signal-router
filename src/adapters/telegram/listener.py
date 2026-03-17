@@ -137,8 +137,18 @@ class TelegramListener:
         if not message.text:
             return
 
-        # Build the channel identifier — use the chat ID as a string
-        chat = await event.get_chat()
+        # Build the channel identifier — use the chat ID as a string.
+        # get_chat() can fail if the entity cache is stale or the channel
+        # was deleted, so we fall back to abs(event.chat_id).
+        try:
+            chat = await event.get_chat()
+        except Exception as exc:
+            logger.warning(
+                "Could not resolve chat for event (chat_id=%s): %s",
+                event.chat_id, exc,
+            )
+            sentry_sdk.capture_exception(exc)
+            chat = None
         # Always use the bare (unmarked) ID to match channels.py format.
         # event.chat_id may include a -100 prefix; abs() strips it.
         channel_id = str(chat.id) if chat else str(abs(event.chat_id))
@@ -186,6 +196,11 @@ class TelegramListener:
                     channel_id,
                 )
                 sentry_sdk.capture_exception(exc)
+
+    @property
+    def is_connected(self) -> bool:
+        """Return ``True`` if the underlying Telethon client is connected."""
+        return self._client is not None and self._client.is_connected()
 
     def update_monitored_channels(self, channels: set[str]) -> None:
         """Update the set of channel IDs this listener should process."""

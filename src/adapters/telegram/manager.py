@@ -153,16 +153,14 @@ class MultiUserListenerManager:
             "total_listeners": len(self._listeners),
             "connected_listeners": sum(
                 1 for l in self._listeners.values()
-                if l._client and l._client.is_connected()
+                if l.is_connected
             ),
             "total_monitored_channels": sum(
                 len(ch) for ch in self._monitored_channels.values()
             ),
             "users": {
                 str(uid): {
-                    "connected": (
-                        l._client is not None and l._client.is_connected()
-                    ),
+                    "connected": l.is_connected,
                     "channels": len(self._monitored_channels.get(uid, set())),
                     "failure_count": self._failure_counts.get(uid, 0),
                 }
@@ -340,29 +338,10 @@ class MultiUserListenerManager:
             if not prefs.email_on_disconnect:
                 return
 
-            reason_labels = {
-                "session_expired": "Your Telegram session expired",
-                "flood_wait_exhausted": "Telegram rate-limited your account",
-                "decrypt_failed": "Session data could not be decrypted",
-            }
-            subject = "Sage Radar AI — Telegram disconnected"
-            html = (
-                f"<h2>Telegram Disconnected</h2>"
-                f"<p>{reason_labels.get(reason, 'Your Telegram session was disconnected')}. "
-                f"Signal routing has been paused.</p>"
-                f"<p>Please log in to <a href='https://app.sageradar.ai/telegram'>"
-                f"Sage Radar AI</a> to reconnect.</p>"
+            await self._email_notifier.send_disconnect_alert(
+                user_email=user.email,
+                reason=reason,
             )
-
-            import resend
-            resend.api_key = self._email_notifier._api_key  # type: ignore[attr-defined]
-            await asyncio.to_thread(resend.Emails.send, {
-                "from": self._email_notifier._from_address,  # type: ignore[attr-defined]
-                "to": [user.email],
-                "subject": subject,
-                "html": html,
-            })
-            logger.info("Disconnect notification email sent to %s", user.email)
         except Exception as exc:
             logger.error(
                 "Failed to send disconnect notification for user %s: %s",
@@ -474,7 +453,7 @@ class MultiUserListenerManager:
         total = len(self._listeners)
 
         for user_id, listener in list(self._listeners.items()):
-            if listener._client and listener._client.is_connected():
+            if listener.is_connected:
                 connected += 1
                 self._failure_counts[user_id] = 0
                 continue

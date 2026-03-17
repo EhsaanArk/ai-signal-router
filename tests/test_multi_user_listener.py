@@ -48,6 +48,9 @@ def _mock_listener(connected: bool = True) -> MagicMock:
     listener.start = AsyncMock()
     listener.stop = AsyncMock()
     listener.update_monitored_channels = MagicMock()
+    # Expose the public is_connected property used by the manager
+    listener.is_connected = connected
+    # Keep _client for tests that verify reconnect behaviour
     listener._client = MagicMock()
     listener._client.is_connected.return_value = connected
     listener._client.connect = AsyncMock()
