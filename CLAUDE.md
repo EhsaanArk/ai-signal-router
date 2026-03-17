@@ -134,3 +134,35 @@ Telegram → Listener → QStash → API Workflow → OpenAI Parser → Mapper �
 - DevOps runbook: `@docs/launch/DEVOPS_RUNBOOK.md`
 - Support playbook: `@docs/launch/SUPPORT_PLAYBOOK.md`
 - User guide: `@docs/launch/USER_GUIDE.md`
+
+## Available Specialist Agents
+
+You have 3 specialist agents in `.claude/agents/`. Use them **proactively** — don't wait for the user to ask.
+
+| Agent | When to invoke automatically |
+|-------|------------------------------|
+| `sentry-monitor` | When user mentions errors, crashes, Sentry, production issues, "check what's happening", post-deploy verification, or when you just deployed code to staging/production |
+| `railway-ops` | When user mentions deployment, Railway, logs, service health, "is it deployed", "check staging", environment variables, or when you need to verify a deploy took effect |
+| `db-expert` | When user mentions database, sessions, data integrity, "check the DB", SQL queries, duplicate records, or when investigating a bug that might be data-related |
+
+### Auto-invoke triggers:
+- **After merging a PR to staging/main** → invoke `railway-ops` to verify deploy, then `sentry-monitor` to check for new errors
+- **When debugging a Sentry error** → invoke `sentry-monitor` first, then `db-expert` if it's data-related
+- **When user asks "what's happening" or "check status"** → invoke `railway-ops` for service health
+- **When investigating user-specific issues** → invoke `db-expert` to query their data
+
+## gstack Skills
+
+**For all web browsing, use the `/browse` skill from gstack. NEVER use `mcp__claude-in-chrome__*` tools directly.**
+
+Available gstack skills:
+- `/browse` — Web browsing (use this instead of mcp__claude-in-chrome tools)
+- `/plan-ceo-review` — CEO-perspective plan review
+- `/plan-eng-review` — Engineering-perspective plan review
+- `/review` — Code review
+- `/ship` — Ship/deploy workflow
+- `/qa` — QA testing
+- `/qa-only` — QA testing only (no code changes)
+- `/setup-browser-cookies` — Configure browser cookies for automation
+- `/retro` — Retrospective
+- `/document-release` — Document a release
