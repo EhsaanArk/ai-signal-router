@@ -51,6 +51,11 @@ class TelegramAuth:
         self._pending_timestamps: dict[str, float] = {}
         self._pending_ttl = 600  # 10 minutes
 
+    @staticmethod
+    def _normalize_phone(phone: str) -> str:
+        """Strip spaces, dashes, and parentheses so the lookup key is stable."""
+        return phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+
     async def send_code(self, phone_number: str) -> dict:
         """Initiate the login flow by sending a verification code via Telegram.
 
@@ -62,6 +67,7 @@ class TelegramAuth:
         dict
             ``{"phone_code_hash": "<hash>"}`` — needed for :meth:`verify_code`.
         """
+        phone_number = self._normalize_phone(phone_number)
         client = TelegramClient(
             StringSession(),
             self._api_id,
@@ -108,6 +114,7 @@ class TelegramAuth:
             A Telethon ``StringSession`` token that can be persisted and used
             to reconnect without re-authenticating.
         """
+        phone_number = self._normalize_phone(phone_number)
         client = self._pending_clients.get(phone_number)
         if client is None:
             raise ValueError(
@@ -145,6 +152,7 @@ class TelegramAuth:
 
     async def disconnect(self, phone_number: str) -> None:
         """Disconnect and discard the pending client for *phone_number*."""
+        phone_number = self._normalize_phone(phone_number)
         client = self._pending_clients.pop(phone_number, None)
         self._pending_timestamps.pop(phone_number, None)
         if client is not None:
