@@ -348,6 +348,52 @@ class TestBackfillMissedSignals:
         listener._client.get_entity.assert_not_called()
         queue.enqueue.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_backfill_enqueue_failure_continues(self):
+        """If enqueue fails for one message, backfill should continue
+        to enqueue remaining messages."""
+        queue = AsyncMock()
+        # First enqueue call fails, second succeeds
+        queue.enqueue = AsyncMock(
+            side_effect=[Exception("QStash 500"), None],
+        )
+        manager = _make_manager(queue_port=queue)
+        listener = _mock_listener()
+
+        messages = [
+            _make_telegram_message(102, "EURUSD BUY", age_seconds=5),
+            _make_telegram_message(101, "XAUUSD SELL", age_seconds=10),
+        ]
+        listener._client.get_messages = AsyncMock(return_value=messages)
+
+        with patch(
+            "src.adapters.telegram.manager.AsyncSession",
+        ) as MockSession:
+            mock_session = AsyncMock()
+            call_count = 0
+
+            async def mock_execute(query):
+                nonlocal call_count
+                call_count += 1
+                result = MagicMock()
+                if call_count == 1:
+                    result.scalar_one_or_none.return_value = 100
+                else:
+                    result.all.return_value = []
+                return result
+
+            mock_session.execute = mock_execute
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+            MockSession.return_value = mock_session
+
+            await manager._backfill_missed_signals(
+                USER_A, listener, {CHANNEL_1},
+            )
+
+        # Both messages should have been attempted
+        assert queue.enqueue.call_count == 2
+
 
 # -----------------------------------------------------------------------
 # Workflow deduplication tests
@@ -430,3 +476,37 @@ class TestWorkflowDeduplication:
         # Should have passed dedup and hit the routing rules check
         assert result == []
         assert mock_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_dedup_skips_already_ignored(self):
+        """If a signal_log with status=ignored exists for the same
+        (channel_id, message_id, user_id), the workflow should return
+        early — no point re-parsing a non-signal message via OpenAI."""
+        raw = RawSignal(
+            user_id=USER_A,
+            channel_id=CHANNEL_1,
+            raw_message="Good morning everyone!",
+            message_id=55,
+        )
+
+        mock_db = AsyncMock()
+
+        # Dedup check returns existing ID (previously ignored)
+        dedup_result = MagicMock()
+        dedup_result.scalar_one_or_none.return_value = UUID(
+            "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+        )
+        mock_db.execute = AsyncMock(return_value=dedup_result)
+
+        mock_request = MagicMock()
+        mock_settings = MagicMock()
+        mock_dispatcher = MagicMock()
+
+        from src.api.workflow import process_signal
+
+        result = await process_signal(
+            raw, mock_request, mock_db, mock_settings, mock_dispatcher,
+        )
+
+        assert result == []
+        assert mock_db.execute.call_count == 1

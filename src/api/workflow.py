@@ -63,7 +63,7 @@ async def process_signal(
                 SignalLogModel.channel_id == raw_signal.channel_id,
                 SignalLogModel.message_id == raw_signal.message_id,
                 SignalLogModel.user_id == raw_signal.user_id,
-                SignalLogModel.status == "success",
+                SignalLogModel.status.in_(["success", "ignored"]),
             ).limit(1)
         )
         if existing.scalar_one_or_none() is not None:

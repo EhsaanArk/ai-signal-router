@@ -634,13 +634,33 @@ class MultiUserListenerManager:
                     # Staleness check using Telegram message timestamp
                     if msg.date and msg.date.timestamp() < cutoff:
                         total_stale += 1
+                        age_seconds = datetime.now(timezone.utc).timestamp() - msg.date.timestamp()
                         logger.debug(
                             "Backfill: stale message %d in channel %s "
                             "(age=%.0fs, max=%ds)",
-                            msg.id, channel_id,
-                            datetime.now(timezone.utc).timestamp() - msg.date.timestamp(),
+                            msg.id, channel_id, age_seconds,
                             BACKFILL_MAX_AGE_SECONDS,
                         )
+                        # Log stale signal to DB for auditability
+                        try:
+                            async with AsyncSession(self._engine, expire_on_commit=False) as db:
+                                db.add(SignalLogModel(
+                                    user_id=user_id,
+                                    message_id=msg.id,
+                                    channel_id=channel_id,
+                                    raw_message=msg.text,
+                                    status="ignored",
+                                    error_message=(
+                                        f"stale_signal: {age_seconds:.0f}s delay "
+                                        f"exceeds {BACKFILL_MAX_AGE_SECONDS}s threshold"
+                                    ),
+                                ))
+                                await db.commit()
+                        except Exception as log_exc:
+                            logger.debug(
+                                "Backfill: failed to log stale signal %d: %s",
+                                msg.id, log_exc,
+                            )
                         continue
 
                     # Build and enqueue the signal
