@@ -353,6 +353,7 @@ if __name__ == "__main__":
         else:
             # ── Multi-user mode (SaaS) ───────────────────────────────────
             from src.adapters.telegram.manager import MultiUserListenerManager
+            import signal
 
             enc_key = os.environ["ENCRYPTION_KEY"].encode()
 
@@ -376,12 +377,39 @@ if __name__ == "__main__":
             logger.info("Starting multi-user listener manager...")
             await manager.start()
 
+            # ── Graceful shutdown on SIGTERM ──────────────────────────────
+            # Railway sends SIGTERM before replacing the container.  We must
+            # disconnect all Telethon clients BEFORE the process exits so
+            # that Telegram session auth keys are cleanly released.  Without
+            # this, the new container's connections trigger
+            # AuthKeyDuplicatedError and invalidate user sessions.
+            #
+            #   SIGTERM received
+            #     → manager.stop() disconnects all Telethon clients
+            #     → sessions released cleanly
+            #     → new container connects without conflict
+            #     → backfill recovers any signals missed during the gap
+            shutdown_event = asyncio.Event()
+
+            def _handle_sigterm(signum, frame):
+                logger.info(
+                    "Received %s — initiating graceful shutdown...",
+                    signal.Signals(signum).name,
+                )
+                shutdown_event.set()
+
+            signal.signal(signal.SIGTERM, _handle_sigterm)
+            signal.signal(signal.SIGINT, _handle_sigterm)
+
             logger.info("Multi-user listener running. Press Ctrl+C to stop.")
             try:
-                while True:
-                    await asyncio.sleep(1)
+                await shutdown_event.wait()
             except (KeyboardInterrupt, asyncio.CancelledError):
+                pass
+            finally:
+                logger.info("Shutting down — disconnecting all Telegram clients...")
                 await manager.stop()
+                logger.info("All clients disconnected. Exiting cleanly.")
 
     logging.basicConfig(level=logging.INFO)
     asyncio.run(_main())
