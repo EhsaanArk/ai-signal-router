@@ -31,7 +31,7 @@ Built in `feature/SGM-030-signal-backfill-on-reconnect`. Includes dedup check in
 
 ---
 
-## P1 — Zero-downtime deploy: prevent session invalidation on redeploy
+## ~~P1 — Zero-downtime deploy: prevent session invalidation on redeploy~~ DONE (staging verified)
 
 **What:** Prevent Railway redeploys from invalidating users' Telegram sessions. Currently, when Railway replaces the Listener container, the old and new instances briefly overlap — both try to use the same MTProto session simultaneously, causing Telegram to throw `AuthKeyDuplicatedError` and permanently invalidate the session. Affected users must re-authenticate from scratch.
 
