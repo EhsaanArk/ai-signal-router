@@ -559,6 +559,65 @@ class TestExpiredSessionDeactivation:
         assert result is False
         manager._repo.deactivate_session.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_auth_key_duplicated_error_deactivates_session(self, MockListener):
+        """AuthKeyDuplicatedError (e.g., two containers using same session)
+        should trigger session deactivation, not silent retry."""
+        from telethon.errors import AuthKeyDuplicatedError
+
+        mock_listener = _mock_listener()
+        mock_listener.start = AsyncMock(
+            side_effect=AuthKeyDuplicatedError(request=None),
+        )
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels=set(),
+        )
+
+        assert result is False
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
+        assert USER_A not in manager._listeners
+
+
+# =========================================================================
+# _is_session_dead helper
+# =========================================================================
+
+
+class TestIsSessionDead:
+    """Tests for the _is_session_dead() helper function."""
+
+    def test_auth_key_error_is_dead(self):
+        """Any AuthKeyError subclass should be treated as a dead session."""
+        from telethon.errors import AuthKeyDuplicatedError
+        from src.adapters.telegram.manager import _is_session_dead
+
+        assert _is_session_dead(AuthKeyDuplicatedError(request=None)) is True
+
+    def test_not_authorised_runtime_error_is_dead(self):
+        """RuntimeError with 'not authorised' message should be dead."""
+        from src.adapters.telegram.manager import _is_session_dead
+
+        exc = RuntimeError("Session for user xxx is not authorised.")
+        assert _is_session_dead(exc) is True
+
+    def test_other_runtime_error_is_not_dead(self):
+        """RuntimeError without auth message should NOT be dead."""
+        from src.adapters.telegram.manager import _is_session_dead
+
+        assert _is_session_dead(RuntimeError("Some other error")) is False
+
+    def test_generic_exception_is_not_dead(self):
+        """Regular exceptions should NOT be treated as dead sessions."""
+        from src.adapters.telegram.manager import _is_session_dead
+
+        assert _is_session_dead(ConnectionError("timeout")) is False
+        assert _is_session_dead(ValueError("bad input")) is False
+
 
 # =========================================================================
 # FloodWaitError handling

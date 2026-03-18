@@ -390,16 +390,14 @@ if __name__ == "__main__":
             #     → new container connects without conflict
             #     → backfill recovers any signals missed during the gap
             shutdown_event = asyncio.Event()
+            loop = asyncio.get_running_loop()
 
-            def _handle_sigterm(signum, frame):
-                logger.info(
-                    "Received %s — initiating graceful shutdown...",
-                    signal.Signals(signum).name,
-                )
+            def _on_signal(sig_name: str) -> None:
+                logger.info("Received %s — initiating graceful shutdown...", sig_name)
                 shutdown_event.set()
 
-            signal.signal(signal.SIGTERM, _handle_sigterm)
-            signal.signal(signal.SIGINT, _handle_sigterm)
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, _on_signal, sig.name)
 
             logger.info("Multi-user listener running. Press Ctrl+C to stop.")
             try:
