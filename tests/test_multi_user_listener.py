@@ -32,7 +32,7 @@ SESSION_C = "session_string_c"
 
 def _make_manager(**overrides) -> MultiUserListenerManager:
     """Create a manager with mocked engine and default settings."""
-    return MultiUserListenerManager(
+    manager = MultiUserListenerManager(
         api_id=FAKE_API_ID,
         api_hash=FAKE_API_HASH,
         queue_port=AsyncMock(),
@@ -40,6 +40,15 @@ def _make_manager(**overrides) -> MultiUserListenerManager:
         enc_key=FAKE_ENC_KEY,
         **overrides,
     )
+    # Replace the real repo with a mock so tests control DB responses
+    manager._repo = MagicMock()
+    manager._repo.load_active_sessions = AsyncMock(return_value=[])
+    manager._repo.load_all_monitored_channels = AsyncMock(return_value={})
+    manager._repo.load_monitored_channels = AsyncMock(return_value=set())
+    manager._repo.load_session_for_user = AsyncMock(return_value=None)
+    manager._repo.deactivate_session = AsyncMock()
+    manager._repo.get_user_notification_prefs = AsyncMock(return_value=(None, MagicMock(email_on_disconnect=False)))
+    return manager
 
 
 def _mock_listener(connected: bool = True) -> MagicMock:
@@ -71,10 +80,10 @@ class TestManagerStart:
     async def test_starts_listener_for_each_active_session(self, MockListener):
         """Manager should create and start one listener per active session."""
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: {"123"}, USER_B: {"456"}},
         )
 
@@ -102,8 +111,6 @@ class TestManagerStart:
     async def test_start_with_no_sessions(self, MockListener):
         """Manager should start gracefully with zero active sessions."""
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(return_value=[])
-        manager._load_all_monitored_channels = AsyncMock(return_value={})
 
         await manager.start()
 
@@ -123,12 +130,12 @@ class TestManagerStart:
     async def test_start_loads_monitored_channels_per_user(self, MockListener):
         """Each listener should receive its user's monitored channels."""
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A)],
         )
 
         channels_a = {"111", "222"}
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: channels_a},
         )
 
@@ -177,10 +184,9 @@ class TestErrorIsolation:
         MockListener.side_effect = _create_listener
 
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
-        manager._load_all_monitored_channels = AsyncMock(return_value={})
 
         await manager.start()
 
@@ -214,14 +220,13 @@ class TestSessionSync:
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._load_monitored_channels = AsyncMock(return_value=set())
 
         # Simulate: user A already running, user B is new
         manager._listeners[USER_A] = _mock_listener()
         manager._monitored_channels[USER_A] = set()
         manager._failure_counts[USER_A] = 0
 
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
 
@@ -242,7 +247,7 @@ class TestSessionSync:
         manager._failure_counts = {USER_A: 0, USER_B: 0}
 
         # Only user A remains active
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A)],
         )
 
@@ -271,7 +276,7 @@ class TestChannelRefresh:
         manager._monitored_channels = {USER_A: {"old_channel"}}
 
         new_channels = {"new_channel_1", "new_channel_2"}
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: new_channels},
         )
 
@@ -290,7 +295,7 @@ class TestChannelRefresh:
         manager._listeners = {USER_A: mock_listener}
         manager._monitored_channels = {USER_A: existing}
 
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: existing},
         )
 
@@ -391,13 +396,50 @@ class TestHeartbeat:
         manager._failure_counts = {USER_A: 0}
         manager._monitored_channels = {USER_A: {"ch1"}}
 
-        manager._deactivate_session = AsyncMock()
-        manager._stop_listener_for_user = AsyncMock()
+        await manager._heartbeat()
+
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A)
+
+    @pytest.mark.asyncio
+    async def test_parallel_heartbeat_handles_mixed_states(self):
+        """Heartbeat should process multiple users in parallel correctly:
+        connected, disconnected (reconnects), and max-failures (restarts)."""
+        manager = _make_manager()
+
+        # User A: connected (should reset failure count)
+        listener_a = _mock_listener(connected=True)
+        # User B: disconnected, will reconnect successfully
+        listener_b = _mock_listener(connected=False)
+        listener_b._client.connect = AsyncMock()
+        # User C: at max failures, should trigger restart
+        listener_c = _mock_listener(connected=False)
+
+        manager._listeners = {
+            USER_A: listener_a,
+            USER_B: listener_b,
+            USER_C: listener_c,
+        }
+        manager._failure_counts = {
+            USER_A: 2,
+            USER_B: 1,
+            USER_C: MAX_CONSECUTIVE_FAILURES,
+        }
+        manager._monitored_channels = {
+            USER_A: {"ch1"},
+            USER_B: {"ch2"},
+            USER_C: {"ch3"},
+        }
+
+        manager._restart_listener_for_user = AsyncMock()
 
         await manager._heartbeat()
 
-        manager._deactivate_session.assert_awaited_once_with(USER_A)
-        manager._stop_listener_for_user.assert_awaited_once_with(USER_A)
+        # User A: failure count reset
+        assert manager._failure_counts[USER_A] == 0
+        # User B: reconnected
+        listener_b._client.connect.assert_awaited_once()
+        # User C: full restart triggered
+        manager._restart_listener_for_user.assert_awaited_once_with(USER_C)
 
 
 # =========================================================================
@@ -489,14 +531,13 @@ class TestExpiredSessionDeactivation:
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._deactivate_session = AsyncMock()
 
         result = await manager._start_listener_for_user(
             USER_A, SESSION_A, channels=set(),
         )
 
         assert result is False
-        manager._deactivate_session.assert_awaited_once_with(USER_A)
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A)
         assert USER_A not in manager._listeners
 
     @pytest.mark.asyncio
@@ -510,14 +551,13 @@ class TestExpiredSessionDeactivation:
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._deactivate_session = AsyncMock()
 
         result = await manager._start_listener_for_user(
             USER_A, SESSION_A, channels=set(),
         )
 
         assert result is False
-        manager._deactivate_session.assert_not_awaited()
+        manager._repo.deactivate_session.assert_not_awaited()
 
 
 # =========================================================================
@@ -601,7 +641,6 @@ class TestFloodWaitHandling:
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._deactivate_session = AsyncMock()
 
         result = await manager._start_listener_for_user(
             USER_A, SESSION_A, channels=set(),
@@ -609,7 +648,7 @@ class TestFloodWaitHandling:
 
         assert result is False
         assert USER_A not in manager._listeners
-        manager._deactivate_session.assert_awaited_once_with(USER_A)
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A)
 
 
 # =========================================================================
@@ -618,30 +657,26 @@ class TestFloodWaitHandling:
 
 
 class TestBatchChannelLoading:
-    """Tests for ``_load_all_monitored_channels()`` batch query."""
+    """Tests for batch channel loading via repository."""
 
     @pytest.mark.asyncio
     @patch("src.adapters.telegram.manager.TelegramListener")
     async def test_start_uses_batch_channel_loading(self, MockListener):
-        """start() should use _load_all_monitored_channels instead of per-user."""
+        """start() should use repo.load_all_monitored_channels instead of per-user."""
         mock_listener = _mock_listener()
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: {"ch1"}, USER_B: {"ch2", "ch3"}},
-        )
-        # Ensure per-user method is NOT called during start()
-        manager._load_monitored_channels = AsyncMock(
-            side_effect=AssertionError("Should not be called during start()"),
         )
 
         await manager.start()
 
-        manager._load_all_monitored_channels.assert_awaited_once()
+        manager._repo.load_all_monitored_channels.assert_awaited_once()
         assert manager._monitored_channels[USER_A] == {"ch1"}
         assert manager._monitored_channels[USER_B] == {"ch2", "ch3"}
 

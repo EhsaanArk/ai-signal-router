@@ -80,3 +80,33 @@ Built in `feature/SGM-030-signal-backfill-on-reconnect`. Includes dedup check in
 **Priority:** P2
 **Depends on:** Nothing
 **Added:** 2026-03-17 (CEO plan review)
+
+---
+
+## P1 — Signal Marketplace: Master Listener Architecture
+
+**What:** Run a dedicated Sage Radar Telegram account that monitors marketplace-listed channels on behalf of all marketplace subscribers, eliminating the dependency on community members being connected.
+
+**Why:** The marketplace V1 (planned) piggybacks on existing user connections — if no community member is connected to a marketplace channel, subscribers receive no signals. A master listener guarantees 100% signal uptime for marketplace providers.
+
+**Pros:**
+- 100% signal delivery uptime for marketplace subscribers
+- No dependency on community members staying connected
+- Enables the marketplace to function as a truly self-contained signal delivery system
+
+**Cons:**
+- Requires a dedicated Telegram account with proxy infrastructure
+- Flood-wait management for potentially hundreds of channels
+- Additional Railway service (persistent listener) to operate and monitor
+- Telegram ToS considerations for automated account usage at scale
+
+**Context:**
+- The marketplace plan (CEO review 2026-03-18) resolved key architecture decisions: workflow fan-out (not listener broadcast), parsed-data-only sharing (never raw TG messages), `source_type` column in signal_logs, `MARKETPLACE_ENABLED` feature flag
+- Full CEO plan with competitive research stored at `~/.gstack/projects/EhsaanArk-ai-signal-router/ceo-plans/2026-03-18-signal-marketplace.md`
+- Competitors: Cornix has marketplace (crypto-only, still requires TG); ZuluTrade/eToro have full self-contained marketplaces (no TG dependency)
+- New DB tables designed: `marketplace_providers`, `marketplace_subscriptions`, `marketplace_consent_log`
+
+**Effort:** L (human) → M (CC)
+**Priority:** P1 (when marketplace feature work begins)
+**Depends on:** Marketplace V1 (directory + analytics + routing + legal framework)
+**Added:** 2026-03-18 (CEO plan review)
