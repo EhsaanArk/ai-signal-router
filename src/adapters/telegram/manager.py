@@ -19,7 +19,7 @@ from uuid import UUID
 
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncEngine
-from telethon.errors import FloodWaitError
+from telethon.errors import AuthKeyError, FloodWaitError
 
 from src.adapters.telegram.backfill import backfill_missed_signals
 from src.adapters.telegram.listener import TelegramListener
@@ -30,6 +30,21 @@ from src.adapters.telegram.repository import (
 from src.core.interfaces import QueuePort
 
 logger = logging.getLogger(__name__)
+
+
+def _is_session_dead(exc: Exception) -> bool:
+    """Return True if the exception indicates a permanently invalid session.
+
+    Covers:
+    - RuntimeError("not authorised") — Telethon auth check failure
+    - AuthKeyDuplicatedError — two connections used the same session
+    - AuthKeyError (parent) — any auth key corruption/revocation
+    """
+    if isinstance(exc, AuthKeyError):
+        return True
+    if isinstance(exc, RuntimeError) and "not authorised" in str(exc).lower():
+        return True
+    return False
 
 
 # After this many consecutive heartbeat failures the client is fully restarted.
@@ -211,25 +226,17 @@ class MultiUserListenerManager:
                     "User %s: retry after flood-wait failed: %s",
                     user_id, retry_exc,
                 )
-                if isinstance(retry_exc, RuntimeError) and "not authorised" in str(retry_exc).lower():
-                    await self._repo.deactivate_session(user_id)
-                    asyncio.create_task(
-                        self._notify_disconnect(user_id, "session_expired"),
-                        name=f"notify-disconnect-{user_id}",
-                    )
+                if _is_session_dead(retry_exc):
+                    await self._deactivate_and_notify(user_id)
                 _capture_user_exception(retry_exc, user_id)
                 return False
-        except RuntimeError as exc:
-            if "not authorised" in str(exc).lower():
+        except (RuntimeError, AuthKeyError) as exc:
+            if _is_session_dead(exc):
                 logger.warning(
-                    "Session expired for user %s — deactivating in DB",
-                    user_id,
+                    "Session invalid for user %s (%s) — deactivating",
+                    user_id, type(exc).__name__,
                 )
-                await self._repo.deactivate_session(user_id)
-                asyncio.create_task(
-                    self._notify_disconnect(user_id, "session_expired"),
-                    name=f"notify-disconnect-{user_id}",
-                )
+                await self._deactivate_and_notify(user_id)
             else:
                 logger.error(
                     "Failed to start listener for user %s: %s", user_id, exc,
@@ -322,6 +329,21 @@ class MultiUserListenerManager:
                 "Failed to send disconnect notification for user %s: %s",
                 user_id, exc,
             )
+
+    async def _deactivate_and_notify(
+        self, user_id: UUID, reason: str = "session_expired",
+    ) -> None:
+        """Deactivate a session in DB and notify the user.
+
+        Convenience wrapper that combines the DB update with an async
+        notification task.  Used when a session is permanently invalid
+        (auth key revoked, duplicated, or expired).
+        """
+        await self._repo.deactivate_session(user_id, reason)
+        asyncio.create_task(
+            self._notify_disconnect(user_id, reason),
+            name=f"notify-disconnect-{user_id}",
+        )
 
     # ------------------------------------------------------------------
     # Internal: refresh loop (sessions, channels, heartbeat)
@@ -453,19 +475,14 @@ class MultiUserListenerManager:
                         self._failure_counts.get(user_id, 1) - 1, 0,
                     )
                     _capture_user_exception(e, user_id)
-                except RuntimeError as exc:
-                    if "not authorised" in str(exc).lower():
+                except (RuntimeError, AuthKeyError) as exc:
+                    if _is_session_dead(exc):
                         logger.warning(
-                            "User %s: session expired during reconnect — deactivating",
-                            user_id,
+                            "User %s: session permanently invalid (%s) — deactivating",
+                            user_id, type(exc).__name__,
                         )
-                        await self._repo.deactivate_session(user_id)
+                        await self._deactivate_and_notify(user_id)
                         await self._stop_listener_for_user(user_id)
-                        # Notify user of session expiry
-                        asyncio.create_task(
-                            self._notify_disconnect(user_id, "session_expired"),
-                            name=f"notify-disconnect-{user_id}",
-                        )
                     else:
                         logger.error("Reconnect failed for user %s: %s", user_id, exc)
                     _capture_user_exception(exc, user_id)

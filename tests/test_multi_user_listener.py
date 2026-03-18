@@ -398,7 +398,7 @@ class TestHeartbeat:
 
         await manager._heartbeat()
 
-        manager._repo.deactivate_session.assert_awaited_once_with(USER_A)
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
 
     @pytest.mark.asyncio
     async def test_parallel_heartbeat_handles_mixed_states(self):
@@ -537,7 +537,7 @@ class TestExpiredSessionDeactivation:
         )
 
         assert result is False
-        manager._repo.deactivate_session.assert_awaited_once_with(USER_A)
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
         assert USER_A not in manager._listeners
 
     @pytest.mark.asyncio
@@ -648,7 +648,7 @@ class TestFloodWaitHandling:
 
         assert result is False
         assert USER_A not in manager._listeners
-        manager._repo.deactivate_session.assert_awaited_once_with(USER_A)
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
 
 
 # =========================================================================
