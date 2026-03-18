@@ -23,6 +23,20 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     isEntry: true,
   },
   {
+    key: "start_long_limit_deal",
+    label: "Entry Long (Limit)",
+    description: "Open a new long/buy limit order",
+    example: '"Buy limit EURUSD @ 1.0950"',
+    isEntry: true,
+  },
+  {
+    key: "start_short_limit_deal",
+    label: "Entry Short (Limit)",
+    description: "Open a new short/sell limit order",
+    example: '"Sell limit GBPUSD @ 1.2500"',
+    isEntry: true,
+  },
+  {
     key: "close_order_at_market_price",
     label: "Close Position",
     description: "Fully close an open trade",
@@ -49,7 +63,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
   },
 ];
 
-const ENTRY_ONLY_FIELDS = ["price", "takeProfits", "stopLoss", "balance"];
+const ENTRY_ONLY_FIELDS = ["price", "takeProfits", "takeProfitsPips", "stopLoss", "stopLossPips", "balance"];
 
 export function generateActionPreview(
   actionKey: string,

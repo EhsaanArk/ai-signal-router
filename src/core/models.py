@@ -47,6 +47,8 @@ class SignalAction(str, Enum):
 
     start_long = "start_long_market_deal"
     start_short = "start_short_market_deal"
+    start_long_limit = "start_long_limit_deal"
+    start_short_limit = "start_short_limit_deal"
     partial_close_lot = "partially_close_by_lot"
     partial_close_pct = "partially_close_by_percentage"
     breakeven = "move_sl_to_breakeven"
@@ -117,6 +119,8 @@ class ParsedSignal(BaseModel):
     new_sl: float | None = None
     new_tp: float | None = None
     trailing_sl_pips: int | None = None
+    take_profit_pips: list[int] = Field(default_factory=list)
+    stop_loss_pips: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +166,7 @@ class WebhookPayloadV1(BaseModel):
     # Management action fields
     slAdjustment: int | None = None
     percentage: int | None = None
-    lotSize: str | None = None
+    lotSize: float | None = None
 
 
 class WebhookPayloadV2(BaseModel):
@@ -174,17 +178,24 @@ class WebhookPayloadV2(BaseModel):
     symbol: str | None = None
     price: str | None = None
     takeProfits: list[float] | None = None
+    takeProfitsPips: list[int] | None = None
     stopLoss: float | None = None
-    lots: str | None = None
+    stopLossPips: int | None = None
+    balance: int | None = None
+    lots: float | None = None
     # Management action fields
     slAdjustment: int | None = None
     percentage: int | None = None
-    lotSize: str | None = None
+    lotSize: float | None = None
 
     @model_validator(mode="after")
     def _check_required_fields_per_action(self) -> Self:
         """Enforce field requirements based on action type."""
-        if self.type in (SignalAction.start_long, SignalAction.start_short):
+        entry_actions = (
+            SignalAction.start_long, SignalAction.start_short,
+            SignalAction.start_long_limit, SignalAction.start_short_limit,
+        )
+        if self.type in entry_actions:
             if not self.symbol or not self.source:
                 raise ValueError(
                     f"'symbol' and 'source' are required for {self.type.value}"

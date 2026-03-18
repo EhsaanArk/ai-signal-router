@@ -24,9 +24,38 @@ const KNOWN_FIELDS: {
   { key: "price", label: "Price", placeholder: "e.g., 1.1000", dynamic: "{{close}}", dynamicLabel: "From signal" },
   { key: "date", label: "Date", placeholder: "auto-filled", dynamic: "{{time}}", dynamicLabel: "Auto timestamp" },
   { key: "exchange", label: "Exchange", placeholder: "e.g., pptbitget" },
+  // V2 entry fields
+  { key: "balance", label: "Balance", placeholder: "e.g., 1000" },
+  { key: "lots", label: "Lots", placeholder: "e.g., 1" },
+  { key: "takeProfits", label: "Take Profits", placeholder: "e.g., [1.1050, 1.1100]", dynamic: "", dynamicLabel: "From signal" },
+  { key: "takeProfitsPips", label: "TP Pips", placeholder: "e.g., [30, 60]", dynamic: "", dynamicLabel: "From signal" },
+  { key: "stopLoss", label: "Stop Loss", placeholder: "e.g., 1.0950", dynamic: "", dynamicLabel: "From signal" },
+  { key: "stopLossPips", label: "SL Pips", placeholder: "e.g., 30" },
+  // Management action fields
+  { key: "lotSize", label: "Lot Size", placeholder: "e.g., 0.1" },
+  { key: "percentage", label: "Percentage", placeholder: "e.g., 50" },
+  { key: "slAdjustment", label: "SL Adjustment", placeholder: "e.g., 0" },
 ];
 
 const KNOWN_KEYS = new Set(KNOWN_FIELDS.map((f) => f.key));
+
+/**
+ * Sanitize TradingView placeholder variables in raw JSON text.
+ *
+ * SageMaster V2 templates contain bare {{...}} placeholders (e.g.,
+ * `"takeProfits": [ {{tpPrice}} ]`, `"stopLoss": {{slPrice}}`) that are
+ * NOT valid JSON.  This function replaces them with safe defaults so
+ * `JSON.parse()` succeeds.
+ */
+export function sanitizeTradingViewJson(raw: string): string {
+  return raw
+    // Replace array placeholders: [ {{tpPrice}} ] → []
+    .replace(/\[\s*\{\{[^}]+\}\}\s*\]/g, "[]")
+    // Replace bare number/value placeholders: {{slPrice}} → null
+    .replace(/:\s*\{\{[^}]+\}\}/g, ": null")
+    // Strip trailing commas before } or ]
+    .replace(/,\s*([}\]])/g, "$1");
+}
 
 interface FieldState {
   key: string;
@@ -47,7 +76,7 @@ function isDynamicValue(value: string): boolean {
 
 function parseJsonToFields(json: string): FieldState[] | null {
   try {
-    const obj = JSON.parse(json);
+    const obj = JSON.parse(sanitizeTradingViewJson(json));
     if (typeof obj !== "object" || Array.isArray(obj)) return null;
     const fields: FieldState[] = [];
     for (const [key, val] of Object.entries(obj)) {

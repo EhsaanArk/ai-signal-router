@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { TemplateBuilder } from "./template-builder";
+import { TemplateBuilder, sanitizeTradingViewJson } from "./template-builder";
 import { apiFetch } from "@/lib/api";
 import { cn, extractAccountIdFromUrl, extractTemplateMetadata } from "@/lib/utils";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
@@ -68,6 +68,7 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
     : "";
   const [templateText, setTemplateText] = useState(initialTemplateText);
   const [templateError, setTemplateError] = useState("");
+  const [templateInfo, setTemplateInfo] = useState("");
   const [destinationType, setDestinationType] = useState<DestinationType>(initialData?.destination_type ?? "sagemaster_forex");
   // Preserved across back/next navigation; no UI input yet
   const destinationLabel = initialData?.destination_label ?? "";
@@ -114,6 +115,7 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
   const handleTemplateChange = useCallback((text: string) => {
     setTemplateText(text);
     if (templateError) setTemplateError("");
+    if (templateInfo) setTemplateInfo("");
     // Auto-lock when valid JSON with assistId is pasted
     const meta = extractTemplateMetadata(text);
     if (meta.assistId && !templateLocked) {
@@ -172,7 +174,7 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
     let parsedTemplate: Record<string, unknown> | null = null;
     if (templateText.trim()) {
       try {
-        parsedTemplate = JSON.parse(templateText.trim());
+        parsedTemplate = JSON.parse(sanitizeTradingViewJson(templateText.trim()));
         if (typeof parsedTemplate !== "object" || Array.isArray(parsedTemplate)) {
           setTemplateError("Template must be a JSON object");
           return;
@@ -183,6 +185,18 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
       }
     }
     setTemplateError("");
+
+    // Update the template text to the sanitized version so what we store
+    // matches what we parsed (TradingView placeholders replaced with defaults)
+    if (parsedTemplate) {
+      const sanitized = JSON.stringify(parsedTemplate, null, 2);
+      if (sanitized !== templateText.trim()) {
+        setTemplateText(sanitized);
+        setTemplateInfo(
+          "TradingView placeholders (e.g. {{tpPrice}}) were replaced with defaults — Sage Radar fills these from your signal data."
+        );
+      }
+    }
 
     onNext(url, version, parsedTemplate, destinationType, destinationLabel);
   }
@@ -520,10 +534,17 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
         </div>
       )}
 
+      {/* Sanitizer info message */}
+      {templateInfo && (
+        <div className="rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2">
+          <p className="text-[11px] text-sky-600 dark:text-sky-400">{templateInfo}</p>
+        </div>
+      )}
+
       <div className="flex gap-2 pt-2">
         <Button variant="outline" size="sm" onClick={() => {
           let parsedTemplate: Record<string, unknown> | null = null;
-          try { parsedTemplate = templateText.trim() ? JSON.parse(templateText.trim()) : null; } catch { /* ignore */ }
+          try { parsedTemplate = templateText.trim() ? JSON.parse(sanitizeTradingViewJson(templateText.trim())) : null; } catch { /* ignore */ }
           onBack(url, version, parsedTemplate, destinationType, destinationLabel);
         }}>
           Back

@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { TemplateBuilder } from "@/components/forms/template-builder";
+import { TemplateBuilder, sanitizeTradingViewJson } from "@/components/forms/template-builder";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Lightbulb, Loader2, Plus, X, XCircle } from "lucide-react";
 import { useRoutingRules, useUpdateRule } from "@/hooks/use-routing-rules";
@@ -287,7 +287,7 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
     let parsedTemplate: Record<string, unknown> | null = null;
     if (templateText.trim()) {
       try {
-        parsedTemplate = JSON.parse(templateText.trim());
+        parsedTemplate = JSON.parse(sanitizeTradingViewJson(templateText.trim()));
         if (typeof parsedTemplate !== "object" || Array.isArray(parsedTemplate)) {
           setTemplateError("Template must be a JSON object");
           return;

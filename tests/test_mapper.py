@@ -133,7 +133,7 @@ def test_partial_close_by_lot_v2():
     signal = ParsedSignal(action="partial_close", symbol="EURUSD", lots="0.3")
     payload = build_webhook_payload(signal, rule)
     assert payload["type"] == "partially_close_by_lot"
-    assert payload["lotSize"] == "0.3"
+    assert payload["lotSize"] == 0.3
 
 
 def test_partial_close_by_lot_default():
@@ -147,7 +147,7 @@ def test_partial_close_by_lot_default():
     signal = ParsedSignal(action="partial_close", symbol="EURUSD")
     payload = build_webhook_payload(signal, rule)
     assert payload["type"] == "partially_close_by_lot"
-    assert payload["lotSize"] == "0.5"
+    assert payload["lotSize"] == 0.5
 
 
 def test_partial_close_by_percentage_v2():
@@ -337,7 +337,7 @@ def test_template_followup_partial_close_lot():
     signal = ParsedSignal(action="partial_close", symbol="EURUSD", lots="0.3")
     payload = build_webhook_payload(signal, rule)
     assert payload["type"] == "partially_close_by_lot"
-    assert payload["lotSize"] == "0.3"
+    assert payload["lotSize"] == 0.3
 
 
 # ---- Template field preservation (entry) ----
