@@ -1,6 +1,8 @@
 # TODOS
 
-## P2 — Signal backfill with staleness filter on listener reconnect
+## ~~P2 — Signal backfill with staleness filter on listener reconnect~~ DONE (PR pending)
+
+Built in `feature/SGM-030-signal-backfill-on-reconnect`. Includes dedup check in workflow.py (skips `success` + `ignored`), staleness filter with DB logging (60s default via `BACKFILL_MAX_AGE_SECONDS`), and 12 tests.
 
 **What:** When the listener process restarts (deploy, crash), fetch the last N messages from each monitored channel via Telegram's message history API and process any that were missed — but only if they're within a configurable time tolerance.
 
@@ -26,6 +28,33 @@
 **Priority:** P2
 **Depends on:** Nothing — can be built independently
 **Added:** 2026-03-17 (CEO plan review)
+
+---
+
+## P3 — Per-routing-rule staleness override for backfill
+
+**What:** Allow each routing rule to set its own `max_signal_delay_seconds`, overriding the global `BACKFILL_MAX_AGE_SECONDS` (60s default).
+
+**Why:** Different channels have different signal freshness requirements. A scalping channel's signals go stale in 30 seconds; a swing trading channel's signals might be valid for 5 minutes. The current global threshold is a one-size-fits-all compromise.
+
+**Pros:**
+- More accurate staleness filtering per use case
+- Prevents both missed-valid-signals and acted-on-stale-signals
+
+**Cons:**
+- Requires a DB migration to add `max_signal_delay_seconds` nullable int column to `routing_rules`
+- Frontend UI needed to configure it per routing rule
+- Adds complexity to the backfill filter loop (must query routing rules per channel)
+
+**Context:**
+- Backfill currently uses `BACKFILL_MAX_AGE_SECONDS` env var (default 60s) globally
+- To implement: add nullable int column to `routing_rules`, query during backfill, fall back to global default when null
+- The backfill method iterates by channel, not by routing rule — would need to query the *minimum* `max_signal_delay_seconds` across all rules for a given channel
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** Backfill feature (SGM-030) must be merged first
+**Added:** 2026-03-18 (eng review)
 
 ---
 

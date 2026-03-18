@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from datetime import datetime, timezone
 from uuid import UUID
 
 import sentry_sdk
@@ -16,9 +18,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from telethon.errors import FloodWaitError
 
-from src.adapters.db.models import RoutingRuleModel, TelegramSessionModel, UserModel
+from src.adapters.db.models import RoutingRuleModel, SignalLogModel, TelegramSessionModel, UserModel
 from src.adapters.telegram.listener import TelegramListener
 from src.core.interfaces import QueuePort
+from src.core.models import RawSignal
 from src.core.notifications import NotificationPreference
 from src.core.security import decrypt_session_auto
 
@@ -45,6 +48,12 @@ REFRESH_INTERVAL = 30
 
 # Max concurrent listener startups (limits parallel get_dialogs() calls).
 MAX_CONCURRENT_STARTUPS = 3
+
+# Backfill: max age (seconds) for a message to be considered fresh.
+BACKFILL_MAX_AGE_SECONDS = int(os.environ.get("BACKFILL_MAX_AGE_SECONDS", "60"))
+
+# Backfill: max messages to fetch per channel from Telegram history.
+BACKFILL_MESSAGE_LIMIT = int(os.environ.get("BACKFILL_MESSAGE_LIMIT", "20"))
 
 
 class MultiUserListenerManager:
@@ -253,6 +262,14 @@ class MultiUserListenerManager:
             "Listener started for user %s — monitoring %d channel(s)",
             user_id, len(channels),
         )
+
+        # Backfill any signals missed during downtime (best-effort)
+        if channels:
+            asyncio.create_task(
+                self._backfill_missed_signals(user_id, listener, channels),
+                name=f"backfill-{user_id}",
+            )
+
         return True
 
     async def _stop_listener_for_user(self, user_id: UUID) -> None:
@@ -485,6 +502,14 @@ class MultiUserListenerManager:
                 self._failure_counts[user_id] = 0
                 connected += 1
                 logger.info("Reconnected user %s successfully", user_id)
+
+                # Backfill signals missed during disconnection
+                user_channels = self._monitored_channels.get(user_id, set())
+                if user_channels:
+                    asyncio.create_task(
+                        self._backfill_missed_signals(user_id, listener, user_channels),
+                        name=f"backfill-reconnect-{user_id}",
+                    )
             except FloodWaitError as e:
                 logger.warning(
                     "User %s: flood-wait %ds during heartbeat reconnect",
@@ -516,6 +541,175 @@ class MultiUserListenerManager:
             total,
             sum(len(ch) for ch in self._monitored_channels.values()),
         )
+
+    # ------------------------------------------------------------------
+    # Internal: signal backfill on reconnect
+    # ------------------------------------------------------------------
+
+    async def _backfill_missed_signals(
+        self,
+        user_id: UUID,
+        listener: TelegramListener,
+        channels: set[str],
+    ) -> None:
+        """Fetch and enqueue signals that were missed during downtime.
+
+        For each monitored channel:
+        1. Query signal_logs for the highest message_id already processed.
+        2. Fetch messages from Telegram with ID > last_seen_id.
+        3. Filter out stale messages (older than BACKFILL_MAX_AGE_SECONDS).
+        4. Enqueue fresh, unprocessed messages via the queue port.
+
+        This method is best-effort — all errors are caught and logged.
+        No backfill is always safer than wrong backfill.
+        """
+        if not listener._client or not listener.is_connected:
+            return
+
+        total_backfilled = 0
+        total_stale = 0
+        total_duplicate = 0
+        cutoff = datetime.now(timezone.utc).timestamp() - BACKFILL_MAX_AGE_SECONDS
+
+        for channel_id in channels:
+            try:
+                # 1. Find the last processed message_id for this channel+user
+                async with AsyncSession(self._engine, expire_on_commit=False) as db:
+                    result = await db.execute(
+                        select(func.max(SignalLogModel.message_id)).where(
+                            SignalLogModel.channel_id == channel_id,
+                            SignalLogModel.user_id == user_id,
+                        )
+                    )
+                    last_seen_id = result.scalar_one_or_none()
+
+                if last_seen_id is None:
+                    # No prior signal logs for this channel — skip backfill
+                    # (first-ever startup, no baseline to compare against)
+                    logger.debug(
+                        "Backfill: no prior logs for channel %s (user %s), skipping",
+                        channel_id, user_id,
+                    )
+                    continue
+
+                # 2. Fetch recent messages from Telegram history
+                entity = await listener._client.get_entity(int(channel_id))
+                messages = await listener._client.get_messages(
+                    entity,
+                    min_id=last_seen_id,
+                    limit=BACKFILL_MESSAGE_LIMIT,
+                )
+
+                if not messages:
+                    continue
+
+                # 3. Collect message_ids to batch-check for duplicates
+                candidate_ids = [
+                    m.id for m in messages
+                    if m.text and m.id > last_seen_id
+                ]
+                if not candidate_ids:
+                    continue
+
+                # Batch dedup check against signal_logs
+                async with AsyncSession(self._engine, expire_on_commit=False) as db:
+                    result = await db.execute(
+                        select(SignalLogModel.message_id).where(
+                            SignalLogModel.channel_id == channel_id,
+                            SignalLogModel.user_id == user_id,
+                            SignalLogModel.message_id.in_(candidate_ids),
+                        )
+                    )
+                    already_processed = {row[0] for row in result.all()}
+
+                # 4. Filter and enqueue
+                for msg in messages:
+                    if not msg.text or msg.id <= last_seen_id:
+                        continue
+
+                    if msg.id in already_processed:
+                        total_duplicate += 1
+                        continue
+
+                    # Staleness check using Telegram message timestamp
+                    if msg.date and msg.date.timestamp() < cutoff:
+                        total_stale += 1
+                        age_seconds = datetime.now(timezone.utc).timestamp() - msg.date.timestamp()
+                        logger.debug(
+                            "Backfill: stale message %d in channel %s "
+                            "(age=%.0fs, max=%ds)",
+                            msg.id, channel_id, age_seconds,
+                            BACKFILL_MAX_AGE_SECONDS,
+                        )
+                        # Log stale signal to DB for auditability
+                        try:
+                            async with AsyncSession(self._engine, expire_on_commit=False) as db:
+                                db.add(SignalLogModel(
+                                    user_id=user_id,
+                                    message_id=msg.id,
+                                    channel_id=channel_id,
+                                    raw_message=msg.text,
+                                    status="ignored",
+                                    error_message=(
+                                        f"stale_signal: {age_seconds:.0f}s delay "
+                                        f"exceeds {BACKFILL_MAX_AGE_SECONDS}s threshold"
+                                    ),
+                                ))
+                                await db.commit()
+                        except Exception as log_exc:
+                            logger.debug(
+                                "Backfill: failed to log stale signal %d: %s",
+                                msg.id, log_exc,
+                            )
+                        continue
+
+                    # Build and enqueue the signal
+                    reply_to_id = None
+                    if msg.reply_to:
+                        reply_to_id = msg.reply_to.reply_to_msg_id
+
+                    raw_signal = RawSignal(
+                        user_id=user_id,
+                        channel_id=channel_id,
+                        raw_message=msg.text,
+                        message_id=msg.id,
+                        reply_to_msg_id=reply_to_id,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+
+                    try:
+                        await self._queue_port.enqueue(raw_signal)
+                        total_backfilled += 1
+                    except Exception as exc:
+                        logger.error(
+                            "Backfill: failed to enqueue message %d "
+                            "from channel %s: %s",
+                            msg.id, channel_id, exc,
+                        )
+                        sentry_sdk.capture_exception(exc)
+
+            except FloodWaitError as e:
+                logger.warning(
+                    "Backfill: flood-wait %ds for channel %s (user %s), "
+                    "skipping remaining channels",
+                    e.seconds, channel_id, user_id,
+                )
+                _capture_user_exception(e, user_id)
+                break  # Stop backfilling to avoid further rate-limiting
+            except Exception as exc:
+                logger.warning(
+                    "Backfill: error processing channel %s (user %s): %s",
+                    channel_id, user_id, exc,
+                )
+                _capture_user_exception(exc, user_id)
+                continue  # Try next channel
+
+        if total_backfilled or total_stale or total_duplicate:
+            logger.info(
+                "Backfill complete for user %s: "
+                "%d enqueued, %d stale-filtered, %d duplicate-filtered",
+                user_id, total_backfilled, total_stale, total_duplicate,
+            )
 
     # ------------------------------------------------------------------
     # Internal: database helpers
