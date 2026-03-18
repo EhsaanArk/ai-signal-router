@@ -37,6 +37,8 @@ Respond ONLY with a JSON object — no markdown, no commentary.
   "new_sl": <number | null>,
   "new_tp": <number | null>,
   "trailing_sl_pips": <integer | null>,
+  "take_profit_pips": [<integer>, ...],
+  "stop_loss_pips": <integer | null>,
   "source_asset_class": "<'forex' | 'crypto' | 'indices' | 'commodities'>",
   "is_valid_signal": <true | false>,
   "ignore_reason": "<string | null — reason if is_valid_signal is false>"
@@ -112,6 +114,11 @@ Entry signals are never combined with follow-up actions — if the message is cl
 - "SL", "Stop Loss", "❌" → stop_loss
 - If only one TP is mentioned, still return it as a single-element array.
 - entry_price can be null for market orders where no specific price is given.
+- **Pip-based values:** If TP or SL is given in pips (e.g., "SL 30 pips", "TP1 50 pips TP2 100 pips"),
+  populate `take_profit_pips` and/or `stop_loss_pips` with the integer pip values.
+  Use price fields (take_profits, stop_loss) when actual price levels are given.
+  Use pip fields (take_profit_pips, stop_loss_pips) when values are in pips.
+  Both can be populated if the message provides both formats.
 
 ## Emoji / Formatting Handling
 
@@ -200,6 +207,8 @@ class OpenAISignalParser:
                 new_sl=data.get("new_sl"),
                 new_tp=data.get("new_tp"),
                 trailing_sl_pips=data.get("trailing_sl_pips"),
+                take_profit_pips=data.get("take_profit_pips") or [],
+                stop_loss_pips=data.get("stop_loss_pips"),
                 source_asset_class=data.get("source_asset_class") or "forex",
                 is_valid_signal=data.get("is_valid_signal", False),
                 ignore_reason=data.get("ignore_reason"),

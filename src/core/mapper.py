@@ -42,7 +42,7 @@ from src.core.models import (
 
 
 # Fields that should be stripped from the template for management actions
-_ENTRY_ONLY_FIELDS = {"price", "takeProfits", "stopLoss", "balance"}
+_ENTRY_ONLY_FIELDS = {"price", "takeProfits", "takeProfitsPips", "stopLoss", "stopLossPips", "balance"}
 
 
 # ---------------------------------------------------------------------------
@@ -75,10 +75,11 @@ def _signal_action(signal: ParsedSignal) -> SignalAction:
     """
     action = signal.action
     if action == "entry":
+        is_limit = signal.order_type == "limit"
         if signal.direction == "long":
-            return SignalAction.start_long
+            return SignalAction.start_long_limit if is_limit else SignalAction.start_long
         elif signal.direction == "short":
-            return SignalAction.start_short
+            return SignalAction.start_short_limit if is_limit else SignalAction.start_short
         raise ValueError(f"Unsupported direction: {signal.direction}")
     if action == "partial_close":
         # Choose lot-based or percentage-based depending on signal data
@@ -112,7 +113,10 @@ def _strip_entry_fields(payload: dict) -> dict:
 def _inject_management_fields(payload: dict, signal: ParsedSignal, action: SignalAction) -> dict:
     """Add forex management-specific fields to the payload."""
     if action == SignalAction.partial_close_lot:
-        payload["lotSize"] = signal.lots or "0.5"
+        try:
+            payload["lotSize"] = float(signal.lots) if signal.lots else 0.5
+        except (ValueError, TypeError):
+            payload["lotSize"] = 0.5
         payload.pop("lots", None)
     elif action == SignalAction.partial_close_pct:
         payload["percentage"] = signal.percentage or 50
@@ -243,8 +247,12 @@ def build_webhook_payload(
             payload["price"] = str(signal.entry_price) if signal.entry_price is not None else ""
         if "takeProfits" in payload and not payload["takeProfits"]:
             payload["takeProfits"] = signal.take_profits
+        if "takeProfitsPips" in payload and not payload["takeProfitsPips"]:
+            payload["takeProfitsPips"] = signal.take_profit_pips or []
         if "stopLoss" in payload and not payload["stopLoss"]:
             payload["stopLoss"] = signal.stop_loss
+        if "stopLossPips" in payload and not payload["stopLossPips"]:
+            payload["stopLossPips"] = signal.stop_loss_pips
     return payload
 
 

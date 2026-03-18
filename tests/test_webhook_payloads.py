@@ -222,11 +222,11 @@ class TestV2SpecialActions:
         payload = WebhookPayloadV2(
             type=SignalAction.partial_close_lot,
             assistId=SAMPLE_ASSIST_ID,
-            lots="0.5",
+            lots=0.5,
         )
         dumped = payload.model_dump(exclude_none=True)
         assert dumped["type"] == "partially_close_by_lot"
-        assert dumped["lots"] == "0.5"
+        assert dumped["lots"] == 0.5
 
     def test_partially_close_requires_lots(self):
         """partially_close_by_lot without ``lots`` must raise ValidationError."""
@@ -466,3 +466,148 @@ class TestEndToEndPayloadConstruction:
         reconstituted = json.loads(first_json)
         second_json = json.dumps(reconstituted, sort_keys=True)
         assert first_json == second_json
+
+
+# =====================================================================
+# 8. V2 limit order types
+# =====================================================================
+
+
+class TestV2LimitOrders:
+    """Verify limit order type mapping from ParsedSignal.order_type."""
+
+    def test_v2_limit_long_type(self):
+        """Limit long signal must produce start_long_limit_deal."""
+        signal = _make_signal(order_type="limit", direction="long")
+        rule = _make_rule("V2")
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "start_long_limit_deal"
+
+    def test_v2_limit_short_type(self):
+        """Limit short signal must produce start_short_limit_deal."""
+        signal = _make_signal(order_type="limit", direction="short")
+        rule = _make_rule("V2")
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "start_short_limit_deal"
+
+    def test_v1_limit_long_type(self):
+        """V1 limit long should also map correctly."""
+        signal = _make_signal(order_type="limit", direction="long")
+        rule = _make_rule("V1")
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "start_long_limit_deal"
+
+    def test_v1_limit_short_type(self):
+        """V1 limit short should also map correctly."""
+        signal = _make_signal(order_type="limit", direction="short")
+        rule = _make_rule("V1")
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "start_short_limit_deal"
+
+    def test_market_order_type_unchanged(self):
+        """Market orders should still produce market deal types."""
+        signal = _make_signal(order_type="market", direction="long")
+        rule = _make_rule("V2")
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "start_long_market_deal"
+
+
+# =====================================================================
+# 9. V2 pip-based TP/SL fields
+# =====================================================================
+
+
+class TestV2PipFields:
+    """Verify pip-based take profit and stop loss fields in V2 payloads."""
+
+    def test_v2_take_profit_pips_preserved_from_template(self):
+        """takeProfitsPips set in template should be preserved."""
+        template = {
+            **_DEFAULT_V2_TEMPLATE,
+            "takeProfitsPips": [30, 60],
+        }
+        signal = _make_signal()
+        rule = _make_rule("V2", webhook_body_template=template)
+        payload = build_webhook_payload(signal, rule)
+        assert payload["takeProfitsPips"] == [30, 60]
+
+    def test_v2_stop_loss_pips_preserved_from_template(self):
+        """stopLossPips set in template should be preserved."""
+        template = {
+            **_DEFAULT_V2_TEMPLATE,
+            "stopLossPips": 30,
+        }
+        signal = _make_signal()
+        rule = _make_rule("V2", webhook_body_template=template)
+        payload = build_webhook_payload(signal, rule)
+        assert payload["stopLossPips"] == 30
+
+    def test_v2_pip_fields_filled_from_signal(self):
+        """Empty pip fields in template should be filled from signal data."""
+        template = {
+            **_DEFAULT_V2_TEMPLATE,
+            "takeProfitsPips": [],
+            "stopLossPips": None,
+        }
+        signal = _make_signal(
+            take_profit_pips=[15, 30, 45],
+            stop_loss_pips=20,
+        )
+        rule = _make_rule("V2", webhook_body_template=template)
+        payload = build_webhook_payload(signal, rule)
+        assert payload["takeProfitsPips"] == [15, 30, 45]
+        assert payload["stopLossPips"] == 20
+
+    def test_v2_pip_fields_not_added_if_not_in_template(self):
+        """Pip fields should NOT be added if the template doesn't have them."""
+        signal = _make_signal(take_profit_pips=[30], stop_loss_pips=20)
+        rule = _make_rule("V2")  # default template has no pip fields
+        payload = build_webhook_payload(signal, rule)
+        assert "takeProfitsPips" not in payload
+        assert "stopLossPips" not in payload
+
+    def test_v2_balance_and_lots_preserved(self):
+        """balance and lots from template should be preserved in entry."""
+        template = {
+            **_DEFAULT_V2_TEMPLATE,
+            "balance": 1000,
+            "lots": 1,
+        }
+        signal = _make_signal()
+        rule = _make_rule("V2", webhook_body_template=template)
+        payload = build_webhook_payload(signal, rule)
+        assert payload["balance"] == 1000
+        assert payload["lots"] == 1
+
+
+# =====================================================================
+# 10. lotSize type compliance
+# =====================================================================
+
+
+class TestLotSizeType:
+    """Verify lotSize is sent as a float per SageMaster spec."""
+
+    def test_partial_close_lot_size_is_float(self):
+        """lotSize in partial close payload must be a float."""
+        signal = _make_signal(action="partial_close", lots="0.3")
+        rule = _make_rule("V2")
+        payload = build_webhook_payload(signal, rule)
+        assert isinstance(payload["lotSize"], float)
+        assert payload["lotSize"] == 0.3
+
+    def test_partial_close_lot_size_default_is_float(self):
+        """Default lotSize when signal.lots is None must be a float."""
+        signal = _make_signal(action="partial_close", lots=None)
+        rule = _make_rule("V2")
+        payload = build_webhook_payload(signal, rule)
+        assert isinstance(payload["lotSize"], float)
+        assert payload["lotSize"] == 0.5
+
+    def test_partial_close_lot_size_non_numeric_fallback(self):
+        """Non-numeric lots string should fall back to 0.5 float."""
+        signal = _make_signal(action="partial_close", lots="half")
+        rule = _make_rule("V2")
+        payload = build_webhook_payload(signal, rule)
+        assert isinstance(payload["lotSize"], float)
+        assert payload["lotSize"] == 0.5
