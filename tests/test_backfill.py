@@ -14,9 +14,9 @@ from uuid import UUID
 
 import pytest
 
-from src.adapters.telegram.manager import (
+from src.adapters.telegram.backfill import (
     BACKFILL_MAX_AGE_SECONDS,
-    MultiUserListenerManager,
+    backfill_missed_signals,
 )
 from src.core.models import RawSignal
 
@@ -26,19 +26,6 @@ FAKE_ENC_KEY = b"dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleXk="
 
 USER_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 CHANNEL_1 = "1234567890"
-
-
-def _make_manager(**overrides) -> MultiUserListenerManager:
-    """Create a manager with mocked engine and default settings."""
-    defaults = dict(
-        api_id=FAKE_API_ID,
-        api_hash=FAKE_API_HASH,
-        queue_port=AsyncMock(),
-        engine=MagicMock(),
-        enc_key=FAKE_ENC_KEY,
-    )
-    defaults.update(overrides)
-    return MultiUserListenerManager(**defaults)
 
 
 def _make_telegram_message(
@@ -70,20 +57,29 @@ def _mock_listener() -> MagicMock:
     return listener
 
 
+def _mock_repo() -> MagicMock:
+    """Create a mock TelegramSessionRepository for backfill tests."""
+    repo = MagicMock()
+    repo.get_last_message_id = AsyncMock(return_value=None)
+    repo.get_processed_message_ids = AsyncMock(return_value=set())
+    repo.log_stale_signal = AsyncMock()
+    return repo
+
+
 # -----------------------------------------------------------------------
 # Backfill tests
 # -----------------------------------------------------------------------
 
 
 class TestBackfillMissedSignals:
-    """Tests for _backfill_missed_signals()."""
+    """Tests for backfill_missed_signals()."""
 
     @pytest.mark.asyncio
     async def test_backfill_enqueues_missed_messages(self):
         """Messages with ID > last_seen_id that are fresh and not yet
         processed should be enqueued."""
         queue = AsyncMock()
-        manager = _make_manager(queue_port=queue)
+        repo = _mock_repo()
         listener = _mock_listener()
 
         # Telegram returns 3 messages, IDs 101, 102, 103
@@ -95,37 +91,12 @@ class TestBackfillMissedSignals:
         listener._client.get_messages = AsyncMock(return_value=messages)
 
         # Mock DB: last_seen_id = 100, no duplicates
-        with patch.object(manager, "_engine") as mock_engine:
-            # First DB call: MAX(message_id) returns 100
-            mock_session_ctx = AsyncMock()
-            mock_session = AsyncMock()
+        repo.get_last_message_id = AsyncMock(return_value=100)
+        repo.get_processed_message_ids = AsyncMock(return_value=set())
 
-            # Track call count to return different results
-            call_count = 0
-
-            async def mock_execute(query):
-                nonlocal call_count
-                call_count += 1
-                result = MagicMock()
-                if call_count == 1:
-                    # MAX(message_id) query
-                    result.scalar_one_or_none.return_value = 100
-                else:
-                    # Dedup IN query — none already processed
-                    result.all.return_value = []
-                return result
-
-            mock_session.execute = mock_execute
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=False)
-
-            with patch(
-                "src.adapters.telegram.manager.AsyncSession",
-                return_value=mock_session,
-            ):
-                await manager._backfill_missed_signals(
-                    USER_A, listener, {CHANNEL_1},
-                )
+        await backfill_missed_signals(
+            USER_A, listener, {CHANNEL_1}, repo, queue,
+        )
 
         # All 3 messages should be enqueued (all fresh, all > 100)
         assert queue.enqueue.call_count == 3
@@ -139,7 +110,7 @@ class TestBackfillMissedSignals:
     async def test_backfill_filters_stale_messages(self):
         """Messages older than BACKFILL_MAX_AGE_SECONDS should be dropped."""
         queue = AsyncMock()
-        manager = _make_manager(queue_port=queue)
+        repo = _mock_repo()
         listener = _mock_listener()
 
         # 1 fresh (10s old), 1 stale (120s old — beyond default 60s)
@@ -149,40 +120,25 @@ class TestBackfillMissedSignals:
         ]
         listener._client.get_messages = AsyncMock(return_value=messages)
 
-        with patch(
-            "src.adapters.telegram.manager.AsyncSession",
-        ) as MockSession:
-            mock_session = AsyncMock()
-            call_count = 0
+        repo.get_last_message_id = AsyncMock(return_value=100)
+        repo.get_processed_message_ids = AsyncMock(return_value=set())
 
-            async def mock_execute(query):
-                nonlocal call_count
-                call_count += 1
-                result = MagicMock()
-                if call_count == 1:
-                    result.scalar_one_or_none.return_value = 100
-                else:
-                    result.all.return_value = []
-                return result
-
-            mock_session.execute = mock_execute
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=False)
-            MockSession.return_value = mock_session
-
-            await manager._backfill_missed_signals(
-                USER_A, listener, {CHANNEL_1},
-            )
+        await backfill_missed_signals(
+            USER_A, listener, {CHANNEL_1}, repo, queue,
+        )
 
         # Only the fresh message should be enqueued
         assert queue.enqueue.call_count == 1
         assert queue.enqueue.call_args[0][0].message_id == 102
 
+        # Stale signal should have been logged
+        repo.log_stale_signal.assert_awaited_once()
+
     @pytest.mark.asyncio
     async def test_backfill_skips_already_processed(self):
         """Messages that already exist in signal_logs should be skipped."""
         queue = AsyncMock()
-        manager = _make_manager(queue_port=queue)
+        repo = _mock_repo()
         listener = _mock_listener()
 
         messages = [
@@ -192,31 +148,13 @@ class TestBackfillMissedSignals:
         ]
         listener._client.get_messages = AsyncMock(return_value=messages)
 
-        with patch(
-            "src.adapters.telegram.manager.AsyncSession",
-        ) as MockSession:
-            mock_session = AsyncMock()
-            call_count = 0
+        repo.get_last_message_id = AsyncMock(return_value=100)
+        # Message 101 and 102 already processed
+        repo.get_processed_message_ids = AsyncMock(return_value={101, 102})
 
-            async def mock_execute(query):
-                nonlocal call_count
-                call_count += 1
-                result = MagicMock()
-                if call_count == 1:
-                    result.scalar_one_or_none.return_value = 100
-                else:
-                    # Message 101 and 102 already processed
-                    result.all.return_value = [(101,), (102,)]
-                return result
-
-            mock_session.execute = mock_execute
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=False)
-            MockSession.return_value = mock_session
-
-            await manager._backfill_missed_signals(
-                USER_A, listener, {CHANNEL_1},
-            )
+        await backfill_missed_signals(
+            USER_A, listener, {CHANNEL_1}, repo, queue,
+        )
 
         # Only message 103 should be enqueued
         assert queue.enqueue.call_count == 1
@@ -227,28 +165,15 @@ class TestBackfillMissedSignals:
         """When there are no prior signal_logs for a channel (first-ever
         startup), backfill should be skipped for that channel."""
         queue = AsyncMock()
-        manager = _make_manager(queue_port=queue)
+        repo = _mock_repo()
         listener = _mock_listener()
 
-        with patch(
-            "src.adapters.telegram.manager.AsyncSession",
-        ) as MockSession:
-            mock_session = AsyncMock()
+        # MAX(message_id) returns None — no prior logs
+        repo.get_last_message_id = AsyncMock(return_value=None)
 
-            async def mock_execute(query):
-                result = MagicMock()
-                # MAX(message_id) returns None — no prior logs
-                result.scalar_one_or_none.return_value = None
-                return result
-
-            mock_session.execute = mock_execute
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=False)
-            MockSession.return_value = mock_session
-
-            await manager._backfill_missed_signals(
-                USER_A, listener, {CHANNEL_1},
-            )
+        await backfill_missed_signals(
+            USER_A, listener, {CHANNEL_1}, repo, queue,
+        )
 
         # No messages should be fetched or enqueued
         listener._client.get_messages.assert_not_called()
@@ -256,38 +181,25 @@ class TestBackfillMissedSignals:
 
     @pytest.mark.asyncio
     async def test_backfill_flood_wait_handled(self):
-        """FloodWaitError during iter_messages should be caught and
+        """FloodWaitError during get_entity should be caught and
         remaining channels skipped."""
         from telethon.errors import FloodWaitError
 
         queue = AsyncMock()
-        manager = _make_manager(queue_port=queue)
+        repo = _mock_repo()
         listener = _mock_listener()
+
+        repo.get_last_message_id = AsyncMock(return_value=100)
 
         # get_entity raises FloodWaitError
         listener._client.get_entity = AsyncMock(
             side_effect=FloodWaitError(request=None, capture=30),
         )
 
-        with patch(
-            "src.adapters.telegram.manager.AsyncSession",
-        ) as MockSession:
-            mock_session = AsyncMock()
-
-            async def mock_execute(query):
-                result = MagicMock()
-                result.scalar_one_or_none.return_value = 100
-                return result
-
-            mock_session.execute = mock_execute
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=False)
-            MockSession.return_value = mock_session
-
-            # Should not raise
-            await manager._backfill_missed_signals(
-                USER_A, listener, {CHANNEL_1, "9999999"},
-            )
+        # Should not raise
+        await backfill_missed_signals(
+            USER_A, listener, {CHANNEL_1, "9999999"}, repo, queue,
+        )
 
         queue.enqueue.assert_not_called()
 
@@ -296,8 +208,10 @@ class TestBackfillMissedSignals:
         """If a channel was deleted, get_entity raises an exception.
         Backfill should skip that channel and continue to the next."""
         queue = AsyncMock()
-        manager = _make_manager(queue_port=queue)
+        repo = _mock_repo()
         listener = _mock_listener()
+
+        repo.get_last_message_id = AsyncMock(return_value=100)
 
         # First channel raises, but we need to test it continues
         call_count = 0
@@ -312,37 +226,21 @@ class TestBackfillMissedSignals:
         listener._client.get_entity = mock_get_entity
         listener._client.get_messages = AsyncMock(return_value=[])
 
-        with patch(
-            "src.adapters.telegram.manager.AsyncSession",
-        ) as MockSession:
-            mock_session = AsyncMock()
-
-            async def mock_execute(query):
-                result = MagicMock()
-                result.scalar_one_or_none.return_value = 100
-                result.all.return_value = []
-                return result
-
-            mock_session.execute = mock_execute
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=False)
-            MockSession.return_value = mock_session
-
-            # Should not raise — graceful skip
-            await manager._backfill_missed_signals(
-                USER_A, listener, {CHANNEL_1, "9999999"},
-            )
+        # Should not raise — graceful skip
+        await backfill_missed_signals(
+            USER_A, listener, {CHANNEL_1, "9999999"}, repo, queue,
+        )
 
     @pytest.mark.asyncio
     async def test_backfill_disconnected_listener_skips(self):
         """If the listener is disconnected, backfill should be a no-op."""
         queue = AsyncMock()
-        manager = _make_manager(queue_port=queue)
+        repo = _mock_repo()
         listener = _mock_listener()
         listener.is_connected = False
 
-        await manager._backfill_missed_signals(
-            USER_A, listener, {CHANNEL_1},
+        await backfill_missed_signals(
+            USER_A, listener, {CHANNEL_1}, repo, queue,
         )
 
         listener._client.get_entity.assert_not_called()
@@ -357,7 +255,7 @@ class TestBackfillMissedSignals:
         queue.enqueue = AsyncMock(
             side_effect=[Exception("QStash 500"), None],
         )
-        manager = _make_manager(queue_port=queue)
+        repo = _mock_repo()
         listener = _mock_listener()
 
         messages = [
@@ -366,30 +264,12 @@ class TestBackfillMissedSignals:
         ]
         listener._client.get_messages = AsyncMock(return_value=messages)
 
-        with patch(
-            "src.adapters.telegram.manager.AsyncSession",
-        ) as MockSession:
-            mock_session = AsyncMock()
-            call_count = 0
+        repo.get_last_message_id = AsyncMock(return_value=100)
+        repo.get_processed_message_ids = AsyncMock(return_value=set())
 
-            async def mock_execute(query):
-                nonlocal call_count
-                call_count += 1
-                result = MagicMock()
-                if call_count == 1:
-                    result.scalar_one_or_none.return_value = 100
-                else:
-                    result.all.return_value = []
-                return result
-
-            mock_session.execute = mock_execute
-            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session.__aexit__ = AsyncMock(return_value=False)
-            MockSession.return_value = mock_session
-
-            await manager._backfill_missed_signals(
-                USER_A, listener, {CHANNEL_1},
-            )
+        await backfill_missed_signals(
+            USER_A, listener, {CHANNEL_1}, repo, queue,
+        )
 
         # Both messages should have been attempted
         assert queue.enqueue.call_count == 2
