@@ -31,6 +31,39 @@ Built in `feature/SGM-030-signal-backfill-on-reconnect`. Includes dedup check in
 
 ---
 
+## P1 — Zero-downtime deploy: prevent session invalidation on redeploy
+
+**What:** Prevent Railway redeploys from invalidating users' Telegram sessions. Currently, when Railway replaces the Listener container, the old and new instances briefly overlap — both try to use the same MTProto session simultaneously, causing Telegram to throw `AuthKeyDuplicatedError` and permanently invalidate the session. Affected users must re-authenticate from scratch.
+
+**Why:** Every staging/production deploy risks disconnecting users from their Telegram accounts. On the 2026-03-18 deploy (PR #52), 4 out of 7 users lost their sessions. This is unacceptable for a trading signal copier — users miss trades and must manually reconnect. Our deploys should never break user connections.
+
+**Pros:**
+- Users never lose their Telegram connection due to our deploys
+- Builds trust — "it just works" even during maintenance
+- Eliminates support burden of telling users to reconnect after every deploy
+
+**Cons:**
+- Requires understanding Railway's container replacement behavior
+- May need coordination between old/new container (graceful handoff)
+- Some approaches add infrastructure complexity (e.g., leader election, session locking)
+
+**Context:**
+- Root cause: Railway spins up the new container before killing the old one (rolling deploy). Both containers connect to Telegram using the same session string, triggering Telegram's `AuthKeyDuplicatedError` (duplicate auth key on two IPs).
+- Possible solutions:
+  1. **Graceful shutdown with delay**: On SIGTERM, immediately disconnect all Telethon clients (release sessions) BEFORE the new container starts connecting. Add a startup delay in the new container to ensure the old one has fully released.
+  2. **Session locking via Redis**: Use a distributed lock (Redis `SET NX EX`) per user session. Old container releases lock on shutdown, new container waits for lock before connecting. Prevents two containers from using the same session simultaneously.
+  3. **Railway deploy strategy**: Configure Railway to use "recreate" instead of "rolling" deploy strategy for the Listener service — kill old before starting new. Trades a few seconds of downtime for zero session conflicts (backfill covers the gap).
+  4. **Startup coordination**: New container checks if old container is still running (via Redis heartbeat) and waits before connecting Telegram clients.
+- The backfill mechanism (PR #49) already handles signal gaps during the restart window, so a brief downtime between old-stop and new-start is acceptable.
+- Solution 3 (recreate strategy) is likely the simplest and most reliable — investigate Railway's deploy configuration options first.
+
+**Effort:** S-M (human) → S (CC) — depending on chosen approach
+**Priority:** P1 — every deploy is a risk until this is fixed
+**Depends on:** Nothing — can be built independently
+**Added:** 2026-03-18 (post-deploy observation, PR #52)
+
+---
+
 ## P3 — Per-routing-rule staleness override for backfill
 
 **What:** Allow each routing rule to set its own `max_signal_delay_seconds`, overriding the global `BACKFILL_MAX_AGE_SECONDS` (60s default).
@@ -58,28 +91,9 @@ Built in `feature/SGM-030-signal-backfill-on-reconnect`. Includes dedup check in
 
 ---
 
-## P2 — Sentry heartbeat metrics for listener health
+## ~~P2 — Sentry heartbeat metrics for listener health~~ DONE (PR #52)
 
-**What:** Add Sentry breadcrumbs and structured context to the heartbeat loop so listener health is visible in Sentry dashboards.
-
-**Why:** Currently the heartbeat only logs to stdout. If a user reports "my signals stopped working", the only way to investigate is to check Railway logs. Sentry breadcrumbs would make this visible in the error context trail.
-
-**Pros:**
-- Listener health visible in Sentry without log diving
-- User-scoped Sentry context already exists (`_capture_user_exception`)
-
-**Cons:**
-- Sentry breadcrumb volume could be high (every 30s × N users)
-
-**Context:**
-- Use `sentry_sdk.add_breadcrumb()` in `_heartbeat()` with category="telegram.heartbeat"
-- Set Sentry context tags: `telegram.listeners.total`, `telegram.listeners.connected`
-- Consider: only emit breadcrumbs when state changes (not every 30s)
-
-**Effort:** S
-**Priority:** P2
-**Depends on:** Nothing
-**Added:** 2026-03-17 (CEO plan review)
+Shipped in PR #52. Sentry breadcrumbs added to `_heartbeat()` with category `telegram.heartbeat`, including connected/total listener counts and channel count.
 
 ---
 
