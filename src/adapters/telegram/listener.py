@@ -408,8 +408,18 @@ if __name__ == "__main__":
                 pass
             finally:
                 logger.info("Shutting down — disconnecting all Telegram clients...")
-                await manager.stop()
-                logger.info("All clients disconnected. Exiting cleanly.")
+                try:
+                    # Give manager 25s to disconnect all clients.  Railway
+                    # sends SIGKILL after gracefulShutdownTimeoutSeconds (30s
+                    # in railway.toml).  The 5s buffer ensures we log a clean
+                    # exit rather than being killed mid-disconnect.
+                    await asyncio.wait_for(manager.stop(), timeout=25.0)
+                    logger.info("All clients disconnected. Exiting cleanly.")
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Shutdown timed out after 25s — "
+                        "some clients may not have disconnected cleanly."
+                    )
 
     logging.basicConfig(level=logging.INFO)
     asyncio.run(_main())

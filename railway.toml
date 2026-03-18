@@ -1,0 +1,6 @@
+[deploy]
+# Give the listener enough time to cleanly disconnect all Telethon
+# clients on SIGTERM.  Default is 10s which is too short when multiple
+# MTProto sessions need to send disconnect packets to Telegram servers.
+# With 7+ users, 30s provides a safe margin.
+gracefulShutdownTimeoutSeconds = 30
