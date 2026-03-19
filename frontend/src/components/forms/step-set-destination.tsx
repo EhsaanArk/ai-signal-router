@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { TemplateBuilder, sanitizeTradingViewJson } from "./template-builder";
+import { TemplateBuilder, sanitizeTradingViewJson, validateRequiredFields } from "./template-builder";
 import { apiFetch } from "@/lib/api";
 import { cn, extractAccountIdFromUrl, extractTemplateMetadata } from "@/lib/utils";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
@@ -185,6 +185,19 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
       }
     }
     setTemplateError("");
+
+    // Validate required fields for SageMaster destinations
+    if (destinationType !== "custom" && parsedTemplate) {
+      const missing = validateRequiredFields(
+        JSON.stringify(parsedTemplate),
+        destinationType,
+        version,
+      );
+      if (missing.length > 0) {
+        setTemplateError(`Missing required fields: ${missing.join(", ")}`);
+        return;
+      }
+    }
 
     // Update the template text to the sanitized version so what we store
     // matches what we parsed (TradingView placeholders replaced with defaults)
@@ -524,6 +537,8 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
           value={templateText}
           onChange={handleTemplateChange}
           error={templateError}
+          destinationType={destinationType}
+          payloadVersion={version}
         />
       )}
 
