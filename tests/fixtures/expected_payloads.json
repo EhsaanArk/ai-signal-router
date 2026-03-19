@@ -3,8 +3,10 @@
     "id": "SIGNAL 1",
     "parsed": {
       "status": "success",
+      "action": "entry",
       "symbol": "EURUSD",
       "direction": "BUY",
+      "order_type": "market",
       "entry_price": 1.1000,
       "stop_loss": 1.0950,
       "take_profits": [1.1050, 1.1100]
@@ -14,8 +16,10 @@
     "id": "SIGNAL 2",
     "parsed": {
       "status": "success",
-      "symbol": "GOLD",
+      "action": "entry",
+      "symbol": "XAUUSD",
       "direction": "SELL",
+      "order_type": "market",
       "entry_price": null,
       "stop_loss": 2020.0,
       "take_profits": [2000.0]
@@ -32,8 +36,10 @@
     "id": "SIGNAL 4",
     "parsed": {
       "status": "success",
+      "action": "entry",
       "symbol": "BTC/USDT",
       "direction": "SELL",
+      "order_type": "market",
       "entry_price": 65000.0,
       "stop_loss": 66000.0,
       "take_profits": [60000.0]
@@ -42,16 +48,21 @@
   {
     "id": "SIGNAL 5",
     "parsed": {
-      "status": "ignored",
-      "reason": "Trade management update, not a new entry signal."
+      "status": "success",
+      "action": "partial_close",
+      "symbol": "EURUSD",
+      "direction": "BUY",
+      "percentage": 50
     }
   },
   {
     "id": "SIGNAL 6",
     "parsed": {
       "status": "success",
+      "action": "entry",
       "symbol": "GBPJPY",
       "direction": "BUY",
+      "order_type": "market",
       "entry_price": 190.50,
       "stop_loss": 190.00,
       "take_profits": [191.50]
@@ -61,8 +72,10 @@
     "id": "SIGNAL 7",
     "parsed": {
       "status": "success",
+      "action": "entry",
       "symbol": "AUDCAD",
       "direction": "BUY",
+      "order_type": "market",
       "entry_price": 0.8900,
       "stop_loss": 0.8850,
       "take_profits": [0.8950, 0.9000]
@@ -79,8 +92,10 @@
     "id": "SIGNAL 9",
     "parsed": {
       "status": "success",
+      "action": "entry",
       "symbol": "XAUUSD",
       "direction": "SELL",
+      "order_type": "market",
       "entry_price": 2350.50,
       "stop_loss": 2360.00,
       "take_profits": [2330.00]
@@ -90,11 +105,165 @@
     "id": "SIGNAL 10",
     "parsed": {
       "status": "success",
+      "action": "entry",
       "symbol": "USDJPY",
       "direction": "BUY",
+      "order_type": "market",
       "entry_price": 150.20,
       "stop_loss": 149.80,
       "take_profits": [151.00]
+    }
+  },
+  {
+    "id": "SIGNAL 11",
+    "parsed": {
+      "status": "success",
+      "action": "partial_close",
+      "symbol": "EURUSD",
+      "direction": "BUY",
+      "percentage": 50
+    }
+  },
+  {
+    "id": "SIGNAL 12",
+    "parsed": {
+      "status": "success",
+      "action": "breakeven",
+      "symbol": "XAUUSD"
+    }
+  },
+  {
+    "id": "SIGNAL 13",
+    "parsed": {
+      "status": "success",
+      "action": "close_position",
+      "symbol": "GBPJPY"
+    }
+  },
+  {
+    "id": "SIGNAL 14",
+    "parsed": {
+      "status": "success",
+      "action": "modify_sl",
+      "symbol": "EURUSD",
+      "new_sl": 1.0980
+    }
+  },
+  {
+    "id": "SIGNAL 15",
+    "parsed": {
+      "status": "success",
+      "action": "partial_close",
+      "symbol": "BTCUSD",
+      "direction": "BUY",
+      "percentage": 50
+    }
+  },
+  {
+    "id": "SIGNAL 16",
+    "parsed": {
+      "status": "success",
+      "action": "entry",
+      "symbol": "EURUSD",
+      "direction": "BUY",
+      "order_type": "limit",
+      "entry_price": 1.0950,
+      "stop_loss": 1.0900,
+      "take_profits": [1.1000, 1.1050]
+    }
+  },
+  {
+    "id": "SIGNAL 17",
+    "parsed": {
+      "status": "success",
+      "action": "entry",
+      "symbol": "GBPUSD",
+      "direction": "SELL",
+      "order_type": "stop",
+      "entry_price": 1.2450,
+      "stop_loss": 1.2500,
+      "take_profits": [1.2350]
+    }
+  },
+  {
+    "id": "SIGNAL 18",
+    "parsed": {
+      "status": "success",
+      "action": "trailing_sl",
+      "symbol": "XAUUSD",
+      "trailing_sl_pips": 30
+    }
+  },
+  {
+    "id": "SIGNAL 19",
+    "parsed": {
+      "status": "success",
+      "action": "modify_tp",
+      "symbol": "EURUSD",
+      "new_tp": 1.1200
+    }
+  },
+  {
+    "id": "SIGNAL 20",
+    "parsed": {
+      "status": "success",
+      "action": "entry",
+      "symbol": "XAUUSD",
+      "direction": "BUY",
+      "order_type": "market",
+      "take_profit_pips": [50, 100],
+      "stop_loss_pips": 30
+    }
+  },
+  {
+    "id": "SIGNAL 21",
+    "parsed": {
+      "status": "success",
+      "action": "entry",
+      "symbol": "US30",
+      "direction": "SELL",
+      "order_type": "market",
+      "entry_price": 39500,
+      "stop_loss": 39700,
+      "take_profits": [39000]
+    }
+  },
+  {
+    "id": "SIGNAL 22",
+    "parsed": {
+      "status": "success",
+      "action": "extra_order",
+      "symbol": "BTC/USDT",
+      "direction": "BUY",
+      "is_market": false,
+      "order_price": 62000
+    }
+  },
+  {
+    "id": "SIGNAL 23",
+    "parsed": {
+      "status": "success",
+      "action": "extra_order",
+      "symbol": "ETH/USDT",
+      "direction": "BUY",
+      "is_market": true
+    }
+  },
+  {
+    "id": "SIGNAL 24",
+    "parsed": {
+      "status": "success",
+      "action": "partial_close",
+      "symbol": "GBPJPY",
+      "direction": "BUY",
+      "lots": "0.3"
+    }
+  },
+  {
+    "id": "SIGNAL 25",
+    "parsed": {
+      "status": "ignored",
+      "reason": "Emoji-only message, no trading signal."
     }
   }
 ]

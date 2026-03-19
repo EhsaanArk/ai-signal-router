@@ -4,8 +4,8 @@ SL: 1.0950
 TP1: 1.1050
 TP2: 1.1100
 --- SIGNAL 2 ---
-Selling GOLD now. 
-SL 2020. 
+Selling GOLD now.
+SL 2020.
 TP 2000.
 --- SIGNAL 3 ---
 Good morning VIPs! Huge news coming out today, stay safe.
@@ -51,3 +51,34 @@ Close all GBPJPY positions, market has reversed.
 Update SL on EURUSD to 1.0980
 --- SIGNAL 15 ---
 TP1 hit on BTCUSD! Close 50% and let the rest run to TP2.
+--- SIGNAL 16 ---
+Buy limit EURUSD @ 1.0950
+SL: 1.0900
+TP1: 1.1000
+TP2: 1.1050
+--- SIGNAL 17 ---
+Sell stop GBPUSD @ 1.2450
+SL: 1.2500
+TP: 1.2350
+--- SIGNAL 18 ---
+Set trailing stop on XAUUSD at 30 pips.
+--- SIGNAL 19 ---
+Update TP on EURUSD to 1.1200
+--- SIGNAL 20 ---
+🟢 GOLD BUY NOW
+SL 30 pips
+TP1 50 pips
+TP2 100 pips
+--- SIGNAL 21 ---
+SHORT US30
+Entry: 39500
+SL: 39700
+TP: 39000
+--- SIGNAL 22 ---
+Add funds to BTC/USDT long position at 62000
+--- SIGNAL 23 ---
+DCA into ETH/USDT long at market
+--- SIGNAL 24 ---
+Close 0.3 lots of GBPJPY
+--- SIGNAL 25 ---
+💰🚀🔥 HUGE PROFITS TODAY 🔥🚀💰
