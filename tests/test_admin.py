@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 
-from src.adapters.db.models import Base, RoutingRuleModel, SignalLogModel, UserModel
+from src.adapters.db.models import Base, GlobalSettingModel, RoutingRuleModel, SignalLogModel, UserModel
 from src.api.deps import Settings, get_current_user, get_db, get_settings
 from src.core.models import SubscriptionTier, User
 from src.main import create_app
@@ -114,6 +114,12 @@ async def admin_app():
             status="success",
             channel_id="-100123",
             message_id=1,
+        ))
+        # Seed global setting
+        session.add(GlobalSettingModel(
+            key="backfill_max_age_seconds",
+            value="60",
+            description="Test setting",
         ))
         await session.commit()
 
@@ -446,6 +452,8 @@ async def test_non_admin_parser_endpoints(normal_client):
         ("GET", "/api/v1/admin/parser/prompt/history"),
         ("GET", "/api/v1/admin/parser/model"),
         ("PUT", "/api/v1/admin/parser/model"),
+        ("GET", "/api/v1/admin/settings"),
+        ("PUT", "/api/v1/admin/settings"),
     ]
     for method, path in endpoints:
         if method == "GET":
@@ -453,3 +461,50 @@ async def test_non_admin_parser_endpoints(normal_client):
         else:
             resp = await normal_client.put(path, json={})
         assert resp.status_code == 403, f"{method} {path} returned {resp.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Global Settings tests
+# ---------------------------------------------------------------------------
+
+
+async def test_get_global_settings(admin_client):
+    """Admin can fetch all global settings."""
+    resp = await admin_client.get("/api/v1/admin/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) >= 1
+    setting = next(s for s in data if s["key"] == "backfill_max_age_seconds")
+    assert setting["value"] == "60"
+    assert setting["description"] is not None
+
+
+async def test_update_global_setting(admin_client):
+    """Admin can update a known setting with valid value."""
+    resp = await admin_client.put(
+        "/api/v1/admin/settings",
+        json={"settings": {"backfill_max_age_seconds": "90"}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    setting = next(s for s in data if s["key"] == "backfill_max_age_seconds")
+    assert setting["value"] == "90"
+    assert setting["updated_by"] == "admin@test.com"
+
+
+async def test_update_setting_rejects_invalid_value(admin_client):
+    """Out-of-range values are rejected with 422."""
+    resp = await admin_client.put(
+        "/api/v1/admin/settings",
+        json={"settings": {"backfill_max_age_seconds": "9999"}},
+    )
+    assert resp.status_code == 422
+
+
+async def test_update_setting_rejects_unknown_key(admin_client):
+    """Unknown setting keys are rejected."""
+    resp = await admin_client.put(
+        "/api/v1/admin/settings",
+        json={"settings": {"nonexistent_key": "123"}},
+    )
+    assert resp.status_code == 422
