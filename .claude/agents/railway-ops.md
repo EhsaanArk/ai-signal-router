@@ -95,6 +95,36 @@ Verify the deployed code matches what was merged.
 - [ ] Confirm all expected services received the deploy
 ```
 
+### Step 5: Session Preservation Check
+Hit the deploy health endpoint to verify Telegram sessions survived the deploy.
+```bash
+curl -s https://ai-signal-router-staging.up.railway.app/health/deploy | python3 -m json.tool
+```
+Check:
+```
+- [ ] `deploy_health` is "HEALTHY"
+- [ ] `current.active_sessions` matches expected user count
+- [ ] If `comparison` exists: `sessions_delta` >= 0 (no sessions lost)
+- [ ] If `comparison` exists: no `lost_user_ids`
+```
+**Gate**: If `deploy_health` is "SESSIONS_LOST", flag as CRITICAL — users lost their Telegram connection during deploy.
+
+### Step 6: Listener Log Verification
+Scan Listener logs for deploy-specific indicators.
+```
+- [ ] Look for "Pre-shutdown snapshot saved" in recent logs (confirms graceful shutdown)
+- [ ] Look for "Deploy health check:" log line (confirms self-check ran)
+- [ ] No "AuthKeyDuplicatedError" in logs (session collision during deploy)
+- [ ] No "deactivating" after deploy timestamp (session killed by deploy)
+```
+
+### Step 7: Signal Pipeline Check
+Verify the signal pipeline is still flowing.
+```
+- [ ] `current.last_signal_at` is recent (within expected window for channel activity)
+- [ ] No 500 errors on /api/workflow in API logs
+```
+
 ## Output Format
 
 ```

@@ -124,3 +124,58 @@ Shipped in PR #52. Sentry breadcrumbs added to `_heartbeat()` with category `tel
 **Priority:** P1 (when marketplace feature work begins)
 **Depends on:** Marketplace V1 (directory + analytics + routing + legal framework)
 **Added:** 2026-03-18 (CEO plan review)
+
+---
+
+## P2 — Pipeline dry-run smoke test for post-deploy verification
+
+**What:** Add a `dry_run` flag to the signal workflow so a synthetic test signal can be sent through QStash → workflow → parser → mapper without dispatching to the actual webhook.
+
+**Why:** Catches silent pipeline breaks post-deploy — parser regressions, QStash auth issues, mapper errors. Currently Sentry only catches errors if real signals happen to arrive. The deploy-health endpoint (PR #62) verifies session preservation but not pipeline health.
+
+**Pros:**
+- End-to-end pipeline verification in seconds
+- Can be triggered by the railway-ops agent as a post-deploy step
+- Catches regressions that are invisible until a real signal arrives
+
+**Cons:**
+- Touches protected pipeline files (workflow.py, mapper.py)
+- Needs a test fixture signal and careful isolation so dry-run signals never reach real webhooks
+- Risk of test signals leaking to production if dry_run flag is buggy
+
+**Context:**
+- Deferred from the post-deploy verification plan (CEO review 2026-03-19) because it modifies the signal pipeline (protected files per CLAUDE.md). Should be its own PR with eng review.
+- The deploy-health endpoint (`/health/deploy`) provides the infrastructure to report results.
+- Implementation: add `dry_run: bool = False` param to workflow steps, skip `dispatcher.dispatch()` when true, log result as `status=dry_run`.
+
+**Effort:** M (human) → S (CC)
+**Priority:** P2
+**Depends on:** Nothing — deploy-health endpoint is already merged
+**Added:** 2026-03-19 (CEO plan review)
+
+---
+
+## P3 — Admin dashboard deploy history widget
+
+**What:** Add a "Last Deploy" card to the admin dashboard showing deploy timestamp, before/after session counts, sessions lost, and pipeline status.
+
+**Why:** Visual deploy history accessible without terminal. Makes deploy impact visible to non-technical stakeholders.
+
+**Pros:**
+- Reuses data from the `/health/deploy` endpoint
+- Quick frontend-only addition
+- Historical record of deploy safety
+
+**Cons:**
+- Frontend code to maintain
+- Low value until multiple team members are deploying
+
+**Context:**
+- The data source (`/health/deploy` endpoint) exists after PR #62.
+- This is purely a frontend consumer — fetch the endpoint and render a card.
+- Could show last 5 deploys if snapshots are stored in DB (currently Redis with 10min TTL).
+
+**Effort:** S-M (human) → S (CC)
+**Priority:** P3
+**Depends on:** Deploy-health endpoint (PR #62)
+**Added:** 2026-03-19 (CEO plan review)
