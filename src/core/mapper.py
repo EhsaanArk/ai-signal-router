@@ -90,6 +90,14 @@ def _signal_action(signal: ParsedSignal) -> SignalAction:
         return SignalAction.breakeven
     if action == "close_position":
         return SignalAction.close_position
+    if action == "close_all":
+        return SignalAction.close_all
+    if action == "close_all_stop":
+        return SignalAction.close_all_stop
+    if action == "start_assist":
+        return SignalAction.start_assist
+    if action == "stop_assist":
+        return SignalAction.stop_assist
     if action == "modify_sl":
         # modify_sl maps to breakeven with slAdjustment when new_sl is available
         return SignalAction.breakeven
@@ -220,6 +228,12 @@ def build_webhook_payload(
     if signal.action != "entry":
         payload: dict = _replace_placeholders(rule.webhook_body_template, signal)
         _strip_entry_fields(payload)
+
+        # Symbol-less actions: strip symbol fields (these operate on all positions or the Assist itself)
+        _SYMBOLLESS_ACTIONS = {SignalAction.close_all, SignalAction.close_all_stop, SignalAction.start_assist, SignalAction.stop_assist}
+        if action in _SYMBOLLESS_ACTIONS:
+            for field in ("symbol", "tradeSymbol", "eventSymbol"):
+                payload.pop(field, None)
 
         if is_crypto:
             # Map forex SignalAction to documented crypto type string
