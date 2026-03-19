@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Eye, EyeOff, Plus, Zap } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -209,9 +208,6 @@ export function TemplateBuilder({ value, onChange, error }: TemplateBuilderProps
     );
   }
 
-  function removeField(index: number) {
-    setFields((prev) => prev.filter((_, i) => i !== index));
-  }
 
   function addKnownField(key: string) {
     const known = KNOWN_FIELDS.find((f) => f.key === key);
