@@ -160,15 +160,23 @@ class OpenAISignalParser:
         self,
         api_key: str,
         model: str = "gpt-4o-mini",
+        temperature: float = 0.0,
     ) -> None:
         self._client = AsyncOpenAI(api_key=api_key)
         self._model = model
+        self._temperature = temperature
+
+    @staticmethod
+    def get_default_system_prompt() -> str:
+        """Return the hardcoded default system prompt."""
+        return _SYSTEM_PROMPT
 
     async def parse(
         self,
         raw: RawSignal,
         original_context: str | None = None,
         custom_instructions: str | None = None,
+        system_prompt: str | None = None,
     ) -> ParsedSignal:
         """Send *raw.raw_message* to GPT and return a ``ParsedSignal``.
 
@@ -187,7 +195,7 @@ class OpenAISignalParser:
         else:
             user_content = raw.raw_message
 
-        system_content = _SYSTEM_PROMPT
+        system_content = system_prompt or _SYSTEM_PROMPT
         if custom_instructions:
             system_content += f"\n\n## Custom Instructions\n{custom_instructions}"
 
@@ -199,7 +207,7 @@ class OpenAISignalParser:
                     {"role": "user", "content": user_content},
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.0,
+                temperature=self._temperature,
             )
 
             content = response.choices[0].message.content or "{}"

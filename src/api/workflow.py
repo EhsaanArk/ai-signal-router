@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.adapters.db.models import RoutingRuleModel, SignalLogModel
+from src.adapters.db.models import ParserConfigModel, RoutingRuleModel, SignalLogModel
 from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
@@ -28,6 +28,61 @@ logger = logging.getLogger(__name__)
 tracer = get_tracer("signal.pipeline")
 
 workflow_router = APIRouter(tags=["workflow"])
+
+
+async def _get_parser_config(
+    request: Request, db: AsyncSession
+) -> tuple[str | None, str, float]:
+    """Return (system_prompt_or_None, model_name, temperature) from cache or DB."""
+    import json
+
+    cache = getattr(request.app.state, "cache", None)
+
+    if cache:
+        try:
+            cached = await cache.get("parser:config")
+            if cached:
+                data = json.loads(cached)
+                return data.get("system_prompt"), data["model_name"], data["temperature"]
+        except Exception:
+            pass
+
+    try:
+        model_row = (await db.execute(
+            select(ParserConfigModel).where(
+                ParserConfigModel.config_key == "model_config",
+                ParserConfigModel.is_active.is_(True),
+            )
+        )).scalar_one_or_none()
+
+        prompt_row = (await db.execute(
+            select(ParserConfigModel).where(
+                ParserConfigModel.config_key == "system_prompt",
+                ParserConfigModel.is_active.is_(True),
+            )
+        )).scalar_one_or_none()
+
+        model_name = model_row.model_name if model_row else "gpt-4o-mini"
+        temperature = model_row.temperature if model_row else 0.0
+        system_prompt = prompt_row.system_prompt if prompt_row else None
+    except Exception:
+        return None, "gpt-4o-mini", 0.0
+
+    if cache:
+        try:
+            await cache.set(
+                "parser:config",
+                json.dumps({
+                    "system_prompt": system_prompt,
+                    "model_name": model_name,
+                    "temperature": temperature,
+                }),
+                ttl_seconds=300,
+            )
+        except Exception:
+            pass
+
+    return system_prompt, model_name, temperature
 
 
 @workflow_router.post(
@@ -133,11 +188,17 @@ async def process_signal(
         try:
             from src.adapters.openai import OpenAISignalParser
 
-            parser = OpenAISignalParser(api_key=settings.OPENAI_API_KEY)
+            sys_prompt, model_name, temp = await _get_parser_config(request, db)
+            parser = OpenAISignalParser(
+                api_key=settings.OPENAI_API_KEY,
+                model=model_name,
+                temperature=temp,
+            )
             parsed = await parser.parse(
                 raw_signal,
                 original_context=original_message_text,
                 custom_instructions=custom_instructions,
+                system_prompt=sys_prompt,
             )
             span.set_attribute("signal.is_valid", parsed.is_valid_signal)
             span.set_attribute("signal.symbol", parsed.symbol or "")

@@ -20,6 +20,58 @@ This project is a cloud-based Telegram Signal Copier that intercepts trading sig
 - Run linter: `flake8 src/`
 - Type checking: `mypy src/`
 
+## Local UI Testing (for all agents)
+
+When you need to visually test the UI (for `/qa`, `/design-review`, or manual verification), follow this standard flow:
+
+### 1. Start the app
+```bash
+docker compose up -d --build
+docker compose exec api alembic upgrade head
+```
+Services: Frontend (`localhost:5173`), API (`localhost:8000`), DB (`localhost:5432`), Redis (`localhost:6379`)
+
+### 2. Create a test admin user
+```bash
+# Register via API
+curl -s http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@test.com","password":"Test1234!"}'
+
+# Promote to admin in DB
+docker compose exec db psql -U postgres -d sgm_copier \
+  -c "UPDATE users SET is_admin = true, email_verified = true WHERE email = 'admin@test.com';"
+```
+
+### 3. Login via gstack browse
+```bash
+B="$(git rev-parse --show-toplevel)/.claude/skills/gstack/browse/dist/browse"
+$B goto "http://localhost:5173"
+$B snapshot -i                    # find form element IDs
+$B fill @eN "admin@test.com"     # email field (use actual @e ID from snapshot)
+$B fill @eN "Test1234!"          # password field
+$B click @eN                     # Sign In button
+$B goto "http://localhost:5173/admin/parser"  # or any target page
+```
+
+### 4. Interact & screenshot
+```bash
+$B snapshot -i                   # list elements with @e IDs
+$B click @eN                     # click by element ID
+$B fill @eN "text"              # type into input
+$B snapshot -a -o "path.png"    # annotated screenshot
+$B responsive "prefix"           # mobile + tablet + desktop screenshots
+$B viewport 375x812             # switch to mobile
+```
+
+### 5. Cleanup
+```bash
+docker compose down              # stop containers
+docker compose down -v           # stop + delete volumes (fresh DB next time)
+```
+
+**Important:** Element `@e` IDs change after navigation. Always run `$B snapshot -i` to get fresh IDs before interacting. The `.env` file must have `OPENAI_API_KEY` for parser test sandbox to work.
+
 ## Design Philosophy & Code Style
 - **Clean Architecture (Ports & Adapters)**: `src/core/` MUST NOT import from `src/adapters/`. Core logic only defines interfaces (Protocols) that adapters implement.
 - **Local Mode Fallbacks**: All adapters MUST have a local fallback when `LOCAL_MODE=true` (e.g., bypass QStash, use local Redis/Postgres).

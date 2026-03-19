@@ -24,6 +24,7 @@ const AdminUsersPage = lazyRetry(() => import("./pages/admin/users"));
 const AdminUserDetailPage = lazyRetry(() => import("./pages/admin/user-detail"));
 const AdminSignalsPage = lazyRetry(() => import("./pages/admin/signals"));
 const AdminSystemRulesPage = lazyRetry(() => import("./pages/admin/system-rules"));
+const AdminParserPage = lazyRetry(() => import("./pages/admin/parser"));
 
 function AdminRoute({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -56,6 +57,7 @@ const router = createBrowserRouter([
           { path: "/admin/users/:id", element: <AdminRoute><AdminUserDetailPage /></AdminRoute> },
           { path: "/admin/signals", element: <AdminRoute><AdminSignalsPage /></AdminRoute> },
           { path: "/admin/system-rules", element: <AdminRoute><AdminSystemRulesPage /></AdminRoute> },
+          { path: "/admin/parser", element: <AdminRoute><AdminParserPage /></AdminRoute> },
         ],
       },
     ],

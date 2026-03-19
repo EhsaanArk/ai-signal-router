@@ -278,3 +278,178 @@ async def test_admin_health(admin_client):
     assert "active_routing_rules" in data
     assert "success_rate_24h" in data
     assert "signals_today" in data
+
+
+# ---------------------------------------------------------------------------
+# Parser Manager
+# ---------------------------------------------------------------------------
+
+
+async def test_get_prompt_returns_default(admin_client):
+    """GET /parser/prompt returns hardcoded default when no DB row exists."""
+    resp = await admin_client.get("/api/v1/admin/parser/prompt")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["version"] == 0
+    assert data["config_key"] == "system_prompt"
+    assert data["change_note"] == "Hardcoded default"
+    assert "trading signal parser" in data["system_prompt"].lower()
+
+
+async def test_update_prompt_creates_version(admin_client):
+    """PUT /parser/prompt creates a new version."""
+    resp = await admin_client.put(
+        "/api/v1/admin/parser/prompt",
+        json={
+            "system_prompt": "You are a test parser. Parse signals.",
+            "change_note": "Test update",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["version"] == 1
+    assert data["is_active"] is True
+    assert data["system_prompt"] == "You are a test parser. Parse signals."
+    assert data["change_note"] == "Test update"
+    assert data["changed_by_email"] == "admin@test.com"
+
+
+async def test_get_prompt_returns_db_version(admin_client):
+    """After saving, GET returns the DB version, not the hardcoded default."""
+    # Save a prompt first
+    await admin_client.put(
+        "/api/v1/admin/parser/prompt",
+        json={"system_prompt": "Custom prompt for testing purposes."},
+    )
+    resp = await admin_client.get("/api/v1/admin/parser/prompt")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["version"] == 1
+    assert data["system_prompt"] == "Custom prompt for testing purposes."
+
+
+async def test_prompt_history(admin_client):
+    """GET /parser/prompt/history returns version history."""
+    # Create two versions
+    await admin_client.put(
+        "/api/v1/admin/parser/prompt",
+        json={"system_prompt": "First version of the prompt text."},
+    )
+    await admin_client.put(
+        "/api/v1/admin/parser/prompt",
+        json={"system_prompt": "Second version of the prompt text."},
+    )
+
+    resp = await admin_client.get("/api/v1/admin/parser/prompt/history")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 2
+    # Ordered by version desc
+    assert data["items"][0]["version"] == 2
+    assert data["items"][1]["version"] == 1
+
+
+async def test_revert_prompt(admin_client):
+    """POST /parser/prompt/revert creates new version with old content."""
+    # Create two versions
+    r1 = await admin_client.put(
+        "/api/v1/admin/parser/prompt",
+        json={"system_prompt": "Original prompt for this test case."},
+    )
+    version_1_id = r1.json()["id"]
+
+    await admin_client.put(
+        "/api/v1/admin/parser/prompt",
+        json={"system_prompt": "Updated prompt that replaces original."},
+    )
+
+    # Revert to version 1
+    resp = await admin_client.post(
+        f"/api/v1/admin/parser/prompt/revert/{version_1_id}",
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["version"] == 3  # New version created
+    assert data["system_prompt"] == "Original prompt for this test case."
+    assert "Reverted from version 1" in data["change_note"]
+
+
+async def test_revert_invalid_version(admin_client):
+    """POST /parser/prompt/revert with bad ID returns 404."""
+    fake_id = uuid.uuid4()
+    resp = await admin_client.post(
+        f"/api/v1/admin/parser/prompt/revert/{fake_id}",
+    )
+    assert resp.status_code == 404
+
+
+async def test_get_model_returns_defaults(admin_client):
+    """GET /parser/model returns defaults when no DB row."""
+    resp = await admin_client.get("/api/v1/admin/parser/model")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model_name"] == "gpt-4o-mini"
+    assert data["temperature"] == 0.0
+    assert data["version"] == 0
+
+
+async def test_update_model_config(admin_client):
+    """PUT /parser/model saves new model configuration."""
+    resp = await admin_client.put(
+        "/api/v1/admin/parser/model",
+        json={
+            "model_name": "gpt-4o",
+            "temperature": 0.2,
+            "change_note": "Testing gpt-4o",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model_name"] == "gpt-4o"
+    assert data["temperature"] == 0.2
+    assert data["version"] == 1
+    assert data["changed_by_email"] == "admin@test.com"
+
+
+async def test_update_model_invalid_name(admin_client):
+    """PUT /parser/model rejects invalid model names."""
+    resp = await admin_client.put(
+        "/api/v1/admin/parser/model",
+        json={"model_name": "gpt-5", "temperature": 0.0},
+    )
+    assert resp.status_code == 422
+
+
+async def test_update_model_invalid_temperature(admin_client):
+    """PUT /parser/model rejects out-of-range temperature."""
+    resp = await admin_client.put(
+        "/api/v1/admin/parser/model",
+        json={"model_name": "gpt-4o-mini", "temperature": 1.5},
+    )
+    assert resp.status_code == 422
+
+
+async def test_update_prompt_too_short(admin_client):
+    """PUT /parser/prompt rejects prompts shorter than 10 chars."""
+    resp = await admin_client.put(
+        "/api/v1/admin/parser/prompt",
+        json={"system_prompt": "short"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_non_admin_parser_endpoints(normal_client):
+    """Non-admin gets 403 on all parser endpoints."""
+    endpoints = [
+        ("GET", "/api/v1/admin/parser/prompt"),
+        ("PUT", "/api/v1/admin/parser/prompt"),
+        ("GET", "/api/v1/admin/parser/prompt/history"),
+        ("GET", "/api/v1/admin/parser/model"),
+        ("PUT", "/api/v1/admin/parser/model"),
+    ]
+    for method, path in endpoints:
+        if method == "GET":
+            resp = await normal_client.get(path)
+        else:
+            resp = await normal_client.put(path, json={})
+        assert resp.status_code == 403, f"{method} {path} returned {resp.status_code}"
