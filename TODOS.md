@@ -165,22 +165,47 @@ Currently users see `balance` and `lots` with no context about when they matter.
 
 **What:** Add support for `close_all_orders_at_market_price`, `close_all_orders_at_market_price_and_stop_assist`, `start_assist`, and `stop_assist` actions.
 
-**Why:** SageMaster supports these actions but our pipeline doesn't recognize them. If a signal provider sends "close all" or "stop strategy", we'd ignore it.
+**Why:** SageMaster V1 and V2 both support these actions but our pipeline doesn't recognize them. If a signal provider sends "close all" or "stop strategy", we'd ignore it. Verified against official SageMaster webhook spec (2026-03-19).
 
 **Pros:**
-- Complete parity with SageMaster's webhook spec
+- Complete parity with SageMaster's webhook spec (both V1 and V2)
 - Users can forward more signal types
+- `close_all` is commonly used by signal providers ("close all trades")
 
 **Cons:**
 - Need to update parser prompt to recognize these intents
 - Need to update `SignalAction` enum and mapper
-- "close all" is destructive — needs careful handling
+- "close all" is destructive — needs careful handling (maybe require confirmation in enabled_actions)
 
 **Context:**
-- Full spec now documented in `docs/WEBHOOK_PAYLOADS.md`
-- `close_all_orders_at_market_price` doesn't need a symbol — closes everything
-- `start_assist`/`stop_assist` are strategy management, not trade signals
-- These are rare actions — P2 priority
+- Full spec documented in `docs/WEBHOOK_PAYLOADS.md`
+- Gap analysis (2026-03-19): 4 actions missing from pipeline
+
+**Implementation plan:**
+
+1. `src/core/models.py` — Add to `SignalAction` enum:
+   - `close_all = "close_all_orders_at_market_price"` (no symbol needed)
+   - `close_all_stop = "close_all_orders_at_market_price_and_stop_assist"` (no symbol needed)
+   - `start_assist = "start_assist"` (no symbol needed)
+   - `stop_assist = "stop_assist"` (no symbol needed)
+
+2. `src/core/mapper.py` — Update `_signal_action()` to map parser actions:
+   - `"close_all"` → `SignalAction.close_all`
+   - `"close_all_stop"` → `SignalAction.close_all_stop`
+   - `"start_assist"` → `SignalAction.start_assist`
+   - `"stop_assist"` → `SignalAction.stop_assist`
+   - These actions don't need symbol — update `_strip_entry_fields` and management field injection
+
+3. `src/adapters/openai/parser.py` — Update system prompt to recognize:
+   - "close all trades" / "close everything" → `action: "close_all"`
+   - "stop the bot" / "pause strategy" → `action: "stop_assist"`
+   - "start the bot" / "resume" → `action: "start_assist"`
+
+4. `frontend/src/lib/action-definitions.ts` — Add to enabled_actions UI:
+   - `close_all`, `close_all_stop`, `start_assist`, `stop_assist`
+
+5. `src/core/models.py` — Update `WebhookPayloadV2` validator:
+   - These actions don't require `symbol` or `source` — skip validation for them
 
 **Effort:** M (human) → S (CC)
 **Priority:** P2
