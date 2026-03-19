@@ -8,6 +8,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -99,10 +106,16 @@ function isFieldRequired(
   field: KnownField,
   destinationType?: string,
   payloadVersion?: string,
+  moneyManagementMode?: MoneyManagementMode,
 ): boolean {
   // V2-conditional fields (TP/SL) — required when V2 + forex
   if (field.v2Required) {
     return payloadVersion === "V2" && destinationType === "sagemaster_forex";
+  }
+  // MM mode makes balance/lots required for specific modes
+  if (payloadVersion === "V2" && destinationType === "sagemaster_forex" && moneyManagementMode) {
+    if (field.key === "balance" && moneyManagementMode === "with_ratio") return true;
+    if (field.key === "lots" && (moneyManagementMode === "with_ratio" || moneyManagementMode === "without_ratio")) return true;
   }
   if (!field.required) return false;
   if (field.required === "all") return true;
@@ -112,11 +125,43 @@ function isFieldRequired(
   return field.required === platform;
 }
 
-/** Check if a field is relevant for the current destination + version. */
+/** Money management mode — controls balance/lots visibility in V2 Forex. */
+export type MoneyManagementMode = "default" | "with_ratio" | "without_ratio" | "unsure";
+
+const MM_MODE_OPTIONS: { value: MoneyManagementMode; label: string }[] = [
+  { value: "unsure", label: "I'm not sure (show all fields)" },
+  { value: "default", label: "Default (fixed lot from strategy)" },
+  { value: "with_ratio", label: "Indicator % with ratio check (needs balance + lots)" },
+  { value: "without_ratio", label: "Indicator % without ratio check (needs lots)" },
+];
+
+export function MoneyManagementSelect({ value, onChange }: { value: MoneyManagementMode; onChange: (v: MoneyManagementMode) => void }) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Money Management Mode</Label>
+      <Select value={value} onValueChange={(v) => onChange(v as MoneyManagementMode)}>
+        <SelectTrigger className="h-8 text-sm">
+          <SelectValue placeholder="Select your Assist's money management..." />
+        </SelectTrigger>
+        <SelectContent>
+          {MM_MODE_OPTIONS.map((opt) => (
+            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-[10px] text-muted-foreground">
+        Found in your SageMaster Assist settings. Controls which fields are shown in the template builder.
+      </p>
+    </div>
+  );
+}
+
+/** Check if a field is relevant for the current destination + version + MM mode. */
 function isFieldVisible(
   field: KnownField,
   destinationType?: string,
   payloadVersion?: string,
+  moneyManagementMode?: MoneyManagementMode,
 ): boolean {
   // Custom destinations: show everything
   if (!destinationType || destinationType === "custom") return true;
@@ -125,6 +170,11 @@ function isFieldVisible(
   if (field.platforms && !field.platforms.includes(platform)) return false;
   // Filter V2-only fields for V1
   if (field.v2Only && payloadVersion === "V1") return false;
+  // MM mode filtering for balance/lots (V2 Forex only)
+  if (moneyManagementMode && moneyManagementMode !== "unsure" && payloadVersion === "V2" && destinationType === "sagemaster_forex") {
+    if (field.key === "balance" && (moneyManagementMode === "default" || moneyManagementMode === "without_ratio")) return false;
+    if (field.key === "lots" && moneyManagementMode === "default") return false;
+  }
   return true;
 }
 
@@ -136,6 +186,7 @@ export function validateRequiredFields(
   json: string,
   destinationType: string,
   payloadVersion: string,
+  moneyManagementMode?: MoneyManagementMode,
 ): string[] {
   if (!json.trim()) return [];
   let obj: Record<string, unknown>;
@@ -147,8 +198,8 @@ export function validateRequiredFields(
 
   const missing: string[] = [];
   for (const field of KNOWN_FIELDS) {
-    if (!isFieldRequired(field, destinationType, payloadVersion)) continue;
-    if (!isFieldVisible(field, destinationType, payloadVersion)) continue;
+    if (!isFieldRequired(field, destinationType, payloadVersion, moneyManagementMode)) continue;
+    if (!isFieldVisible(field, destinationType, payloadVersion, moneyManagementMode)) continue;
     if (!(field.key in obj)) {
       missing.push(field.label);
     }
@@ -267,9 +318,10 @@ interface TemplateBuilderProps {
   error?: string;
   destinationType?: string;
   payloadVersion?: string;
+  moneyManagementMode?: MoneyManagementMode;
 }
 
-export function TemplateBuilder({ value, onChange, error, destinationType, payloadVersion }: TemplateBuilderProps) {
+export function TemplateBuilder({ value, onChange, error, destinationType, payloadVersion, moneyManagementMode }: TemplateBuilderProps) {
   const [mode, setMode] = useState<"builder" | "json">("json");
   const [fields, setFields] = useState<FieldState[]>(() => {
     if (!value.trim()) return [];
@@ -330,13 +382,13 @@ export function TemplateBuilder({ value, onChange, error, destinationType, paylo
     }]);
   }
 
-  // Filter available fields by platform + version
+  // Filter available fields by platform + version + MM mode
   const availableFields = useMemo(() => {
     const usedKeys = new Set(fields.map((f) => f.key));
     return KNOWN_FIELDS
       .filter((f) => !usedKeys.has(f.key))
-      .filter((f) => isFieldVisible(f, destinationType, payloadVersion));
-  }, [fields, destinationType, payloadVersion]);
+      .filter((f) => isFieldVisible(f, destinationType, payloadVersion, moneyManagementMode));
+  }, [fields, destinationType, payloadVersion, moneyManagementMode]);
 
   // Group fields for visual sections
   const groupedFields = useMemo(() => {
@@ -424,7 +476,7 @@ export function TemplateBuilder({ value, onChange, error, destinationType, paylo
                 {group.fields.map(({ field, index, known }) => {
                   const hasDynamic = known?.dynamic !== undefined;
                   const isDisabled = field.disabled;
-                  const required = known ? isFieldRequired(known, destinationType, payloadVersion) : false;
+                  const required = known ? isFieldRequired(known, destinationType, payloadVersion, moneyManagementMode) : false;
 
                   return (
                     <div key={index} className={cn(

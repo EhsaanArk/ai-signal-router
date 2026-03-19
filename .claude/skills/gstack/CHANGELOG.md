@@ -1,5 +1,197 @@
 # Changelog
 
+## [0.8.5] - 2026-03-19
+
+### Fixed
+
+- **`/retro` now counts full calendar days.** Running a retro late at night no longer silently misses commits from earlier in the day. Git treats bare dates like `--since="2026-03-11"` as "11pm on March 11" if you run it at 11pm — now we pass `--since="2026-03-11T00:00:00"` so it always starts from midnight. Compare mode windows get the same fix.
+- **Review log no longer breaks on branch names with `/`.** Branch names like `garrytan/design-system` caused review log writes to fail because Claude Code runs multi-line bash blocks as separate shell invocations, losing variables between commands. New `gstack-review-log` and `gstack-review-read` atomic helpers encapsulate the entire operation in a single command.
+- **All skill templates are now platform-agnostic.** Removed Rails-specific patterns (`bin/test-lane`, `RAILS_ENV`, `.includes()`, `rescue StandardError`, etc.) from `/ship`, `/review`, `/plan-ceo-review`, and `/plan-eng-review`. The review checklist now shows examples for Rails, Node, Python, and Django side-by-side.
+- **`/ship` reads CLAUDE.md to discover test commands** instead of hardcoding `bin/test-lane` and `npm run test`. If no test commands are found, it asks the user and persists the answer to CLAUDE.md.
+
+### Added
+
+- **Platform-agnostic design principle** codified in CLAUDE.md — skills must read project config, never hardcode framework commands.
+- **`## Testing` section** in CLAUDE.md for `/ship` test command discovery.
+
+## [0.8.4] - 2026-03-19
+
+### Added
+
+- **`/ship` now automatically syncs your docs.** After creating the PR, `/ship` runs `/document-release` as Step 8.5 — README, ARCHITECTURE, CONTRIBUTING, and CLAUDE.md all stay current without an extra command. No more stale docs after shipping.
+- **Six new skills in the docs.** README, docs/skills.md, and BROWSER.md now cover `/codex` (multi-AI second opinion), `/careful` (destructive command warnings), `/freeze` (directory-scoped edit lock), `/guard` (full safety mode), `/unfreeze`, and `/gstack-upgrade`. The sprint skill table keeps its 15 specialists; a new "Power tools" section covers the rest.
+- **Browse handoff documented everywhere.** BROWSER.md command table, docs/skills.md deep-dive, and README "What's new" all explain `$B handoff` and `$B resume` for CAPTCHA/MFA/auth walls.
+- **Proactive suggestions know about all skills.** Root SKILL.md.tmpl now suggests `/codex`, `/careful`, `/freeze`, `/guard`, `/unfreeze`, and `/gstack-upgrade` at the right workflow stages.
+
+## [0.8.3] - 2026-03-19
+
+### Added
+
+- **Plan reviews now guide you to the next step.** After running `/plan-ceo-review`, `/plan-eng-review`, or `/plan-design-review`, you get a recommendation for what to run next — eng review is always suggested as the required shipping gate, design review is suggested when UI changes are detected, and CEO review is softly mentioned for big product changes. No more remembering the workflow yourself.
+- **Reviews know when they're stale.** Each review now records the commit it was run at. The dashboard compares that against your current HEAD and tells you exactly how many commits have elapsed — "eng review may be stale — 13 commits since review" instead of guessing.
+- **`skip_eng_review` respected everywhere.** If you've opted out of eng review globally, the chaining recommendations won't nag you about it.
+- **Design review lite now tracks commits too.** The lightweight design check that runs inside `/review` and `/ship` gets the same staleness tracking as full reviews.
+
+### Fixed
+
+- **Browse no longer navigates to dangerous URLs.** `goto`, `diff`, and `newtab` now block `file://`, `javascript:`, `data:` schemes and cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`). Localhost and private IPs are still allowed for local QA testing. (Closes #17)
+- **Setup script tells you what's missing.** Running `./setup` without `bun` installed now shows a clear error with install instructions instead of a cryptic "command not found." (Closes #147)
+- **`/debug` renamed to `/investigate`.** Claude Code has a built-in `/debug` command that shadowed the gstack skill. The systematic root-cause debugging workflow now lives at `/investigate`. (Closes #190)
+- **Shell injection surface removed.** All skill templates now use `source <(gstack-slug)` instead of `eval $(gstack-slug)`. Same behavior, no `eval`. (Closes #133)
+- **25 new security tests.** URL validation (16 tests) and path traversal validation (14 tests) now have dedicated unit test suites covering scheme blocking, metadata IP blocking, directory escapes, and prefix collision edge cases.
+
+## [0.8.2] - 2026-03-19
+
+### Added
+
+- **Hand off to a real Chrome when the headless browser gets stuck.** Hit a CAPTCHA, auth wall, or MFA prompt? Run `$B handoff "reason"` and a visible Chrome opens at the exact same page with all your cookies and tabs intact. Solve the problem, tell Claude you're done, and `$B resume` picks up right where you left off with a fresh snapshot.
+- **Auto-handoff hint after 3 consecutive failures.** If the browse tool fails 3 times in a row, it suggests using `handoff` — so you don't waste time watching the AI retry a CAPTCHA.
+- **15 new tests for the handoff feature.** Unit tests for state save/restore, failure tracking, edge cases, plus integration tests for the full headless-to-headed flow with cookie and tab preservation.
+
+### Changed
+
+- `recreateContext()` refactored to use shared `saveState()`/`restoreState()` helpers — same behavior, less code, ready for future state persistence features.
+- `browser.close()` now has a 5-second timeout to prevent hangs when closing headed browsers on macOS.
+
+## [0.8.1] - 2026-03-19
+
+### Fixed
+
+- **`/qa` no longer refuses to use the browser on backend-only changes.** Previously, if your branch only changed prompt templates, config files, or service logic, `/qa` would analyze the diff, conclude "no UI to test," and suggest running evals instead. Now it always opens the browser — falling back to a Quick mode smoke test (homepage + top 5 navigation targets) when no specific pages are identified from the diff.
+
+## [0.8.0] - 2026-03-19 — Multi-AI Second Opinion
+
+**`/codex` — get an independent second opinion from a completely different AI.**
+
+Three modes. `/codex review` runs OpenAI's Codex CLI against your diff and gives a pass/fail gate — if Codex finds critical issues (`[P1]`), it fails. `/codex challenge` goes adversarial: it tries to find ways your code will fail in production, thinking like an attacker and a chaos engineer. `/codex <anything>` opens a conversation with Codex about your codebase, with session continuity so follow-ups remember context.
+
+When both `/review` (Claude) and `/codex review` have run, you get a cross-model analysis showing which findings overlap and which are unique to each AI — building intuition for when to trust which system.
+
+**Integrated everywhere.** After `/review` finishes, it offers a Codex second opinion. During `/ship`, you can run Codex review as an optional gate before pushing. In `/plan-eng-review`, Codex can independently critique your plan before the engineering review begins. All Codex results show up in the Review Readiness Dashboard.
+
+**Also in this release:** Proactive skill suggestions — gstack now notices what stage of development you're in and suggests the right skill. Don't like it? Say "stop suggesting" and it remembers across sessions.
+
+## [0.7.4] - 2026-03-18
+
+### Changed
+
+- **`/qa` and `/design-review` now ask what to do with uncommitted changes** instead of refusing to start. When your working tree is dirty, you get an interactive prompt with three options: commit your changes, stash them, or abort. No more cryptic "ERROR: Working tree is dirty" followed by a wall of text.
+
+## [0.7.3] - 2026-03-18
+
+### Added
+
+- **Safety guardrails you can turn on with one command.** Say "be careful" or "safety mode" and `/careful` will warn you before any destructive command — `rm -rf`, `DROP TABLE`, force-push, `kubectl delete`, and more. You can override every warning. Common build artifact cleanups (`rm -rf node_modules`, `dist`, `.next`) are whitelisted.
+- **Lock edits to one folder with `/freeze`.** Debugging something and don't want Claude to "fix" unrelated code? `/freeze` blocks all file edits outside a directory you choose. Hard block, not just a warning. Run `/unfreeze` to remove the restriction without ending your session.
+- **`/guard` activates both at once.** One command for maximum safety when touching prod or live systems — destructive command warnings plus directory-scoped edit restrictions.
+- **`/debug` now auto-freezes edits to the module being debugged.** After forming a root cause hypothesis, `/debug` locks edits to the narrowest affected directory. No more accidental "fixes" to unrelated code during debugging.
+- **You can now see which skills you use and how often.** Every skill invocation is logged locally to `~/.gstack/analytics/skill-usage.jsonl`. Run `bun run analytics` to see your top skills, per-repo breakdown, and how often safety hooks actually catch something. Data stays on your machine.
+- **Weekly retros now include skill usage.** `/retro` shows which skills you used during the retro window alongside your usual commit analysis and metrics.
+
+## [0.7.2] - 2026-03-18
+
+### Fixed
+
+- `/retro` date ranges now align to midnight instead of the current time. Running `/retro` at 9pm no longer silently drops the morning of the start date — you get full calendar days.
+- `/retro` timestamps now use your local timezone instead of hardcoded Pacific time. Users outside the US-West coast get correct local hours in histograms, session detection, and streak tracking.
+
+## [0.7.1] - 2026-03-19
+
+### Added
+
+- **gstack now suggests skills at natural moments.** You don't need to know slash commands — just talk about what you're doing. Brainstorming an idea? gstack suggests `/office-hours`. Something's broken? It suggests `/debug`. Ready to deploy? It suggests `/ship`. Every workflow skill now has proactive triggers that fire when the moment is right.
+- **Lifecycle map.** gstack's root skill description now includes a developer workflow guide mapping 12 stages (brainstorm → plan → review → code → debug → test → ship → docs → retro) to the right skill. Claude sees this in every session.
+- **Opt-out with natural language.** If proactive suggestions feel too aggressive, just say "stop suggesting things" — gstack remembers across sessions. Say "be proactive again" to re-enable.
+- **11 journey-stage E2E tests.** Each test simulates a real moment in the developer lifecycle with realistic project context (plan.md, error logs, git history, code) and verifies the right skill fires from natural language alone. 11/11 pass.
+- **Trigger phrase validation.** Static tests verify every workflow skill has "Use when" and "Proactively suggest" phrases — catches regressions for free.
+
+### Fixed
+
+- `/debug` and `/office-hours` were completely invisible to natural language — no trigger phrases at all. Now both have full reactive + proactive triggers.
+
+## [0.7.0] - 2026-03-18 — YC Office Hours
+
+**`/office-hours` — sit down with a YC partner before you write a line of code.**
+
+Two modes. If you're building a startup, you get six forcing questions distilled from how YC evaluates products: demand reality, status quo, desperate specificity, narrowest wedge, observation & surprise, and future-fit. If you're hacking on a side project, learning to code, or at a hackathon, you get an enthusiastic brainstorming partner who helps you find the coolest version of your idea.
+
+Both modes write a design doc that feeds directly into `/plan-ceo-review` and `/plan-eng-review`. After the session, the skill reflects back what it noticed about how you think — specific observations, not generic praise.
+
+**`/debug` — find the root cause, not the symptom.**
+
+When something is broken and you don't know why, `/debug` is your systematic debugger. It follows the Iron Law: no fixes without root cause investigation first. Traces data flow, matches against known bug patterns (race conditions, nil propagation, stale cache, config drift), and tests hypotheses one at a time. If 3 fixes fail, it stops and questions the architecture instead of thrashing.
+
+## [0.6.4.1] - 2026-03-18
+
+### Added
+
+- **Skills now discoverable via natural language.** All 12 skills that were missing explicit trigger phrases now have them — say "deploy this" and Claude finds `/ship`, say "check my diff" and it finds `/review`. Following Anthropic's best practice: "the description field is not a summary — it's when to trigger."
+
+## [0.6.4.0] - 2026-03-17
+
+### Added
+
+- **`/plan-design-review` is now interactive — rates 0-10, fixes the plan.** Instead of producing a report with letter grades, the designer now works like CEO and Eng review: rates each design dimension 0-10, explains what a 10 looks like, then edits the plan to get there. One AskUserQuestion per design choice. The output is a better plan, not a document about the plan.
+- **CEO review now calls in the designer.** When `/plan-ceo-review` detects UI scope in a plan, it activates a Design & UX section (Section 11) covering information architecture, interaction state coverage, AI slop risk, and responsive intention. For deep design work, it recommends `/plan-design-review`.
+- **14 of 15 skills now have full test coverage (E2E + LLM-judge + validation).** Added LLM-judge quality evals for 10 skills that were missing them: ship, retro, qa-only, plan-ceo-review, plan-eng-review, plan-design-review, design-review, design-consultation, document-release, gstack-upgrade. Added real E2E test for gstack-upgrade (was a `.todo`). Added design-consultation to command validation.
+- **Bisect commit style.** CLAUDE.md now requires every commit to be a single logical change — renames separate from rewrites, test infrastructure separate from test implementations.
+
+### Changed
+
+- `/qa-design-review` renamed to `/design-review` — the "qa-" prefix was confusing now that `/plan-design-review` is plan-mode. Updated across all 22 files.
+
+## [0.6.3.0] - 2026-03-17
+
+### Added
+
+- **Every PR touching frontend code now gets a design review automatically.** `/review` and `/ship` apply a 20-item design checklist against changed CSS, HTML, JSX, and view files. Catches AI slop patterns (purple gradients, 3-column icon grids, generic hero copy), typography issues (body text < 16px, blacklisted fonts), accessibility gaps (`outline: none`), and `!important` abuse. Mechanical CSS fixes are auto-applied; design judgment calls ask you first.
+- **`gstack-diff-scope` categorizes what changed in your branch.** Run `source <(gstack-diff-scope main)` and get `SCOPE_FRONTEND=true/false`, `SCOPE_BACKEND`, `SCOPE_PROMPTS`, `SCOPE_TESTS`, `SCOPE_DOCS`, `SCOPE_CONFIG`. Design review uses it to skip silently on backend-only PRs. Ship pre-flight uses it to recommend design review when frontend files are touched.
+- **Design review shows up in the Review Readiness Dashboard.** The dashboard now distinguishes between "LITE" (code-level, runs automatically in /review and /ship) and "FULL" (visual audit via /plan-design-review with browse binary). Both show up as Design Review entries.
+- **E2E eval for design review detection.** Planted CSS/HTML fixtures with 7 known anti-patterns (Papyrus font, 14px body text, `outline: none`, `!important`, purple gradient, generic hero copy, 3-column feature grid). The eval verifies `/review` catches at least 4 of 7.
+
+## [0.6.2.0] - 2026-03-17
+
+### Added
+
+- **Plan reviews now think like the best in the world.** `/plan-ceo-review` applies 14 cognitive patterns from Bezos (one-way doors, Day 1 proxy skepticism), Grove (paranoid scanning), Munger (inversion), Horowitz (wartime awareness), Chesky/Graham (founder mode), and Altman (leverage obsession). `/plan-eng-review` applies 15 patterns from Larson (team state diagnosis), McKinley (boring by default), Brooks (essential vs accidental complexity), Beck (make the change easy), Majors (own your code in production), and Google SRE (error budgets). `/plan-design-review` applies 12 patterns from Rams (subtraction default), Norman (time-horizon design), Zhuo (principled taste), Gebbia (design for trust, storyboard the journey), and Ive (care is visible).
+- **Latent space activation, not checklists.** The cognitive patterns name-drop frameworks and people so the LLM draws on its deep knowledge of how they actually think. The instruction is "internalize these, don't enumerate them" — making each review a genuine perspective shift, not a longer checklist.
+
+## [0.6.1.0] - 2026-03-17
+
+### Added
+
+- **E2E and LLM-judge tests now only run what you changed.** Each test declares which source files it depends on. When you run `bun run test:e2e`, it checks your diff and skips tests whose dependencies weren't touched. A branch that only changes `/retro` now runs 2 tests instead of 31. Use `bun run test:e2e:all` to force everything.
+- **`bun run eval:select` previews which tests would run.** See exactly which tests your diff triggers before spending API credits. Supports `--json` for scripting and `--base <branch>` to override the base branch.
+- **Completeness guardrail catches forgotten test entries.** A free unit test validates that every `testName` in the E2E and LLM-judge test files has a corresponding entry in the TOUCHFILES map. New tests without entries fail `bun test` immediately — no silent always-run degradation.
+
+### Changed
+
+- `test:evals` and `test:e2e` now auto-select based on diff (was: all-or-nothing)
+- New `test:evals:all` and `test:e2e:all` scripts for explicit full runs
+
+## 0.6.1 — 2026-03-17 — Boil the Lake
+
+Every gstack skill now follows the **Completeness Principle**: always recommend the
+full implementation when AI makes the marginal cost near-zero. No more "Choose B
+because it's 90% of the value" when option A is 70 lines more code.
+
+Read the philosophy: https://garryslist.org/posts/boil-the-ocean
+
+- **Completeness scoring**: every AskUserQuestion option now shows a completeness
+  score (1-10), biasing toward the complete solution
+- **Dual time estimates**: effort estimates show both human-team and CC+gstack time
+  (e.g., "human: ~2 weeks / CC: ~1 hour") with a task-type compression reference table
+- **Anti-pattern examples**: concrete "don't do this" gallery in the preamble so the
+  principle isn't abstract
+- **First-time onboarding**: new users see a one-time introduction linking to the
+  essay, with option to open in browser
+- **Review completeness gaps**: `/review` now flags shortcut implementations where the
+  complete version costs <30 min CC time
+- **Lake Score**: CEO and Eng review completion summaries show how many recommendations
+  chose the complete option vs shortcuts
+- **CEO + Eng review dual-time**: temporal interrogation, effort estimates, and delight
+  opportunities all show both human and CC time scales
+
 ## 0.6.0.1 — 2026-03-17
 
 - **`/gstack-upgrade` now catches stale vendored copies automatically.** If your global gstack is up to date but the vendored copy in your project is behind, `/gstack-upgrade` detects the mismatch and syncs it. No more manually asking "did we vendor it?" — it just tells you and offers to update.
@@ -63,13 +255,13 @@
 ## 0.5.2 — 2026-03-17
 
 - **Your design consultant now takes creative risks.** `/design-consultation` doesn't just propose a safe, coherent system — it explicitly breaks down SAFE CHOICES (category baseline) vs. RISKS (where your product stands out). You pick which rules to break. Every risk comes with a rationale for why it works and what it costs.
-- **See the competition before you choose.** When you opt into research, the agent browses competitor sites with screenshots and accessibility tree analysis — not just web search results. You see what the landscape looks like before making design decisions.
+- **See the landscape before you choose.** When you opt into research, the agent browses real sites in your space with screenshots and accessibility tree analysis — not just web search results. You see what's out there before making design decisions.
 - **Preview pages that look like your product.** The preview page now renders realistic product mockups — dashboards with sidebar nav and data tables, marketing pages with hero sections, settings pages with forms — not just font swatches and color palettes.
 
 ## 0.5.1 — 2026-03-17
 - **Know where you stand before you ship.** Every `/plan-ceo-review`, `/plan-eng-review`, and `/plan-design-review` now logs its result to a review tracker. At the end of each review, you see a **Review Readiness Dashboard** showing which reviews are done, when they ran, and whether they're clean — with a clear CLEARED TO SHIP or NOT READY verdict.
 - **`/ship` checks your reviews before creating the PR.** Pre-flight now reads the dashboard and asks if you want to continue when reviews are missing. Informational only — it won't block you, but you'll know what you skipped.
-- **One less thing to copy-paste.** The SLUG computation (that opaque sed pipeline for computing `owner-repo` from git remote) is now a shared `bin/gstack-slug` helper. All 14 inline copies across templates replaced with `eval $(gstack-slug)`. If the format ever changes, fix it once.
+- **One less thing to copy-paste.** The SLUG computation (that opaque sed pipeline for computing `owner-repo` from git remote) is now a shared `bin/gstack-slug` helper. All 14 inline copies across templates replaced with `source <(gstack-slug)`. If the format ever changes, fix it once.
 - **Screenshots are now visible during QA and browse sessions.** When gstack takes screenshots, they now show up as clickable image elements in your output — no more invisible `/tmp/browse-screenshot.png` paths you can't see. Works in `/qa`, `/qa-only`, `/plan-design-review`, `/qa-design-review`, `/browse`, and `/gstack`.
 
 ### For contributors
