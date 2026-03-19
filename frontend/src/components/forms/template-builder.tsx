@@ -29,6 +29,8 @@ interface KnownField {
   required?: Platform | "all";
   /** Only relevant for V2 payload version (Forex). */
   v2Only?: boolean;
+  /** Required for V2 entries — needs at least one from each group (TP + SL). */
+  v2Required?: "tp" | "sl";
   /** Visual grouping in builder. */
   group: FieldGroup;
   /** Help text shown in tooltip. */
@@ -53,10 +55,10 @@ const KNOWN_FIELDS: KnownField[] = [
   { key: "lots", label: "Lots", placeholder: "e.g., 1", platforms: ["forex"], v2Only: true, group: "entry", description: "Position size in lots. Overrides the strategy's default lot size." },
 
   // --- Risk management fields ---
-  { key: "takeProfits", label: "Take Profits", placeholder: "e.g., [1.1050, 1.1100]", dynamic: "", dynamicLabel: "From signal", platforms: ["forex"], v2Only: true, group: "risk", description: "Array of take profit price levels. Auto-filled from the signal's TP targets." },
-  { key: "takeProfitsPips", label: "TP Pips", placeholder: "e.g., [30, 60]", dynamic: "", dynamicLabel: "From signal", platforms: ["forex"], v2Only: true, group: "risk", description: "Take profit as pip distances from entry. Alternative to absolute price TPs." },
-  { key: "stopLoss", label: "Stop Loss", placeholder: "e.g., 1.0950", dynamic: "", dynamicLabel: "From signal", platforms: ["forex"], v2Only: true, group: "risk", description: "Stop loss price level. Auto-filled from the signal's SL value." },
-  { key: "stopLossPips", label: "SL Pips", placeholder: "e.g., 30", dynamic: "", dynamicLabel: "From signal", platforms: ["forex"], v2Only: true, group: "risk", description: "Stop loss as pip distance from entry. Alternative to absolute price SL." },
+  { key: "takeProfits", label: "Take Profits", placeholder: "e.g., [1.1050, 1.1100]", dynamic: "", dynamicLabel: "From signal", platforms: ["forex"], v2Only: true, v2Required: "tp", group: "risk", description: "Array of TP price levels. Required for V2 — use this OR TP Pips (at least one)." },
+  { key: "takeProfitsPips", label: "TP Pips", placeholder: "e.g., [30, 60]", dynamic: "", dynamicLabel: "From signal", platforms: ["forex"], v2Only: true, v2Required: "tp", group: "risk", description: "Take profit as pip distances. Required for V2 — use this OR Take Profits (at least one)." },
+  { key: "stopLoss", label: "Stop Loss", placeholder: "e.g., 1.0950", dynamic: "", dynamicLabel: "From signal", platforms: ["forex"], v2Only: true, v2Required: "sl", group: "risk", description: "Stop loss price level. Required for V2 — use this OR SL Pips (at least one)." },
+  { key: "stopLossPips", label: "SL Pips", placeholder: "e.g., 30", dynamic: "", dynamicLabel: "From signal", platforms: ["forex"], v2Only: true, v2Required: "sl", group: "risk", description: "Stop loss as pip distance. Required for V2 — use this OR Stop Loss (at least one)." },
   { key: "take_profits", label: "Take Profits (%)", placeholder: "e.g., [1, 2, 5]", dynamic: "", dynamicLabel: "From signal", platforms: ["crypto"], group: "risk", description: "Crypto TP values as percentages (e.g., [1, 2, 5] = 1%, 2%, 5% from entry)." },
 
   // --- Trade management fields ---
@@ -98,6 +100,10 @@ function isFieldRequired(
   destinationType?: string,
   payloadVersion?: string,
 ): boolean {
+  // V2-conditional fields (TP/SL) — required when V2 + forex
+  if (field.v2Required) {
+    return payloadVersion === "V2" && destinationType === "sagemaster_forex";
+  }
   if (!field.required) return false;
   if (field.required === "all") return true;
   // V2-only fields are only required when V2 is selected
@@ -491,11 +497,15 @@ export function TemplateBuilder({ value, onChange, error, destinationType, paylo
                           <TooltipTrigger asChild>
                             <span className="flex items-center gap-0.5 text-[9px] font-medium text-amber-500/80 shrink-0 px-1.5">
                               <Lock className="h-2.5 w-2.5" />
-                              Required
+                              {known?.v2Required ? "V2 Req" : "Required"}
                             </span>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p className="text-xs">Required by SageMaster — cannot be disabled</p>
+                            <p className="text-xs">
+                              {known?.v2Required
+                                ? `Required for V2 — need at least one ${known.v2Required === "tp" ? "Take Profit" : "Stop Loss"} method`
+                                : "Required by SageMaster — cannot be disabled"}
+                            </p>
                           </TooltipContent>
                         </Tooltip>
                       ) : (
