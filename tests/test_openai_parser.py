@@ -85,9 +85,24 @@ _RAW_SIGNALS = _load_raw_signals()
 _EXPECTED_PAYLOADS = _load_expected_payloads()
 
 
+def _infer_asset_class(symbol: str) -> str:
+    """Determine asset class from symbol using the same heuristics as the prompt."""
+    if symbol in ("GOLD", "XAUUSD", "XAGUSD", "SILVER"):
+        return "commodities"
+    if symbol in ("BTCUSD", "BTCUSDT", "ETHUSD", "ETHUSDT",
+                   "BTC/USD", "BTC/USDT", "ETH/USD", "ETH/USDT") or "/" in symbol:
+        return "crypto"
+    if symbol in ("US30", "NAS100", "SPX500", "DAX", "USTEC"):
+        return "indices"
+    return "forex"
+
+
 def _expected_to_openai_json(expected: dict) -> str:
     """Convert a fixture expected payload into a JSON string the mock OpenAI
     response should return, matching the schema ``OpenAISignalParser`` expects.
+
+    Handles all action types: entry, partial_close, breakeven, close_position,
+    modify_sl, modify_tp, trailing_sl, extra_order, and ignored messages.
     """
     parsed = expected["parsed"]
     if parsed["status"] == "ignored":
@@ -105,28 +120,32 @@ def _expected_to_openai_json(expected: dict) -> str:
 
     direction_map = {"BUY": "long", "SELL": "short"}
     symbol = parsed["symbol"]
-    # Determine asset class using the same heuristics as the system prompt.
-    if symbol in ("GOLD", "XAUUSD", "XAGUSD", "SILVER"):
-        asset_class = "commodities"
-    elif symbol in ("BTCUSD", "BTCUSDT", "ETHUSD", "ETHUSDT",
-                     "BTC/USD", "BTC/USDT", "ETH/USD", "ETH/USDT") or "/" in symbol:
-        asset_class = "crypto"
-    elif symbol in ("US30", "NAS100", "SPX500", "DAX", "USTEC"):
-        asset_class = "indices"
-    else:
-        asset_class = "forex"
+    action = parsed.get("action", "entry")
+    direction = direction_map.get(parsed.get("direction", "BUY"), "long")
+    asset_class = _infer_asset_class(symbol)
 
-    return json.dumps({
+    result: dict = {
+        "action": action,
         "symbol": symbol,
-        "direction": direction_map[parsed["direction"]],
-        "order_type": "market",
-        "entry_price": parsed["entry_price"],
-        "stop_loss": parsed["stop_loss"],
-        "take_profits": parsed["take_profits"],
+        "direction": direction,
+        "order_type": parsed.get("order_type", "market"),
+        "entry_price": parsed.get("entry_price"),
+        "stop_loss": parsed.get("stop_loss"),
+        "take_profits": parsed.get("take_profits", []),
+        "lots": parsed.get("lots"),
+        "percentage": parsed.get("percentage"),
+        "new_sl": parsed.get("new_sl"),
+        "new_tp": parsed.get("new_tp"),
+        "trailing_sl_pips": parsed.get("trailing_sl_pips"),
+        "take_profit_pips": parsed.get("take_profit_pips", []),
+        "stop_loss_pips": parsed.get("stop_loss_pips"),
+        "is_market": parsed.get("is_market"),
+        "order_price": parsed.get("order_price"),
         "source_asset_class": asset_class,
         "is_valid_signal": True,
         "ignore_reason": None,
-    })
+    }
+    return json.dumps(result)
 
 
 # ---------------------------------------------------------------------------
@@ -391,8 +410,8 @@ _FIXTURE_PARAMS = list(zip(_RAW_SIGNALS, _EXPECTED_PAYLOADS, strict=False))
     ids=_FIXTURE_IDS,
 )
 async def test_fixture_signals(raw_text: str, expected: dict):
-    """Each of the 10 fixture signals should be parsed correctly when OpenAI
-    returns the corresponding expected payload.
+    """Each fixture signal should be parsed correctly when OpenAI returns
+    the corresponding expected payload.  Covers all action types.
     """
     parser, mock_create = _build_parser_with_mock()
 
@@ -408,12 +427,53 @@ async def test_fixture_signals(raw_text: str, expected: dict):
         assert result.is_valid_signal is False
         assert result.ignore_reason is not None
         assert result.ignore_reason == parsed["reason"]
-    else:
-        assert result.is_valid_signal is True
-        assert result.symbol == parsed["symbol"]
+        return
 
-        direction_map = {"BUY": "long", "SELL": "short"}
+    # All valid signals
+    assert result.is_valid_signal is True
+    assert result.symbol == parsed["symbol"]
+
+    action = parsed.get("action", "entry")
+    assert result.action == action
+
+    direction_map = {"BUY": "long", "SELL": "short"}
+    if "direction" in parsed:
         assert result.direction == direction_map[parsed["direction"]]
-        assert result.entry_price == parsed["entry_price"]
-        assert result.stop_loss == parsed["stop_loss"]
-        assert result.take_profits == parsed["take_profits"]
+
+    # Entry-specific fields
+    if action == "entry":
+        assert result.order_type == parsed.get("order_type", "market")
+        if "entry_price" in parsed:
+            assert result.entry_price == parsed["entry_price"]
+        if "stop_loss" in parsed:
+            assert result.stop_loss == parsed["stop_loss"]
+        if "take_profits" in parsed:
+            assert result.take_profits == parsed["take_profits"]
+        if "take_profit_pips" in parsed:
+            assert result.take_profit_pips == parsed["take_profit_pips"]
+        if "stop_loss_pips" in parsed:
+            assert result.stop_loss_pips == parsed["stop_loss_pips"]
+
+    # Partial close fields
+    if action == "partial_close":
+        if "percentage" in parsed:
+            assert result.percentage == parsed["percentage"]
+        if "lots" in parsed:
+            assert result.lots == parsed["lots"]
+
+    # Modify SL/TP fields
+    if action == "modify_sl" and "new_sl" in parsed:
+        assert result.new_sl == parsed["new_sl"]
+    if action == "modify_tp" and "new_tp" in parsed:
+        assert result.new_tp == parsed["new_tp"]
+
+    # Trailing SL
+    if action == "trailing_sl" and "trailing_sl_pips" in parsed:
+        assert result.trailing_sl_pips == parsed["trailing_sl_pips"]
+
+    # Extra order fields
+    if action == "extra_order":
+        if "is_market" in parsed:
+            assert result.is_market == parsed["is_market"]
+        if "order_price" in parsed:
+            assert result.order_price == parsed["order_price"]
