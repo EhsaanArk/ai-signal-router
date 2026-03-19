@@ -137,8 +137,18 @@ class TelegramListener:
         if not message.text:
             return
 
-        # Build the channel identifier — use the chat ID as a string
-        chat = await event.get_chat()
+        # Build the channel identifier — use the chat ID as a string.
+        # get_chat() can fail if the entity cache is stale or the channel
+        # was deleted, so we fall back to abs(event.chat_id).
+        try:
+            chat = await event.get_chat()
+        except Exception as exc:
+            logger.warning(
+                "Could not resolve chat for event (chat_id=%s): %s",
+                event.chat_id, exc,
+            )
+            sentry_sdk.capture_exception(exc)
+            chat = None
         # Always use the bare (unmarked) ID to match channels.py format.
         # event.chat_id may include a -100 prefix; abs() strips it.
         channel_id = str(chat.id) if chat else str(abs(event.chat_id))
@@ -186,6 +196,11 @@ class TelegramListener:
                     channel_id,
                 )
                 sentry_sdk.capture_exception(exc)
+
+    @property
+    def is_connected(self) -> bool:
+        """Return ``True`` if the underlying Telethon client is connected."""
+        return self._client is not None and self._client.is_connected()
 
     def update_monitored_channels(self, channels: set[str]) -> None:
         """Update the set of channel IDs this listener should process."""
@@ -338,6 +353,7 @@ if __name__ == "__main__":
         else:
             # ── Multi-user mode (SaaS) ───────────────────────────────────
             from src.adapters.telegram.manager import MultiUserListenerManager
+            import signal
 
             enc_key = os.environ["ENCRYPTION_KEY"].encode()
 
@@ -361,12 +377,47 @@ if __name__ == "__main__":
             logger.info("Starting multi-user listener manager...")
             await manager.start()
 
+            # ── Graceful shutdown on SIGTERM ──────────────────────────────
+            # Railway sends SIGTERM before replacing the container.  We must
+            # disconnect all Telethon clients BEFORE the process exits so
+            # that Telegram session auth keys are cleanly released.  Without
+            # this, the new container's connections trigger
+            # AuthKeyDuplicatedError and invalidate user sessions.
+            #
+            #   SIGTERM received
+            #     → manager.stop() disconnects all Telethon clients
+            #     → sessions released cleanly
+            #     → new container connects without conflict
+            #     → backfill recovers any signals missed during the gap
+            shutdown_event = asyncio.Event()
+            loop = asyncio.get_running_loop()
+
+            def _on_signal(sig_name: str) -> None:
+                logger.info("Received %s — initiating graceful shutdown...", sig_name)
+                shutdown_event.set()
+
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, _on_signal, sig.name)
+
             logger.info("Multi-user listener running. Press Ctrl+C to stop.")
             try:
-                while True:
-                    await asyncio.sleep(1)
+                await shutdown_event.wait()
             except (KeyboardInterrupt, asyncio.CancelledError):
-                await manager.stop()
+                pass
+            finally:
+                logger.info("Shutting down — disconnecting all Telegram clients...")
+                try:
+                    # Give manager 25s to disconnect all clients.  Railway
+                    # sends SIGKILL after gracefulShutdownTimeoutSeconds (30s
+                    # in railway.toml).  The 5s buffer ensures we log a clean
+                    # exit rather than being killed mid-disconnect.
+                    await asyncio.wait_for(manager.stop(), timeout=25.0)
+                    logger.info("All clients disconnected. Exiting cleanly.")
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Shutdown timed out after 25s — "
+                        "some clients may not have disconnected cleanly."
+                    )
 
     logging.basicConfig(level=logging.INFO)
     asyncio.run(_main())

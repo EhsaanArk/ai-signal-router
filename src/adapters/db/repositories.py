@@ -32,7 +32,7 @@ class SqlAlchemyUserRepository:
         self._session = session
 
     async def get_by_email(self, email: str) -> User | None:
-        stmt = select(UserModel).where(UserModel.email == email)
+        stmt = select(UserModel).where(UserModel.email == email.lower())
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         if row is None:

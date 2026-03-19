@@ -5,6 +5,7 @@ export interface ActionDefinition {
   example: string;
   isEntry?: boolean;
   forexOnly?: boolean;
+  cryptoOnly?: boolean;
 }
 
 export const ACTION_DEFINITIONS: ActionDefinition[] = [
@@ -20,6 +21,20 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     label: "Entry Short",
     description: "Open a new short/sell position",
     example: '"Sell GBPUSD at market"',
+    isEntry: true,
+  },
+  {
+    key: "start_long_limit_deal",
+    label: "Entry Long (Limit)",
+    description: "Open a new long/buy limit order",
+    example: '"Buy limit EURUSD @ 1.0950"',
+    isEntry: true,
+  },
+  {
+    key: "start_short_limit_deal",
+    label: "Entry Short (Limit)",
+    description: "Open a new short/sell limit order",
+    example: '"Sell limit GBPUSD @ 1.2500"',
     isEntry: true,
   },
   {
@@ -47,9 +62,16 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     description: "Move stop loss to entry price",
     example: '"Move SL to BE", "Breakeven"',
   },
+  {
+    key: "open_extra_order",
+    label: "Add Funds / Extra Order",
+    description: "Add funds or place an additional order on an existing position",
+    example: '"Add funds", "DCA", "Average down"',
+    cryptoOnly: true,
+  },
 ];
 
-const ENTRY_ONLY_FIELDS = ["price", "takeProfits", "stopLoss", "balance"];
+const ENTRY_ONLY_FIELDS = ["price", "takeProfits", "takeProfitsPips", "stopLoss", "stopLossPips", "balance"];
 
 export function generateActionPreview(
   actionKey: string,
@@ -87,8 +109,12 @@ export function generateActionPreview(
       actionKey === "partially_closed_by_percentage"
     ) {
       payload["percentage"] = 50;
-    } else if (actionKey === "move_sl_to_breakeven") {
+    } else if (actionKey === "move_sl_to_breakeven" || actionKey === "moved_sl_adjustment") {
       payload["slAdjustment"] = 0;
+      payload["sl_adjustment"] = 0;
+    } else if (actionKey === "open_extra_order") {
+      payload["is_market"] = true;
+      payload["position_type"] = "long";
     }
   } else {
     // For entry, fill empty fields with example values
@@ -106,9 +132,11 @@ export function generateActionPreview(
 export function getActionsForDestination(
   destinationType: string,
 ): ActionDefinition[] {
-  return ACTION_DEFINITIONS.filter(
-    (a) => !a.forexOnly || destinationType === "sagemaster_forex",
-  );
+  return ACTION_DEFINITIONS.filter((a) => {
+    if (a.forexOnly && destinationType !== "sagemaster_forex") return false;
+    if (a.cryptoOnly && destinationType !== "sagemaster_crypto") return false;
+    return true;
+  });
 }
 
 /** Return all action keys (for initializing enabled_actions). */

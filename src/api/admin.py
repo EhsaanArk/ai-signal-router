@@ -563,3 +563,85 @@ async def admin_health(
     )
     await cache.set(cache_key, stats.model_dump_json(), ttl_seconds=60)
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Listener Health
+# ---------------------------------------------------------------------------
+
+
+class ListenerSessionInfo(BaseModel):
+    user_id: UUID
+    user_email: str
+    phone_number: str
+    is_active: bool
+    disconnected_reason: str | None
+    disconnected_at: str | None
+    last_active: str | None
+    connected_at: str | None
+    routing_rule_count: int
+
+
+class ListenerHealthResponse(BaseModel):
+    active_sessions: int
+    inactive_sessions: int
+    sessions: list[ListenerSessionInfo]
+
+
+@admin_router.get("/listener-health", response_model=ListenerHealthResponse)
+async def admin_listener_health(
+    _admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ListenerHealthResponse:
+    """Listener health overview — shows all Telegram sessions with status."""
+    rule_count_sq = (
+        select(func.count())
+        .where(
+            RoutingRuleModel.user_id == TelegramSessionModel.user_id,
+            RoutingRuleModel.is_active.is_(True),
+        )
+        .correlate(TelegramSessionModel)
+        .scalar_subquery()
+    )
+
+    result = await db.execute(
+        select(
+            TelegramSessionModel,
+            UserModel.email.label("user_email"),
+            rule_count_sq.label("rule_count"),
+        )
+        .join(UserModel, TelegramSessionModel.user_id == UserModel.id)
+        .order_by(TelegramSessionModel.is_active.desc(), TelegramSessionModel.created_at.desc())
+    )
+    rows = result.all()
+
+    sessions = [
+        ListenerSessionInfo(
+            user_id=row.TelegramSessionModel.user_id,
+            user_email=row.user_email,
+            phone_number=row.TelegramSessionModel.phone_number,
+            is_active=row.TelegramSessionModel.is_active,
+            disconnected_reason=row.TelegramSessionModel.disconnected_reason,
+            disconnected_at=(
+                row.TelegramSessionModel.disconnected_at.isoformat()
+                if row.TelegramSessionModel.disconnected_at else None
+            ),
+            last_active=(
+                row.TelegramSessionModel.last_active.isoformat()
+                if row.TelegramSessionModel.last_active else None
+            ),
+            connected_at=(
+                row.TelegramSessionModel.created_at.isoformat()
+                if row.TelegramSessionModel.created_at else None
+            ),
+            routing_rule_count=row.rule_count,
+        )
+        for row in rows
+    ]
+
+    active = sum(1 for s in sessions if s.is_active)
+    return ListenerHealthResponse(
+        active_sessions=active,
+        inactive_sessions=len(sessions) - active,
+        sessions=sessions,
+    )

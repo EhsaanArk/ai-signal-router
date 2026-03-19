@@ -24,9 +24,44 @@ const KNOWN_FIELDS: {
   { key: "price", label: "Price", placeholder: "e.g., 1.1000", dynamic: "{{close}}", dynamicLabel: "From signal" },
   { key: "date", label: "Date", placeholder: "auto-filled", dynamic: "{{time}}", dynamicLabel: "Auto timestamp" },
   { key: "exchange", label: "Exchange", placeholder: "e.g., pptbitget" },
+  // V2 entry fields
+  { key: "balance", label: "Balance", placeholder: "e.g., 1000" },
+  { key: "lots", label: "Lots", placeholder: "e.g., 1" },
+  { key: "takeProfits", label: "Take Profits", placeholder: "e.g., [1.1050, 1.1100]", dynamic: "", dynamicLabel: "From signal" },
+  { key: "takeProfitsPips", label: "TP Pips", placeholder: "e.g., [30, 60]", dynamic: "", dynamicLabel: "From signal" },
+  { key: "stopLoss", label: "Stop Loss", placeholder: "e.g., 1.0950", dynamic: "", dynamicLabel: "From signal" },
+  { key: "stopLossPips", label: "SL Pips", placeholder: "e.g., 30", dynamic: "", dynamicLabel: "From signal" },
+  // Management action fields
+  { key: "lotSize", label: "Lot Size", placeholder: "e.g., 0.1" },
+  { key: "percentage", label: "Percentage", placeholder: "e.g., 50" },
+  { key: "slAdjustment", label: "SL Adjustment", placeholder: "e.g., 0" },
+  // Crypto-specific fields
+  { key: "position_type", label: "Position Type", placeholder: "e.g., long", dynamic: "", dynamicLabel: "From signal" },
+  { key: "is_market", label: "Is Market", placeholder: "true or false" },
+  { key: "order_price", label: "Order Price", placeholder: "e.g., 30000" },
+  { key: "take_profits", label: "Take Profits (%)", placeholder: "e.g., [1, 2, 5]", dynamic: "", dynamicLabel: "From signal" },
+  { key: "sl_adjustment", label: "SL Adjustment (Crypto)", placeholder: "e.g., 0" },
 ];
 
 const KNOWN_KEYS = new Set(KNOWN_FIELDS.map((f) => f.key));
+
+/**
+ * Sanitize TradingView placeholder variables in raw JSON text.
+ *
+ * SageMaster V2 templates contain bare {{...}} placeholders (e.g.,
+ * `"takeProfits": [ {{tpPrice}} ]`, `"stopLoss": {{slPrice}}`) that are
+ * NOT valid JSON.  This function replaces them with safe defaults so
+ * `JSON.parse()` succeeds.
+ */
+export function sanitizeTradingViewJson(raw: string): string {
+  return raw
+    // Replace array placeholders: [ {{tpPrice}} ] → []
+    .replace(/\[\s*\{\{[^}]+\}\}\s*\]/g, "[]")
+    // Replace bare number/value placeholders: {{slPrice}} → null
+    .replace(/:\s*\{\{[^}]+\}\}/g, ": null")
+    // Strip trailing commas before } or ]
+    .replace(/,\s*([}\]])/g, "$1");
+}
 
 interface FieldState {
   key: string;
@@ -45,17 +80,33 @@ function isDynamicValue(value: string): boolean {
   return value === "" || value.startsWith("{{");
 }
 
+/** Check if a non-string value is "empty" (null, [], 0) — indicating it
+ *  was likely a TradingView placeholder that the sanitizer replaced. */
+function isEmptyDefault(val: unknown): boolean {
+  if (val === null || val === undefined) return true;
+  if (Array.isArray(val) && val.length === 0) return true;
+  return false;
+}
+
 function parseJsonToFields(json: string): FieldState[] | null {
   try {
-    const obj = JSON.parse(json);
+    const obj = JSON.parse(sanitizeTradingViewJson(json));
     if (typeof obj !== "object" || Array.isArray(obj)) return null;
     const fields: FieldState[] = [];
     for (const [key, val] of Object.entries(obj)) {
+      const knownField = KNOWN_FIELDS.find((f) => f.key === key);
       if (typeof val !== "string") {
-        // Non-string values: store as JSON string, mark as custom
-        fields.push({ key, value: JSON.stringify(val), isDynamic: false, isCustom: !KNOWN_KEYS.has(key) });
+        // Non-string values: check if this known field supports dynamic and
+        // the value is an empty default (sanitizer replaced a placeholder)
+        const supportsDynamic = knownField?.dynamic !== undefined;
+        const shouldBeAuto = supportsDynamic && isEmptyDefault(val);
+        fields.push({
+          key,
+          value: JSON.stringify(val),
+          isDynamic: shouldBeAuto,
+          isCustom: !KNOWN_KEYS.has(key),
+        });
       } else {
-        const knownField = KNOWN_FIELDS.find((f) => f.key === key);
         // Symbol fields default to dynamic — users rarely want a hardcoded symbol
         const isSymbolField = knownField?.dynamic === "{{ticker}}";
         const dynamic = knownField?.dynamic !== undefined && (isDynamicValue(val) || isSymbolField);
@@ -68,17 +119,38 @@ function parseJsonToFields(json: string): FieldState[] | null {
   }
 }
 
+/** For dynamic (Auto) fields, determine the correct empty placeholder value.
+ *  String fields use their `dynamic` value (e.g., "{{close}}"), but non-string
+ *  fields need their structural default ([] for arrays, null for numbers). */
+function dynamicPlaceholder(known: typeof KNOWN_FIELDS[number] | undefined, currentValue: string): unknown {
+  if (!known) return "";
+  // If the field has a real placeholder like "{{close}}" or "{{ticker}}", use it
+  if (known.dynamic && known.dynamic !== "") return known.dynamic;
+  // For empty-string dynamic fields, infer the right empty default from the current value
+  try {
+    const parsed = JSON.parse(currentValue);
+    if (Array.isArray(parsed)) return [];
+    if (typeof parsed === "number") return null;
+    if (parsed === null) return null;
+  } catch { /* not JSON — fall through */ }
+  return "";
+}
+
 function fieldsToJson(fields: FieldState[]): string {
   const obj: Record<string, unknown> = {};
   for (const field of fields) {
     if (!field.key) continue;
-    // Try to parse non-string values back
     if (!field.isCustom) {
       if (field.isDynamic) {
         const known = KNOWN_FIELDS.find((f) => f.key === field.key);
-        obj[field.key] = known?.dynamic ?? "";
+        obj[field.key] = dynamicPlaceholder(known, field.value);
       } else {
-        obj[field.key] = field.value;
+        // Known field, static: try to parse as JSON to preserve types (arrays, numbers)
+        try {
+          obj[field.key] = JSON.parse(field.value);
+        } catch {
+          obj[field.key] = field.value;
+        }
       }
     } else {
       // Custom fields: try to parse as JSON, fallback to string

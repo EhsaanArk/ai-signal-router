@@ -237,7 +237,7 @@ async def login(
     Accepts standard OAuth2 form data (``username`` field = email).
     """
     result = await db.execute(
-        select(UserModel).where(UserModel.email == form_data.username)
+        select(UserModel).where(UserModel.email == form_data.username.lower())
     )
     user_row = result.scalar_one_or_none()
 
@@ -272,7 +272,7 @@ async def login_json(
 ) -> TokenResponse:
     """JSON-based login endpoint (convenience wrapper around the form login)."""
     result = await db.execute(
-        select(UserModel).where(UserModel.email == body.email)
+        select(UserModel).where(UserModel.email == body.email.lower())
     )
     user_row = result.scalar_one_or_none()
 
@@ -324,9 +324,10 @@ async def register(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TokenResponse:
     """Register a new user and return a JWT."""
-    # Check email uniqueness
+    # Check email uniqueness (case-insensitive)
+    normalised_email = body.email.lower()
     result = await db.execute(
-        select(UserModel).where(UserModel.email == body.email)
+        select(UserModel).where(UserModel.email == normalised_email)
     )
     if result.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -335,7 +336,7 @@ async def register(
         )
 
     hashed = pwd_context.hash(body.password)
-    new_user = UserModel(email=body.email, password_hash=hashed)
+    new_user = UserModel(email=normalised_email, password_hash=hashed)
     db.add(new_user)
     await db.flush()
 
@@ -387,7 +388,7 @@ async def forgot_password(
 ) -> MessageResponse:
     """Send a password reset link if the email exists. Always returns 200."""
     result = await db.execute(
-        select(UserModel).where(UserModel.email == body.email)
+        select(UserModel).where(UserModel.email == body.email.lower())
     )
     user_row = result.scalar_one_or_none()
 
@@ -827,6 +828,21 @@ async def telegram_verify_code(
             detail="Failed to encrypt session. Check ENCRYPTION_KEY configuration.",
         )
 
+    # Cross-user phone uniqueness check — prevent two different users from
+    # connecting the same Telegram account (Telegram kills competing sessions).
+    conflict = (await db.execute(
+        select(TelegramSessionModel).where(
+            TelegramSessionModel.phone_number == body.phone_number,
+            TelegramSessionModel.is_active.is_(True),
+            TelegramSessionModel.user_id != current_user.id,
+        ).limit(1)
+    )).scalar_one_or_none()
+    if conflict is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This phone number is already connected to another account.",
+        )
+
     # Upsert the telegram session record
     result = await db.execute(
         select(TelegramSessionModel).where(
@@ -839,6 +855,8 @@ async def telegram_verify_code(
     if existing:
         existing.session_string_encrypted = encrypted
         existing.is_active = True
+        existing.disconnected_reason = None
+        existing.disconnected_at = None
     else:
         db.add(
             TelegramSessionModel(
@@ -868,10 +886,13 @@ async def telegram_status(
 ) -> TelegramStatusResponse:
     """Check whether the current user has an active Telegram session."""
     result = await db.execute(
-        select(TelegramSessionModel).where(
+        select(TelegramSessionModel)
+        .where(
             TelegramSessionModel.user_id == current_user.id,
             TelegramSessionModel.is_active.is_(True),
         )
+        .order_by(TelegramSessionModel.created_at.desc())
+        .limit(1)
     )
     session = result.scalar_one_or_none()
     if session is not None:
@@ -963,10 +984,13 @@ async def list_channels(
 
     if session_encrypted is None:
         result = await db.execute(
-            select(TelegramSessionModel).where(
+            select(TelegramSessionModel)
+            .where(
                 TelegramSessionModel.user_id == current_user.id,
                 TelegramSessionModel.is_active.is_(True),
             )
+            .order_by(TelegramSessionModel.created_at.desc())
+            .limit(1)
         )
         session_row = result.scalar_one_or_none()
         if session_row is None:

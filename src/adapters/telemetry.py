@@ -37,6 +37,18 @@ def init_telemetry() -> None:
         _initialised = True
         return
 
+    # Auto-disable when no collector endpoint is configured.  The OTel SDK
+    # defaults to localhost:4317 which doesn't exist in Railway containers,
+    # causing continuous retry log spam.  Enable by setting
+    # OTEL_EXPORTER_OTLP_ENDPOINT when a LGTM stack (Grafana/Tempo/Loki) is ready.
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        logger.info(
+            "OpenTelemetry disabled — no OTEL_EXPORTER_OTLP_ENDPOINT configured. "
+            "Set it when your LGTM stack is ready."
+        )
+        _initialised = True
+        return
+
     try:
         from opentelemetry import trace, metrics
         from opentelemetry.sdk.resources import Resource

@@ -133,7 +133,7 @@ def test_partial_close_by_lot_v2():
     signal = ParsedSignal(action="partial_close", symbol="EURUSD", lots="0.3")
     payload = build_webhook_payload(signal, rule)
     assert payload["type"] == "partially_close_by_lot"
-    assert payload["lotSize"] == "0.3"
+    assert payload["lotSize"] == 0.3
 
 
 def test_partial_close_by_lot_default():
@@ -147,7 +147,7 @@ def test_partial_close_by_lot_default():
     signal = ParsedSignal(action="partial_close", symbol="EURUSD")
     payload = build_webhook_payload(signal, rule)
     assert payload["type"] == "partially_close_by_lot"
-    assert payload["lotSize"] == "0.5"
+    assert payload["lotSize"] == 0.5
 
 
 def test_partial_close_by_percentage_v2():
@@ -337,7 +337,7 @@ def test_template_followup_partial_close_lot():
     signal = ParsedSignal(action="partial_close", symbol="EURUSD", lots="0.3")
     payload = build_webhook_payload(signal, rule)
     assert payload["type"] == "partially_close_by_lot"
-    assert payload["lotSize"] == "0.3"
+    assert payload["lotSize"] == 0.3
 
 
 # ---- Template field preservation (entry) ----
@@ -826,3 +826,125 @@ def test_asset_class_custom_destination_accepts_all():
     for asset_class in ("forex", "crypto", "commodities", "indices", "unknown"):
         signal = ParsedSignal(symbol="TEST", direction="long", source_asset_class=asset_class)
         assert check_asset_class_mismatch(signal, rule) is None
+
+
+# ---- Crypto extra order ----
+
+
+def test_crypto_extra_order_payload():
+    """extra_order action should produce open_extra_order with crypto fields."""
+    rule = _rule_with_template({
+        "type": "",
+        "aiAssistId": "my-assist-id",
+        "exchange": "bitgetfutures",
+        "tradeSymbol": "BTC/USDT:USDT",
+        "eventSymbol": "{{ticker}}",
+        "price": "{{close}}",
+        "date": "",
+    }, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        action="extra_order", symbol="BTC/USDT", direction="long",
+        source_asset_class="crypto", is_market=False, order_price=30000,
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "open_extra_order"
+    assert payload["position_type"] == "long"
+    assert payload["is_market"] is False
+    assert payload["order_price"] == 30000
+
+
+def test_crypto_extra_order_market_default():
+    """extra_order without is_market should default to market order."""
+    rule = _rule_with_template({
+        "type": "",
+        "aiAssistId": "my-assist-id",
+        "exchange": "bitgetfutures",
+        "tradeSymbol": "BTC/USDT:USDT",
+        "date": "",
+    }, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        action="extra_order", symbol="BTC/USDT", direction="long",
+        source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "open_extra_order"
+    assert payload["is_market"] is True
+    assert "order_price" not in payload
+
+
+# ---- Crypto entry with TP/SL (percentage-based) ----
+
+
+def test_crypto_entry_with_tp_sl_percentages():
+    """Crypto entry with take_profits and stopLoss should fill from signal."""
+    rule = _rule_with_template({
+        "type": "",
+        "aiAssistId": "my-assist-id",
+        "exchange": "bitgetfutures",
+        "tradeSymbol": "",
+        "position_type": "",
+        "eventSymbol": "",
+        "price": "",
+        "date": "",
+        "take_profits": [],
+        "stopLoss": None,
+    }, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        symbol="BTC/USDT", direction="long",
+        source_asset_class="crypto",
+        take_profits=[1, 2, 5], stop_loss=10,
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["type"] == "start_deal"
+    assert payload["take_profits"] == [1, 2, 5]
+    assert payload["stopLoss"] == 10
+    assert payload["position_type"] == "long"
+
+
+def test_crypto_entry_snake_case_stop_loss():
+    """Crypto entry with snake_case stop_loss should be filled from signal."""
+    rule = _rule_with_template({
+        "type": "",
+        "aiAssistId": "my-assist-id",
+        "exchange": "bitgetfutures",
+        "tradeSymbol": "",
+        "position_type": "",
+        "eventSymbol": "",
+        "price": "",
+        "date": "",
+        "take_profits": [],
+        "stop_loss": None,
+    }, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        symbol="BTC/USDT", direction="short",
+        source_asset_class="crypto",
+        take_profits=[2, 4], stop_loss=5,
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["take_profits"] == [2, 4]
+    assert payload["stop_loss"] == 5
+    assert payload["position_type"] == "short"
+
+
+def test_crypto_entry_preserves_prefilled_tp_sl():
+    """Crypto entry with pre-filled TP/SL should NOT be overwritten."""
+    rule = _rule_with_template({
+        "type": "",
+        "aiAssistId": "my-assist-id",
+        "exchange": "bitgetfutures",
+        "tradeSymbol": "BTC/USDT:USDT",
+        "position_type": "long",
+        "eventSymbol": "",
+        "price": "",
+        "date": "",
+        "take_profits": [1, 2, 5],
+        "stopLoss": 10,
+    }, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        symbol="BTC/USDT", direction="long",
+        source_asset_class="crypto",
+        take_profits=[3, 6, 9], stop_loss=20,
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert payload["take_profits"] == [1, 2, 5]
+    assert payload["stopLoss"] == 10

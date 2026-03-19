@@ -3,6 +3,12 @@
 Orchestrates one ``TelegramListener`` per active user session so that
 all registered users receive signals simultaneously within a single
 Railway worker process.
+
+Responsibilities:
+- Per-user listener lifecycle (start, stop, restart)
+- Periodic session sync, channel refresh, and heartbeat
+- Delegates backfill to :mod:`~src.adapters.telegram.backfill`
+- Delegates DB queries to :class:`~src.adapters.telegram.repository.TelegramSessionRepository`
 """
 
 from __future__ import annotations
@@ -12,29 +18,33 @@ import logging
 from uuid import UUID
 
 import sentry_sdk
-from sqlalchemy import func, select, update
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from telethon.errors import FloodWaitError
+from sqlalchemy.ext.asyncio import AsyncEngine
+from telethon.errors import AuthKeyError, FloodWaitError
 
-from src.adapters.db.models import RoutingRuleModel, TelegramSessionModel, UserModel
+from src.adapters.telegram.backfill import backfill_missed_signals
 from src.adapters.telegram.listener import TelegramListener
+from src.adapters.telegram.repository import (
+    TelegramSessionRepository,
+    _capture_user_exception,
+)
 from src.core.interfaces import QueuePort
-from src.core.notifications import NotificationPreference
-from src.core.security import decrypt_session_auto
 
 logger = logging.getLogger(__name__)
 
 
-def _capture_user_exception(exc: Exception, user_id: UUID) -> None:
-    """Capture an exception to Sentry with per-user context.
+def _is_session_dead(exc: Exception) -> bool:
+    """Return True if the exception indicates a permanently invalid session.
 
-    Uses ``new_scope`` so that user tags don't leak between concurrent
-    listeners on the same event loop.
+    Covers:
+    - RuntimeError("not authorised") — Telethon auth check failure
+    - AuthKeyDuplicatedError — two connections used the same session
+    - AuthKeyError (parent) — any auth key corruption/revocation
     """
-    with sentry_sdk.new_scope() as scope:
-        scope.set_user({"id": str(user_id)})
-        scope.set_tag("user_id", str(user_id))
-        scope.capture_exception(exc)
+    if isinstance(exc, AuthKeyError):
+        return True
+    if isinstance(exc, RuntimeError) and "not authorised" in str(exc).lower():
+        return True
+    return False
 
 
 # After this many consecutive heartbeat failures the client is fully restarted.
@@ -45,6 +55,20 @@ REFRESH_INTERVAL = 30
 
 # Max concurrent listener startups (limits parallel get_dialogs() calls).
 MAX_CONCURRENT_STARTUPS = 3
+
+# Max concurrent heartbeat checks (for scale — prevents sequential bottleneck).
+MAX_CONCURRENT_HEARTBEAT = 10
+
+# Proactive auth check: verify sessions every Nth heartbeat (~5 min at 30s).
+AUTH_CHECK_INTERVAL = 10
+
+# Startup backoff: after this many consecutive failures, start backing off.
+MAX_STARTUP_RETRIES = 3
+
+# Each failure beyond MAX_STARTUP_RETRIES skips this many heartbeat cycles.
+# Failure 4 → skip 10 cycles (5 min), failure 5 → skip 20 (10 min), capped at 30.
+STARTUP_BACKOFF_MULTIPLIER = 10
+STARTUP_BACKOFF_CAP = 30
 
 
 class MultiUserListenerManager:
@@ -78,16 +102,19 @@ class MultiUserListenerManager:
         self._api_hash = api_hash
         self._queue_port = queue_port
         self._engine = engine
-        self._enc_key = enc_key
         self._proxy = proxy
         self._email_notifier = email_notifier
 
+        self._repo = TelegramSessionRepository(engine, enc_key)
         self._listeners: dict[UUID, TelegramListener] = {}
         self._monitored_channels: dict[UUID, set[str]] = {}
         self._failure_counts: dict[UUID, int] = {}
+        self._startup_failures: dict[UUID, int] = {}
+        self._heartbeat_count: int = 0
         self._refresh_task: asyncio.Task | None = None
         self._running = False
         self._startup_semaphore = asyncio.Semaphore(MAX_CONCURRENT_STARTUPS)
+        self._heartbeat_semaphore = asyncio.Semaphore(MAX_CONCURRENT_HEARTBEAT)
 
     # ------------------------------------------------------------------
     # Public API
@@ -97,8 +124,8 @@ class MultiUserListenerManager:
         """Load all active sessions and start a listener for each user."""
         self._running = True
 
-        sessions = await self._load_active_sessions()
-        all_channels = await self._load_all_monitored_channels()
+        sessions = await self._repo.load_active_sessions()
+        all_channels = await self._repo.load_all_monitored_channels()
         logger.info(
             "Found %d active Telegram session(s) in database", len(sessions),
         )
@@ -144,6 +171,7 @@ class MultiUserListenerManager:
             self._listeners.clear()
             self._monitored_channels.clear()
             self._failure_counts.clear()
+            self._startup_failures.clear()
 
         logger.info("Multi-user listener manager stopped.")
 
@@ -153,16 +181,14 @@ class MultiUserListenerManager:
             "total_listeners": len(self._listeners),
             "connected_listeners": sum(
                 1 for l in self._listeners.values()
-                if l._client and l._client.is_connected()
+                if l.is_connected
             ),
             "total_monitored_channels": sum(
                 len(ch) for ch in self._monitored_channels.values()
             ),
             "users": {
                 str(uid): {
-                    "connected": (
-                        l._client is not None and l._client.is_connected()
-                    ),
+                    "connected": l.is_connected,
                     "channels": len(self._monitored_channels.get(uid, set())),
                     "failure_count": self._failure_counts.get(uid, 0),
                 }
@@ -182,12 +208,6 @@ class MultiUserListenerManager:
     ) -> bool:
         """Create, start, and register a listener for a single user.
 
-        Parameters
-        ----------
-        channels:
-            Pre-loaded monitored channels.  When ``None`` (e.g. during a
-            single-user restart) the channels are fetched from the database.
-
         Returns True on success, False on failure.
         """
         if user_id in self._listeners:
@@ -203,7 +223,7 @@ class MultiUserListenerManager:
 
         # Load channels if not pre-loaded (e.g. restart scenario)
         if channels is None:
-            channels = await self._load_monitored_channels(user_id)
+            channels = await self._repo.load_monitored_channels(user_id)
 
         try:
             await listener.start(user_id, session_string, monitored_channels=channels)
@@ -220,28 +240,30 @@ class MultiUserListenerManager:
                     "User %s: retry after flood-wait failed: %s",
                     user_id, retry_exc,
                 )
-                # Deactivate session if permanently invalid
-                if isinstance(retry_exc, RuntimeError) and "not authorised" in str(retry_exc).lower():
-                    await self._deactivate_session(user_id)
+                if _is_session_dead(retry_exc):
+                    await self._deactivate_and_notify(user_id)
+                self._startup_failures[user_id] = self._startup_failures.get(user_id, 0) + 1
                 _capture_user_exception(retry_exc, user_id)
                 return False
-        except RuntimeError as exc:
-            if "not authorised" in str(exc).lower():
+        except (RuntimeError, AuthKeyError) as exc:
+            if _is_session_dead(exc):
                 logger.warning(
-                    "Session expired for user %s — deactivating in DB",
-                    user_id,
+                    "Session invalid for user %s (%s) — deactivating",
+                    user_id, type(exc).__name__,
                 )
-                await self._deactivate_session(user_id)
+                await self._deactivate_and_notify(user_id)
             else:
                 logger.error(
                     "Failed to start listener for user %s: %s", user_id, exc,
                 )
+            self._startup_failures[user_id] = self._startup_failures.get(user_id, 0) + 1
             _capture_user_exception(exc, user_id)
             return False
         except Exception as exc:
             logger.error(
                 "Failed to start listener for user %s: %s", user_id, exc,
             )
+            self._startup_failures[user_id] = self._startup_failures.get(user_id, 0) + 1
             _capture_user_exception(exc, user_id)
             return False
 
@@ -250,11 +272,23 @@ class MultiUserListenerManager:
         self._listeners[user_id] = listener
         self._monitored_channels[user_id] = channels
         self._failure_counts[user_id] = 0
+        self._startup_failures.pop(user_id, None)  # Reset on success
 
         logger.info(
             "Listener started for user %s — monitoring %d channel(s)",
             user_id, len(channels),
         )
+
+        # Backfill any signals missed during downtime (best-effort)
+        if channels:
+            asyncio.create_task(
+                backfill_missed_signals(
+                    user_id, listener, channels,
+                    self._repo, self._queue_port,
+                ),
+                name=f"backfill-{user_id}",
+            )
+
         return True
 
     async def _stop_listener_for_user(self, user_id: UUID) -> None:
@@ -274,131 +308,60 @@ class MultiUserListenerManager:
 
         logger.info("Listener stopped for user %s", user_id)
 
-    async def _deactivate_session(
-        self, user_id: UUID, reason: str = "session_expired",
-    ) -> None:
-        """Mark a user's Telegram session as inactive in the database.
+    async def _restart_listener_for_user(self, user_id: UUID) -> None:
+        """Stop and restart a listener from scratch (re-reads session from DB)."""
+        logger.warning("Restarting listener for user %s", user_id)
+        await self._stop_listener_for_user(user_id)
 
-        Called when a session is permanently invalid (e.g. revoked by the
-        user in Telegram settings).  The user must re-authenticate via the
-        frontend to create a new session.
-
-        Parameters
-        ----------
-        reason:
-            Why the session was deactivated.  Stored in the DB so the
-            frontend can display a user-friendly explanation.  Valid values:
-            ``session_expired``, ``flood_wait_exhausted``, ``decrypt_failed``,
-            ``user_disconnected``.
-        """
         try:
-            async with AsyncSession(self._engine, expire_on_commit=False) as db:
-                await db.execute(
-                    update(TelegramSessionModel)
-                    .where(TelegramSessionModel.user_id == user_id)
-                    .values(
-                        is_active=False,
-                        disconnected_reason=reason,
-                        disconnected_at=func.now(),
-                    )
+            session_string = await self._repo.load_session_for_user(user_id)
+            if session_string is None:
+                logger.warning(
+                    "No active session for user %s after restart attempt", user_id,
                 )
-                await db.commit()
-            logger.warning(
-                "Deactivated session for user %s (reason=%s) — user must re-authenticate",
-                user_id, reason,
-            )
+                return
+            await self._start_listener_for_user(user_id, session_string)
         except Exception as exc:
-            logger.error(
-                "Failed to deactivate session for user %s: %s", user_id, exc,
-            )
-            return
+            logger.error("Restart failed for user %s: %s", user_id, exc)
+            _capture_user_exception(exc, user_id)
 
-        # Send email notification if configured
-        if reason != "user_disconnected":
-            asyncio.create_task(
-                self._notify_disconnect(user_id, reason),
-                name=f"notify-disconnect-{user_id}",
-            )
+    # ------------------------------------------------------------------
+    # Internal: notifications
+    # ------------------------------------------------------------------
 
     async def _notify_disconnect(self, user_id: UUID, reason: str) -> None:
         """Send a disconnect notification email if the user opted in."""
         if self._email_notifier is None:
             return
         try:
-            async with AsyncSession(self._engine, expire_on_commit=False) as db:
-                user = (
-                    await db.execute(
-                        select(UserModel).where(UserModel.id == user_id)
-                    )
-                ).scalar_one_or_none()
-            if user is None:
+            email, prefs = await self._repo.get_user_notification_prefs(user_id)
+            if email is None or not prefs.email_on_disconnect:
                 return
 
-            prefs = NotificationPreference.model_validate(
-                user.notification_preferences or {}
+            await self._email_notifier.send_disconnect_alert(
+                user_email=email,
+                reason=reason,
             )
-            if not prefs.email_on_disconnect:
-                return
-
-            reason_labels = {
-                "session_expired": "Your Telegram session expired",
-                "flood_wait_exhausted": "Telegram rate-limited your account",
-                "decrypt_failed": "Session data could not be decrypted",
-            }
-            subject = "Sage Radar AI — Telegram disconnected"
-            html = (
-                f"<h2>Telegram Disconnected</h2>"
-                f"<p>{reason_labels.get(reason, 'Your Telegram session was disconnected')}. "
-                f"Signal routing has been paused.</p>"
-                f"<p>Please log in to <a href='https://app.sageradar.ai/telegram'>"
-                f"Sage Radar AI</a> to reconnect.</p>"
-            )
-
-            import resend
-            resend.api_key = self._email_notifier._api_key  # type: ignore[attr-defined]
-            await asyncio.to_thread(resend.Emails.send, {
-                "from": self._email_notifier._from_address,  # type: ignore[attr-defined]
-                "to": [user.email],
-                "subject": subject,
-                "html": html,
-            })
-            logger.info("Disconnect notification email sent to %s", user.email)
         except Exception as exc:
             logger.error(
                 "Failed to send disconnect notification for user %s: %s",
                 user_id, exc,
             )
 
-    async def _restart_listener_for_user(self, user_id: UUID) -> None:
-        """Stop and restart a listener from scratch (re-reads session from DB)."""
-        logger.warning("Restarting listener for user %s", user_id)
-        await self._stop_listener_for_user(user_id)
+    async def _deactivate_and_notify(
+        self, user_id: UUID, reason: str = "session_expired",
+    ) -> None:
+        """Deactivate a session in DB and notify the user.
 
-        # Re-load the session from DB
-        try:
-            async with AsyncSession(self._engine, expire_on_commit=False) as db:
-                row = (
-                    await db.execute(
-                        select(TelegramSessionModel).where(
-                            TelegramSessionModel.user_id == user_id,
-                            TelegramSessionModel.is_active.is_(True),
-                        ).limit(1)
-                    )
-                ).scalar_one_or_none()
-
-            if row is None:
-                logger.warning(
-                    "No active session for user %s after restart attempt", user_id,
-                )
-                return
-
-            session_string = decrypt_session_auto(
-                row.session_string_encrypted, self._enc_key,
-            )
-            await self._start_listener_for_user(user_id, session_string)
-        except Exception as exc:
-            logger.error("Restart failed for user %s: %s", user_id, exc)
-            _capture_user_exception(exc, user_id)
+        Convenience wrapper that combines the DB update with an async
+        notification task.  Used when a session is permanently invalid
+        (auth key revoked, duplicated, or expired).
+        """
+        await self._repo.deactivate_session(user_id, reason)
+        asyncio.create_task(
+            self._notify_disconnect(user_id, reason),
+            name=f"notify-disconnect-{user_id}",
+        )
 
     # ------------------------------------------------------------------
     # Internal: refresh loop (sessions, channels, heartbeat)
@@ -427,26 +390,46 @@ class MultiUserListenerManager:
 
     async def _sync_sessions(self) -> None:
         """Detect newly added or removed user sessions."""
-        sessions = await self._load_active_sessions()
+        sessions = await self._repo.load_active_sessions()
         active_user_ids = {uid for uid, _ in sessions}
         current_user_ids = set(self._listeners.keys())
 
-        # Start listeners for new users (bounded concurrency)
+        # Start listeners for new users (bounded concurrency + backoff)
         new_users = active_user_ids - current_user_ids
         if new_users:
-            new_sessions = [
-                (uid, ss) for uid, ss in sessions if uid in new_users
-            ]
+            new_sessions = []
+            for uid, ss in sessions:
+                if uid not in new_users:
+                    continue
+                # Apply startup backoff for users with repeated failures
+                failures = self._startup_failures.get(uid, 0)
+                if failures >= MAX_STARTUP_RETRIES:
+                    skip_cycles = min(
+                        (failures - MAX_STARTUP_RETRIES + 1) * STARTUP_BACKOFF_MULTIPLIER,
+                        STARTUP_BACKOFF_CAP,
+                    )
+                    if self._heartbeat_count % skip_cycles != 0:
+                        logger.debug(
+                            "User %s: startup backoff (failure %d, next retry in ~%ds)",
+                            uid, failures, skip_cycles * REFRESH_INTERVAL,
+                        )
+                        continue
+                    logger.info(
+                        "User %s: backoff retry attempt (failure %d)",
+                        uid, failures,
+                    )
+                new_sessions.append((uid, ss))
 
             async def _bounded_start(uid: UUID, ss: str) -> None:
                 async with self._startup_semaphore:
                     logger.info("New active session detected for user %s", uid)
                     await self._start_listener_for_user(uid, ss)
 
-            await asyncio.gather(
-                *[_bounded_start(uid, ss) for uid, ss in new_sessions],
-                return_exceptions=True,
-            )
+            if new_sessions:
+                await asyncio.gather(
+                    *[_bounded_start(uid, ss) for uid, ss in new_sessions],
+                    return_exceptions=True,
+                )
 
         # Stop listeners for removed/deactivated users
         removed_users = current_user_ids - active_user_ids
@@ -457,7 +440,7 @@ class MultiUserListenerManager:
     async def _refresh_all_channels(self) -> None:
         """Refresh monitored channels for all active listeners (batch query)."""
         try:
-            all_channels = await self._load_all_monitored_channels()
+            all_channels = await self._repo.load_all_monitored_channels()
         except Exception as exc:
             logger.error("Failed to batch-load monitored channels: %s", exc)
             return
@@ -469,67 +452,145 @@ class MultiUserListenerManager:
                 self._monitored_channels[user_id] = updated
 
     async def _heartbeat(self) -> None:
-        """Check connectivity and attempt reconnect for disconnected clients."""
-        connected = 0
+        """Check connectivity and attempt reconnect for disconnected clients.
+
+        Runs checks in parallel with bounded concurrency to avoid
+        sequential bottlenecks at scale (100+ listeners).
+
+        Proactive auth checks are **staggered per user** to avoid
+        thundering-herd API calls to Telegram.  Each user is assigned
+        a slot based on ``hash(user_id) % AUTH_CHECK_INTERVAL`` so that
+        at most ``ceil(N / AUTH_CHECK_INTERVAL)`` users are checked per
+        heartbeat cycle.  Every user is still checked every ~5 minutes.
+        """
+        self._heartbeat_count += 1
+        results: list[bool] = []
+
+        async def _check_user(user_id: UUID, listener: TelegramListener) -> bool:
+            """Check one user's listener. Returns True if connected."""
+            async with self._heartbeat_semaphore:
+                if listener.is_connected:
+                    self._failure_counts[user_id] = 0
+
+                    # Staggered proactive auth check (~5 min per user, spread across cycles)
+                    user_slot = hash(user_id) % AUTH_CHECK_INTERVAL
+                    if self._heartbeat_count % AUTH_CHECK_INTERVAL == user_slot:
+                        try:
+                            authorized = await listener._client.is_user_authorized()
+                            if not authorized:
+                                logger.warning(
+                                    "User %s: session revoked (proactive auth check) — deactivating",
+                                    user_id,
+                                )
+                                await self._deactivate_and_notify(user_id)
+                                await self._stop_listener_for_user(user_id)
+                                return False
+                        except AuthKeyError as exc:
+                            logger.warning(
+                                "User %s: auth key invalid during proactive check (%s) — deactivating",
+                                user_id, type(exc).__name__,
+                            )
+                            await self._deactivate_and_notify(user_id)
+                            await self._stop_listener_for_user(user_id)
+                            _capture_user_exception(exc, user_id)
+                            return False
+                        except Exception as exc:
+                            # Non-fatal: auth check failed but client is connected.
+                            # Log and continue — don't deactivate on transient errors.
+                            logger.debug(
+                                "User %s: proactive auth check failed: %s",
+                                user_id, exc,
+                            )
+
+                    return True
+
+                # Client is disconnected
+                self._failure_counts[user_id] = self._failure_counts.get(user_id, 0) + 1
+                failures = self._failure_counts[user_id]
+
+                if failures >= MAX_CONSECUTIVE_FAILURES:
+                    logger.warning(
+                        "User %s: %d consecutive failures — full restart",
+                        user_id, failures,
+                    )
+                    await self._restart_listener_for_user(user_id)
+                    return False
+
+                logger.warning(
+                    "User %s: client disconnected (failure %d/%d), attempting reconnect",
+                    user_id, failures, MAX_CONSECUTIVE_FAILURES,
+                )
+                try:
+                    await listener._client.connect()
+                    # Re-prime entity cache for monitored channels only
+                    for ch_id in self._monitored_channels.get(user_id, set()):
+                        try:
+                            await listener._client.get_entity(int(ch_id))
+                        except Exception:
+                            pass
+                    self._failure_counts[user_id] = 0
+                    logger.info("Reconnected user %s successfully", user_id)
+
+                    # Backfill signals missed during disconnection
+                    user_channels = self._monitored_channels.get(user_id, set())
+                    if user_channels:
+                        asyncio.create_task(
+                            backfill_missed_signals(
+                                user_id, listener, user_channels,
+                                self._repo, self._queue_port,
+                            ),
+                            name=f"backfill-reconnect-{user_id}",
+                        )
+                    return True
+                except FloodWaitError as e:
+                    logger.warning(
+                        "User %s: flood-wait %ds during heartbeat reconnect",
+                        user_id, e.seconds,
+                    )
+                    self._failure_counts[user_id] = max(
+                        self._failure_counts.get(user_id, 1) - 1, 0,
+                    )
+                    _capture_user_exception(e, user_id)
+                except (RuntimeError, AuthKeyError) as exc:
+                    if _is_session_dead(exc):
+                        logger.warning(
+                            "User %s: session permanently invalid (%s) — deactivating",
+                            user_id, type(exc).__name__,
+                        )
+                        await self._deactivate_and_notify(user_id)
+                        await self._stop_listener_for_user(user_id)
+                    else:
+                        logger.error("Reconnect failed for user %s: %s", user_id, exc)
+                    _capture_user_exception(exc, user_id)
+                except Exception as exc:
+                    logger.error("Reconnect failed for user %s: %s", user_id, exc)
+                    _capture_user_exception(exc, user_id)
+                return False
+
+        # Run all heartbeat checks in parallel with bounded concurrency
+        check_tasks = [
+            _check_user(uid, listener)
+            for uid, listener in list(self._listeners.items())
+        ]
+        if check_tasks:
+            results = await asyncio.gather(*check_tasks, return_exceptions=True)
+
+        connected = sum(1 for r in results if r is True)
         total = len(self._listeners)
 
-        for user_id, listener in list(self._listeners.items()):
-            if listener._client and listener._client.is_connected():
-                connected += 1
-                self._failure_counts[user_id] = 0
-                continue
-
-            # Client is disconnected
-            self._failure_counts[user_id] = self._failure_counts.get(user_id, 0) + 1
-            failures = self._failure_counts[user_id]
-
-            if failures >= MAX_CONSECUTIVE_FAILURES:
-                logger.warning(
-                    "User %s: %d consecutive failures — full restart",
-                    user_id, failures,
-                )
-                await self._restart_listener_for_user(user_id)
-                continue
-
-            logger.warning(
-                "User %s: client disconnected (failure %d/%d), attempting reconnect",
-                user_id, failures, MAX_CONSECUTIVE_FAILURES,
-            )
-            try:
-                await listener._client.connect()
-                # Re-prime entity cache for monitored channels only (lightweight)
-                for ch_id in self._monitored_channels.get(user_id, set()):
-                    try:
-                        await listener._client.get_entity(int(ch_id))
-                    except Exception:
-                        pass
-                self._failure_counts[user_id] = 0
-                connected += 1
-                logger.info("Reconnected user %s successfully", user_id)
-            except FloodWaitError as e:
-                logger.warning(
-                    "User %s: flood-wait %ds during heartbeat reconnect",
-                    user_id, e.seconds,
-                )
-                # Don't count as failure — Telegram is just rate-limiting
-                self._failure_counts[user_id] = max(
-                    self._failure_counts.get(user_id, 1) - 1, 0,
-                )
-                _capture_user_exception(e, user_id)
-            except RuntimeError as exc:
-                if "not authorised" in str(exc).lower():
-                    logger.warning(
-                        "User %s: session expired during reconnect — deactivating",
-                        user_id,
-                    )
-                    await self._deactivate_session(user_id)
-                    await self._stop_listener_for_user(user_id)
-                else:
-                    logger.error("Reconnect failed for user %s: %s", user_id, exc)
-                _capture_user_exception(exc, user_id)
-            except Exception as exc:
-                logger.error("Reconnect failed for user %s: %s", user_id, exc)
-                _capture_user_exception(exc, user_id)
+        # Sentry breadcrumb for observability
+        sentry_sdk.add_breadcrumb(
+            category="telegram.heartbeat",
+            message=f"{connected}/{total} listeners connected",
+            level="info",
+            data={
+                "connected": connected,
+                "total": total,
+                "channels": sum(
+                    len(ch) for ch in self._monitored_channels.values()
+                ),
+            },
+        )
 
         logger.info(
             "Heartbeat: %d/%d listeners connected, %d total channels monitored",
@@ -537,66 +598,3 @@ class MultiUserListenerManager:
             total,
             sum(len(ch) for ch in self._monitored_channels.values()),
         )
-
-    # ------------------------------------------------------------------
-    # Internal: database helpers
-    # ------------------------------------------------------------------
-
-    async def _load_active_sessions(self) -> list[tuple[UUID, str]]:
-        """Load and decrypt all active Telegram sessions from the database.
-
-        Returns a list of ``(user_id, decrypted_session_string)`` tuples.
-        """
-        async with AsyncSession(self._engine, expire_on_commit=False) as db:
-            result = await db.execute(
-                select(TelegramSessionModel).where(
-                    TelegramSessionModel.is_active.is_(True),
-                )
-            )
-            rows = result.scalars().all()
-
-        sessions: list[tuple[UUID, str]] = []
-        for row in rows:
-            try:
-                plain = decrypt_session_auto(
-                    row.session_string_encrypted, self._enc_key,
-                )
-                sessions.append((row.user_id, plain))
-            except Exception as exc:
-                logger.error(
-                    "Failed to decrypt session for user %s: %s",
-                    row.user_id, exc,
-                )
-                _capture_user_exception(exc, row.user_id)
-
-        return sessions
-
-    async def _load_monitored_channels(self, user_id: UUID) -> set[str]:
-        """Load distinct monitored channel IDs for a single user."""
-        async with AsyncSession(self._engine, expire_on_commit=False) as db:
-            result = await db.execute(
-                select(RoutingRuleModel.source_channel_id).where(
-                    RoutingRuleModel.user_id == user_id,
-                    RoutingRuleModel.is_active.is_(True),
-                ).distinct()
-            )
-            return {row[0] for row in result.all()}
-
-    async def _load_all_monitored_channels(self) -> dict[UUID, set[str]]:
-        """Load monitored channels for ALL users in a single query.
-
-        Returns a mapping of ``{user_id: {channel_id, ...}}``.
-        """
-        async with AsyncSession(self._engine, expire_on_commit=False) as db:
-            result = await db.execute(
-                select(
-                    RoutingRuleModel.user_id,
-                    RoutingRuleModel.source_channel_id,
-                ).where(
-                    RoutingRuleModel.is_active.is_(True),
-                )
-            )
-            channels_map: dict[UUID, set[str]] = {}
-            for user_id, channel_id in result.all():
-                channels_map.setdefault(user_id, set()).add(channel_id)
-            return channels_map

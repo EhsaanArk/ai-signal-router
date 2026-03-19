@@ -13,7 +13,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from src.adapters.telegram.manager import (
+    AUTH_CHECK_INTERVAL,
     MAX_CONSECUTIVE_FAILURES,
+    MAX_STARTUP_RETRIES,
     MultiUserListenerManager,
 )
 
@@ -32,7 +34,7 @@ SESSION_C = "session_string_c"
 
 def _make_manager(**overrides) -> MultiUserListenerManager:
     """Create a manager with mocked engine and default settings."""
-    return MultiUserListenerManager(
+    manager = MultiUserListenerManager(
         api_id=FAKE_API_ID,
         api_hash=FAKE_API_HASH,
         queue_port=AsyncMock(),
@@ -40,6 +42,15 @@ def _make_manager(**overrides) -> MultiUserListenerManager:
         enc_key=FAKE_ENC_KEY,
         **overrides,
     )
+    # Replace the real repo with a mock so tests control DB responses
+    manager._repo = MagicMock()
+    manager._repo.load_active_sessions = AsyncMock(return_value=[])
+    manager._repo.load_all_monitored_channels = AsyncMock(return_value={})
+    manager._repo.load_monitored_channels = AsyncMock(return_value=set())
+    manager._repo.load_session_for_user = AsyncMock(return_value=None)
+    manager._repo.deactivate_session = AsyncMock()
+    manager._repo.get_user_notification_prefs = AsyncMock(return_value=(None, MagicMock(email_on_disconnect=False)))
+    return manager
 
 
 def _mock_listener(connected: bool = True) -> MagicMock:
@@ -48,6 +59,9 @@ def _mock_listener(connected: bool = True) -> MagicMock:
     listener.start = AsyncMock()
     listener.stop = AsyncMock()
     listener.update_monitored_channels = MagicMock()
+    # Expose the public is_connected property used by the manager
+    listener.is_connected = connected
+    # Keep _client for tests that verify reconnect behaviour
     listener._client = MagicMock()
     listener._client.is_connected.return_value = connected
     listener._client.connect = AsyncMock()
@@ -68,10 +82,10 @@ class TestManagerStart:
     async def test_starts_listener_for_each_active_session(self, MockListener):
         """Manager should create and start one listener per active session."""
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: {"123"}, USER_B: {"456"}},
         )
 
@@ -99,8 +113,6 @@ class TestManagerStart:
     async def test_start_with_no_sessions(self, MockListener):
         """Manager should start gracefully with zero active sessions."""
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(return_value=[])
-        manager._load_all_monitored_channels = AsyncMock(return_value={})
 
         await manager.start()
 
@@ -120,12 +132,12 @@ class TestManagerStart:
     async def test_start_loads_monitored_channels_per_user(self, MockListener):
         """Each listener should receive its user's monitored channels."""
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A)],
         )
 
         channels_a = {"111", "222"}
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: channels_a},
         )
 
@@ -174,10 +186,9 @@ class TestErrorIsolation:
         MockListener.side_effect = _create_listener
 
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
-        manager._load_all_monitored_channels = AsyncMock(return_value={})
 
         await manager.start()
 
@@ -211,14 +222,13 @@ class TestSessionSync:
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._load_monitored_channels = AsyncMock(return_value=set())
 
         # Simulate: user A already running, user B is new
         manager._listeners[USER_A] = _mock_listener()
         manager._monitored_channels[USER_A] = set()
         manager._failure_counts[USER_A] = 0
 
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
 
@@ -239,7 +249,7 @@ class TestSessionSync:
         manager._failure_counts = {USER_A: 0, USER_B: 0}
 
         # Only user A remains active
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A)],
         )
 
@@ -268,7 +278,7 @@ class TestChannelRefresh:
         manager._monitored_channels = {USER_A: {"old_channel"}}
 
         new_channels = {"new_channel_1", "new_channel_2"}
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: new_channels},
         )
 
@@ -287,7 +297,7 @@ class TestChannelRefresh:
         manager._listeners = {USER_A: mock_listener}
         manager._monitored_channels = {USER_A: existing}
 
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: existing},
         )
 
@@ -388,13 +398,264 @@ class TestHeartbeat:
         manager._failure_counts = {USER_A: 0}
         manager._monitored_channels = {USER_A: {"ch1"}}
 
-        manager._deactivate_session = AsyncMock()
-        manager._stop_listener_for_user = AsyncMock()
+        await manager._heartbeat()
+
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
+
+    @pytest.mark.asyncio
+    async def test_parallel_heartbeat_handles_mixed_states(self):
+        """Heartbeat should process multiple users in parallel correctly:
+        connected, disconnected (reconnects), and max-failures (restarts)."""
+        manager = _make_manager()
+
+        # User A: connected (should reset failure count)
+        listener_a = _mock_listener(connected=True)
+        # User B: disconnected, will reconnect successfully
+        listener_b = _mock_listener(connected=False)
+        listener_b._client.connect = AsyncMock()
+        # User C: at max failures, should trigger restart
+        listener_c = _mock_listener(connected=False)
+
+        manager._listeners = {
+            USER_A: listener_a,
+            USER_B: listener_b,
+            USER_C: listener_c,
+        }
+        manager._failure_counts = {
+            USER_A: 2,
+            USER_B: 1,
+            USER_C: MAX_CONSECUTIVE_FAILURES,
+        }
+        manager._monitored_channels = {
+            USER_A: {"ch1"},
+            USER_B: {"ch2"},
+            USER_C: {"ch3"},
+        }
+
+        manager._restart_listener_for_user = AsyncMock()
 
         await manager._heartbeat()
 
-        manager._deactivate_session.assert_awaited_once_with(USER_A)
-        manager._stop_listener_for_user.assert_awaited_once_with(USER_A)
+        # User A: failure count reset
+        assert manager._failure_counts[USER_A] == 0
+        # User B: reconnected
+        listener_b._client.connect.assert_awaited_once()
+        # User C: full restart triggered
+        manager._restart_listener_for_user.assert_awaited_once_with(USER_C)
+
+
+# =========================================================================
+# Proactive auth check
+# =========================================================================
+
+
+class TestProactiveAuthCheck:
+    """Tests for proactive is_user_authorized() check in heartbeat.
+
+    Auth checks are staggered per user: each user is assigned a slot
+    based on ``hash(user_id) % AUTH_CHECK_INTERVAL``.
+    """
+
+    @staticmethod
+    def _auth_check_heartbeat(user_id: UUID) -> int:
+        """Return heartbeat_count that triggers auth check for this user."""
+        slot = hash(user_id) % AUTH_CHECK_INTERVAL
+        # _heartbeat() increments first, so set to (target - 1)
+        return slot - 1 if slot > 0 else AUTH_CHECK_INTERVAL - 1
+
+    @pytest.mark.asyncio
+    async def test_detects_revoked_session(self):
+        """A connected client whose session was revoked (is_user_authorized
+        returns False) should be deactivated and stopped."""
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=True)
+        mock_listener._client.is_user_authorized = AsyncMock(return_value=False)
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        # Set heartbeat count so auth check fires
+        manager._heartbeat_count = self._auth_check_heartbeat(USER_A)
+
+        await manager._heartbeat()
+
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
+
+    @pytest.mark.asyncio
+    async def test_skips_on_non_check_cycle(self):
+        """Auth check should NOT run when it's not this user's slot."""
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=True)
+        mock_listener._client.is_user_authorized = AsyncMock(return_value=False)
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        # Set heartbeat count so auth check does NOT fire for USER_A
+        # Use a slot that's offset from USER_A's slot
+        user_slot = hash(USER_A) % AUTH_CHECK_INTERVAL
+        other_slot = (user_slot + 1) % AUTH_CHECK_INTERVAL
+        manager._heartbeat_count = other_slot - 1 if other_slot > 0 else AUTH_CHECK_INTERVAL - 1
+
+        await manager._heartbeat()
+
+        # Auth check should not have been called
+        mock_listener._client.is_user_authorized.assert_not_awaited()
+        # Session should NOT be deactivated
+        manager._repo.deactivate_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_handles_auth_key_error(self):
+        """AuthKeyError during proactive auth check should deactivate."""
+        from telethon.errors import AuthKeyDuplicatedError
+
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=True)
+        mock_listener._client.is_user_authorized = AsyncMock(
+            side_effect=AuthKeyDuplicatedError(request=None),
+        )
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        manager._heartbeat_count = self._auth_check_heartbeat(USER_A)
+
+        await manager._heartbeat()
+
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
+
+    @pytest.mark.asyncio
+    async def test_transient_error_does_not_deactivate(self):
+        """A transient error during auth check (e.g., network timeout)
+        should NOT deactivate the session — just log and continue."""
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=True)
+        mock_listener._client.is_user_authorized = AsyncMock(
+            side_effect=ConnectionError("timeout"),
+        )
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        manager._heartbeat_count = self._auth_check_heartbeat(USER_A)
+
+        await manager._heartbeat()
+
+        # Should NOT deactivate — transient error
+        manager._repo.deactivate_session.assert_not_awaited()
+
+
+# =========================================================================
+# Startup backoff
+# =========================================================================
+
+
+class TestStartupBackoff:
+    """Tests for exponential startup backoff on persistent failures."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_skips_user_after_max_retries(self, MockListener):
+        """A user with >MAX_STARTUP_RETRIES failures should be skipped
+        on non-backoff cycles."""
+        manager = _make_manager()
+        manager._repo.load_active_sessions = AsyncMock(
+            return_value=[(USER_A, SESSION_A)],
+        )
+        # User A has failed 4 times (beyond MAX_STARTUP_RETRIES=3)
+        manager._startup_failures = {USER_A: MAX_STARTUP_RETRIES + 1}
+        # Heartbeat count does NOT align with backoff cycle
+        manager._heartbeat_count = 1
+
+        await manager._sync_sessions()
+
+        # Listener should NOT have been created
+        MockListener.assert_not_called()
+        assert USER_A not in manager._listeners
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_retries_on_backoff_cycle(self, MockListener):
+        """A user with >MAX_STARTUP_RETRIES failures should be retried
+        when the heartbeat count aligns with the backoff schedule."""
+        mock_listener = _mock_listener()
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._repo.load_active_sessions = AsyncMock(
+            return_value=[(USER_A, SESSION_A)],
+        )
+        # User A has failed 4 times — skip_cycles = (4-3+1)*10 = 20
+        manager._startup_failures = {USER_A: MAX_STARTUP_RETRIES + 1}
+        # Set heartbeat count to align with backoff cycle (divisible by 20)
+        manager._heartbeat_count = 20
+
+        await manager._sync_sessions()
+
+        # Listener SHOULD have been created (retry on backoff cycle)
+        assert mock_listener.start.await_count == 1
+
+        # Cleanup
+        manager._listeners.clear()
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_resets_on_success(self, MockListener):
+        """Successful start should clear the startup failure count."""
+        mock_listener = _mock_listener()
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._startup_failures = {USER_A: 5}
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels={"ch1"},
+        )
+
+        assert result is True
+        assert USER_A not in manager._startup_failures
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_increments_on_failure(self, MockListener):
+        """Failed start should increment the startup failure count."""
+        mock_listener = _mock_listener()
+        mock_listener.start = AsyncMock(side_effect=Exception("network error"))
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels=set(),
+        )
+
+        assert result is False
+        assert manager._startup_failures[USER_A] == 1
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_no_backoff_within_max_retries(self, MockListener):
+        """Users with fewer than MAX_STARTUP_RETRIES failures should
+        always be retried (no backoff)."""
+        mock_listener = _mock_listener()
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._repo.load_active_sessions = AsyncMock(
+            return_value=[(USER_A, SESSION_A)],
+        )
+        # 2 failures — below threshold
+        manager._startup_failures = {USER_A: 2}
+        manager._heartbeat_count = 1
+
+        await manager._sync_sessions()
+
+        # Should still attempt startup
+        assert mock_listener.start.await_count == 1
 
 
 # =========================================================================
@@ -486,14 +747,13 @@ class TestExpiredSessionDeactivation:
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._deactivate_session = AsyncMock()
 
         result = await manager._start_listener_for_user(
             USER_A, SESSION_A, channels=set(),
         )
 
         assert result is False
-        manager._deactivate_session.assert_awaited_once_with(USER_A)
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
         assert USER_A not in manager._listeners
 
     @pytest.mark.asyncio
@@ -507,14 +767,72 @@ class TestExpiredSessionDeactivation:
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._deactivate_session = AsyncMock()
 
         result = await manager._start_listener_for_user(
             USER_A, SESSION_A, channels=set(),
         )
 
         assert result is False
-        manager._deactivate_session.assert_not_awaited()
+        manager._repo.deactivate_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_auth_key_duplicated_error_deactivates_session(self, MockListener):
+        """AuthKeyDuplicatedError (e.g., two containers using same session)
+        should trigger session deactivation, not silent retry."""
+        from telethon.errors import AuthKeyDuplicatedError
+
+        mock_listener = _mock_listener()
+        mock_listener.start = AsyncMock(
+            side_effect=AuthKeyDuplicatedError(request=None),
+        )
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels=set(),
+        )
+
+        assert result is False
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
+        assert USER_A not in manager._listeners
+
+
+# =========================================================================
+# _is_session_dead helper
+# =========================================================================
+
+
+class TestIsSessionDead:
+    """Tests for the _is_session_dead() helper function."""
+
+    def test_auth_key_error_is_dead(self):
+        """Any AuthKeyError subclass should be treated as a dead session."""
+        from telethon.errors import AuthKeyDuplicatedError
+        from src.adapters.telegram.manager import _is_session_dead
+
+        assert _is_session_dead(AuthKeyDuplicatedError(request=None)) is True
+
+    def test_not_authorised_runtime_error_is_dead(self):
+        """RuntimeError with 'not authorised' message should be dead."""
+        from src.adapters.telegram.manager import _is_session_dead
+
+        exc = RuntimeError("Session for user xxx is not authorised.")
+        assert _is_session_dead(exc) is True
+
+    def test_other_runtime_error_is_not_dead(self):
+        """RuntimeError without auth message should NOT be dead."""
+        from src.adapters.telegram.manager import _is_session_dead
+
+        assert _is_session_dead(RuntimeError("Some other error")) is False
+
+    def test_generic_exception_is_not_dead(self):
+        """Regular exceptions should NOT be treated as dead sessions."""
+        from src.adapters.telegram.manager import _is_session_dead
+
+        assert _is_session_dead(ConnectionError("timeout")) is False
+        assert _is_session_dead(ValueError("bad input")) is False
 
 
 # =========================================================================
@@ -598,7 +916,6 @@ class TestFloodWaitHandling:
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._deactivate_session = AsyncMock()
 
         result = await manager._start_listener_for_user(
             USER_A, SESSION_A, channels=set(),
@@ -606,7 +923,7 @@ class TestFloodWaitHandling:
 
         assert result is False
         assert USER_A not in manager._listeners
-        manager._deactivate_session.assert_awaited_once_with(USER_A)
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
 
 
 # =========================================================================
@@ -615,30 +932,26 @@ class TestFloodWaitHandling:
 
 
 class TestBatchChannelLoading:
-    """Tests for ``_load_all_monitored_channels()`` batch query."""
+    """Tests for batch channel loading via repository."""
 
     @pytest.mark.asyncio
     @patch("src.adapters.telegram.manager.TelegramListener")
     async def test_start_uses_batch_channel_loading(self, MockListener):
-        """start() should use _load_all_monitored_channels instead of per-user."""
+        """start() should use repo.load_all_monitored_channels instead of per-user."""
         mock_listener = _mock_listener()
         MockListener.return_value = mock_listener
 
         manager = _make_manager()
-        manager._load_active_sessions = AsyncMock(
+        manager._repo.load_active_sessions = AsyncMock(
             return_value=[(USER_A, SESSION_A), (USER_B, SESSION_B)],
         )
-        manager._load_all_monitored_channels = AsyncMock(
+        manager._repo.load_all_monitored_channels = AsyncMock(
             return_value={USER_A: {"ch1"}, USER_B: {"ch2", "ch3"}},
-        )
-        # Ensure per-user method is NOT called during start()
-        manager._load_monitored_channels = AsyncMock(
-            side_effect=AssertionError("Should not be called during start()"),
         )
 
         await manager.start()
 
-        manager._load_all_monitored_channels.assert_awaited_once()
+        manager._repo.load_all_monitored_channels.assert_awaited_once()
         assert manager._monitored_channels[USER_A] == {"ch1"}
         assert manager._monitored_channels[USER_B] == {"ch2", "ch3"}
 

@@ -25,7 +25,7 @@ Respond ONLY with a JSON object — no markdown, no commentary.
 ## Output Schema
 
 {
-  "action": "<'entry' | 'partial_close' | 'breakeven' | 'close_position' | 'modify_sl' | 'modify_tp' | 'trailing_sl'>",
+  "action": "<'entry' | 'partial_close' | 'breakeven' | 'close_position' | 'modify_sl' | 'modify_tp' | 'trailing_sl' | 'extra_order'>",
   "symbol": "<string — normalised trading symbol, e.g. EURUSD, XAUUSD, BTC/USDT, US30>",
   "direction": "<'long' | 'short'>",
   "order_type": "<'market' | 'limit' | 'stop'>",
@@ -37,6 +37,10 @@ Respond ONLY with a JSON object — no markdown, no commentary.
   "new_sl": <number | null>,
   "new_tp": <number | null>,
   "trailing_sl_pips": <integer | null>,
+  "take_profit_pips": [<integer>, ...],
+  "stop_loss_pips": <integer | null>,
+  "is_market": <true | false | null>,
+  "order_price": <number | null>,
   "source_asset_class": "<'forex' | 'crypto' | 'indices' | 'commodities'>",
   "is_valid_signal": <true | false>,
   "ignore_reason": "<string | null — reason if is_valid_signal is false>"
@@ -56,8 +60,9 @@ Determine the **action** type from the message intent:
 - **modify_sl**: Update stop loss to a specific price on an existing position. Keywords: "update SL to", "move SL to [price]", "new SL [price]". Set `new_sl` to the target price.
 - **modify_tp**: Update take profit to a specific price on an existing position. Keywords: "update TP to", "move TP to [price]", "new TP [price]". Set `new_tp` to the target price.
 - **trailing_sl**: Set a trailing stop loss. Keywords: "trailing stop", "trail SL", "trailing SL X pips". Set `trailing_sl_pips` to the pip distance (e.g. 30).
+- **extra_order**: Add funds or place an additional order on an existing position. Keywords: "add funds", "extra order", "add to position", "DCA", "average down", "average up", "add more". Set `is_market` to true if executing at market price, false if at a limit price. If a specific price is mentioned, set `order_price` to that value and `is_market` to false. If no price is specified, set `is_market` to true.
 
-**Follow-up actions** (`partial_close`, `breakeven`, `close_position`, `modify_sl`, `modify_tp`, `trailing_sl`) are VALID signals — set `is_valid_signal` to `true`. They only need a `symbol`; `direction` can default to `"long"`.
+**Follow-up actions** (`partial_close`, `breakeven`, `close_position`, `modify_sl`, `modify_tp`, `trailing_sl`, `extra_order`) are VALID signals — set `is_valid_signal` to `true`. They only need a `symbol`; `direction` can default to `"long"`.
 
 ## Priority Rule
 
@@ -112,6 +117,11 @@ Entry signals are never combined with follow-up actions — if the message is cl
 - "SL", "Stop Loss", "❌" → stop_loss
 - If only one TP is mentioned, still return it as a single-element array.
 - entry_price can be null for market orders where no specific price is given.
+- **Pip-based values:** If TP or SL is given in pips (e.g., "SL 30 pips", "TP1 50 pips TP2 100 pips"),
+  populate `take_profit_pips` and/or `stop_loss_pips` with the integer pip values.
+  Use price fields (take_profits, stop_loss) when actual price levels are given.
+  Use pip fields (take_profit_pips, stop_loss_pips) when values are in pips.
+  Both can be populated if the message provides both formats.
 
 ## Emoji / Formatting Handling
 
@@ -200,6 +210,10 @@ class OpenAISignalParser:
                 new_sl=data.get("new_sl"),
                 new_tp=data.get("new_tp"),
                 trailing_sl_pips=data.get("trailing_sl_pips"),
+                take_profit_pips=data.get("take_profit_pips") or [],
+                stop_loss_pips=data.get("stop_loss_pips"),
+                is_market=data.get("is_market"),
+                order_price=data.get("order_price"),
                 source_asset_class=data.get("source_asset_class") or "forex",
                 is_valid_signal=data.get("is_valid_signal", False),
                 ignore_reason=data.get("ignore_reason"),

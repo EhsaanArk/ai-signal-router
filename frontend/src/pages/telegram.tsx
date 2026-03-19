@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Card,
   CardContent,
@@ -40,6 +40,7 @@ const DISCONNECT_MESSAGES: Record<string, string> = {
 
 export function TelegramPage() {
   usePageTitle("Telegram");
+  const navigate = useNavigate();
   const { data: status, isLoading } = useTelegramStatus();
   const disconnect = useDisconnectTelegram();
   const [showDisconnect, setShowDisconnect] = useState(false);
@@ -50,6 +51,23 @@ export function TelegramPage() {
   const channelsWithActiveRoutes = new Set(
     (rules ?? []).filter((r) => r.is_active).map((r) => r.source_channel_id),
   );
+
+  const activeCount = channels?.filter((ch) => channelsWithActiveRoutes.has(ch.id)).length ?? 0;
+
+  // Auto-flip to "All Channels" when there are zero active channels
+  useEffect(() => {
+    if (!channelsLoading && activeCount === 0 && channels && channels.length > 0) {
+      setShowAllChannels(true);
+    }
+  }, [channelsLoading, activeCount, channels]);
+
+  function handleConnectSuccess() {
+    toast.success("Telegram connected! Now create a route to start receiving signals.");
+    // Redirect to setup wizard if setup not yet complete
+    if (!localStorage.getItem("sgm_setup_complete")) {
+      navigate("/setup");
+    }
+  }
 
   async function handleDisconnect() {
     try {
@@ -111,9 +129,9 @@ export function TelegramPage() {
               {/* Subscribed Channels */}
               <div>
                 {(() => {
-                  const activeChannels = channels?.filter((ch) => channelsWithActiveRoutes.has(ch.id)) ?? [];
-                  const displayChannels = showAllChannels ? (channels ?? []) : activeChannels;
-                  const activeCount = activeChannels.length;
+                  const displayChannels = showAllChannels
+                    ? (channels ?? [])
+                    : (channels?.filter((ch) => channelsWithActiveRoutes.has(ch.id)) ?? []);
                   const totalCount = channels?.length ?? 0;
 
                   return (
@@ -158,11 +176,18 @@ export function TelegramPage() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-muted-foreground">
-                          {showAllChannels
-                            ? "No channels found. Join a Telegram channel to get started."
-                            : "No active channels. Create a route to activate a channel."}
-                        </p>
+                        <div className="space-y-2">
+                          <p className="text-xs text-muted-foreground">
+                            {showAllChannels
+                              ? "No channels found. Join a Telegram channel to get started."
+                              : "No active channels yet. Create a route to start receiving signals from a channel."}
+                          </p>
+                          {!showAllChannels && (
+                            <Button asChild variant="outline" size="sm" className="h-7 text-[11px]">
+                              <Link to="/routing-rules/new">Create your first route</Link>
+                            </Button>
+                          )}
+                        </div>
                       )}
                       {totalCount > activeCount && (
                         <Button
@@ -213,6 +238,7 @@ export function TelegramPage() {
                 </div>
               )}
               <TelegramConnectForm
+                onSuccess={handleConnectSuccess}
                 defaultPhone={status?.phone_number ?? undefined}
               />
             </div>
