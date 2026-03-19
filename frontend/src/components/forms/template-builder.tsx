@@ -393,6 +393,16 @@ export function TemplateBuilder({ value, onChange, error, destinationType, paylo
         Optional. Configure the webhook payload sent to SageMaster. Use the builder for guided setup or paste raw JSON.
       </p>
 
+      {payloadVersion === "V2" && destinationType === "sagemaster_forex" && (
+        <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+            <span className="font-medium">V2 requires TP and SL in every entry signal.</span>{" "}
+            If your signal provider doesn't always include TP/SL, either switch to V1
+            (uses your strategy's fixed TP/SL) or set static fallback values below.
+          </p>
+        </div>
+      )}
+
       {mode === "builder" ? (
         <div className="space-y-3">
           {fields.length === 0 && (
