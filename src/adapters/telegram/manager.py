@@ -59,6 +59,17 @@ MAX_CONCURRENT_STARTUPS = 3
 # Max concurrent heartbeat checks (for scale — prevents sequential bottleneck).
 MAX_CONCURRENT_HEARTBEAT = 10
 
+# Proactive auth check: verify sessions every Nth heartbeat (~5 min at 30s).
+AUTH_CHECK_INTERVAL = 10
+
+# Startup backoff: after this many consecutive failures, start backing off.
+MAX_STARTUP_RETRIES = 3
+
+# Each failure beyond MAX_STARTUP_RETRIES skips this many heartbeat cycles.
+# Failure 4 → skip 10 cycles (5 min), failure 5 → skip 20 (10 min), capped at 30.
+STARTUP_BACKOFF_MULTIPLIER = 10
+STARTUP_BACKOFF_CAP = 30
+
 
 class MultiUserListenerManager:
     """Manage one :class:`TelegramListener` per active user session.
@@ -98,6 +109,8 @@ class MultiUserListenerManager:
         self._listeners: dict[UUID, TelegramListener] = {}
         self._monitored_channels: dict[UUID, set[str]] = {}
         self._failure_counts: dict[UUID, int] = {}
+        self._startup_failures: dict[UUID, int] = {}
+        self._heartbeat_count: int = 0
         self._refresh_task: asyncio.Task | None = None
         self._running = False
         self._startup_semaphore = asyncio.Semaphore(MAX_CONCURRENT_STARTUPS)
@@ -158,6 +171,7 @@ class MultiUserListenerManager:
             self._listeners.clear()
             self._monitored_channels.clear()
             self._failure_counts.clear()
+            self._startup_failures.clear()
 
         logger.info("Multi-user listener manager stopped.")
 
@@ -228,6 +242,7 @@ class MultiUserListenerManager:
                 )
                 if _is_session_dead(retry_exc):
                     await self._deactivate_and_notify(user_id)
+                self._startup_failures[user_id] = self._startup_failures.get(user_id, 0) + 1
                 _capture_user_exception(retry_exc, user_id)
                 return False
         except (RuntimeError, AuthKeyError) as exc:
@@ -241,12 +256,14 @@ class MultiUserListenerManager:
                 logger.error(
                     "Failed to start listener for user %s: %s", user_id, exc,
                 )
+            self._startup_failures[user_id] = self._startup_failures.get(user_id, 0) + 1
             _capture_user_exception(exc, user_id)
             return False
         except Exception as exc:
             logger.error(
                 "Failed to start listener for user %s: %s", user_id, exc,
             )
+            self._startup_failures[user_id] = self._startup_failures.get(user_id, 0) + 1
             _capture_user_exception(exc, user_id)
             return False
 
@@ -255,6 +272,7 @@ class MultiUserListenerManager:
         self._listeners[user_id] = listener
         self._monitored_channels[user_id] = channels
         self._failure_counts[user_id] = 0
+        self._startup_failures.pop(user_id, None)  # Reset on success
 
         logger.info(
             "Listener started for user %s — monitoring %d channel(s)",
@@ -376,22 +394,42 @@ class MultiUserListenerManager:
         active_user_ids = {uid for uid, _ in sessions}
         current_user_ids = set(self._listeners.keys())
 
-        # Start listeners for new users (bounded concurrency)
+        # Start listeners for new users (bounded concurrency + backoff)
         new_users = active_user_ids - current_user_ids
         if new_users:
-            new_sessions = [
-                (uid, ss) for uid, ss in sessions if uid in new_users
-            ]
+            new_sessions = []
+            for uid, ss in sessions:
+                if uid not in new_users:
+                    continue
+                # Apply startup backoff for users with repeated failures
+                failures = self._startup_failures.get(uid, 0)
+                if failures >= MAX_STARTUP_RETRIES:
+                    skip_cycles = min(
+                        (failures - MAX_STARTUP_RETRIES + 1) * STARTUP_BACKOFF_MULTIPLIER,
+                        STARTUP_BACKOFF_CAP,
+                    )
+                    if self._heartbeat_count % skip_cycles != 0:
+                        logger.debug(
+                            "User %s: startup backoff (failure %d, next retry in ~%ds)",
+                            uid, failures, skip_cycles * REFRESH_INTERVAL,
+                        )
+                        continue
+                    logger.info(
+                        "User %s: backoff retry attempt (failure %d)",
+                        uid, failures,
+                    )
+                new_sessions.append((uid, ss))
 
             async def _bounded_start(uid: UUID, ss: str) -> None:
                 async with self._startup_semaphore:
                     logger.info("New active session detected for user %s", uid)
                     await self._start_listener_for_user(uid, ss)
 
-            await asyncio.gather(
-                *[_bounded_start(uid, ss) for uid, ss in new_sessions],
-                return_exceptions=True,
-            )
+            if new_sessions:
+                await asyncio.gather(
+                    *[_bounded_start(uid, ss) for uid, ss in new_sessions],
+                    return_exceptions=True,
+                )
 
         # Stop listeners for removed/deactivated users
         removed_users = current_user_ids - active_user_ids
@@ -418,7 +456,14 @@ class MultiUserListenerManager:
 
         Runs checks in parallel with bounded concurrency to avoid
         sequential bottlenecks at scale (100+ listeners).
+
+        Every AUTH_CHECK_INTERVAL heartbeats, also proactively verifies
+        that connected sessions are still authorized by Telegram.  This
+        catches silently revoked sessions (e.g. user terminated via
+        Telegram settings) before they cause missed signals.
         """
+        self._heartbeat_count += 1
+        do_auth_check = (self._heartbeat_count % AUTH_CHECK_INTERVAL == 0)
         results: list[bool] = []
 
         async def _check_user(user_id: UUID, listener: TelegramListener) -> bool:
@@ -426,6 +471,36 @@ class MultiUserListenerManager:
             async with self._heartbeat_semaphore:
                 if listener.is_connected:
                     self._failure_counts[user_id] = 0
+
+                    # Proactive auth check (every ~5 min)
+                    if do_auth_check:
+                        try:
+                            authorized = await listener._client.is_user_authorized()
+                            if not authorized:
+                                logger.warning(
+                                    "User %s: session revoked (proactive auth check) — deactivating",
+                                    user_id,
+                                )
+                                await self._deactivate_and_notify(user_id)
+                                await self._stop_listener_for_user(user_id)
+                                return False
+                        except AuthKeyError as exc:
+                            logger.warning(
+                                "User %s: auth key invalid during proactive check (%s) — deactivating",
+                                user_id, type(exc).__name__,
+                            )
+                            await self._deactivate_and_notify(user_id)
+                            await self._stop_listener_for_user(user_id)
+                            _capture_user_exception(exc, user_id)
+                            return False
+                        except Exception as exc:
+                            # Non-fatal: auth check failed but client is connected.
+                            # Log and continue — don't deactivate on transient errors.
+                            logger.debug(
+                                "User %s: proactive auth check failed: %s",
+                                user_id, exc,
+                            )
+
                     return True
 
                 # Client is disconnected

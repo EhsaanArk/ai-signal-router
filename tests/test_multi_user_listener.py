@@ -13,7 +13,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from src.adapters.telegram.manager import (
+    AUTH_CHECK_INTERVAL,
     MAX_CONSECUTIVE_FAILURES,
+    MAX_STARTUP_RETRIES,
     MultiUserListenerManager,
 )
 
@@ -440,6 +442,206 @@ class TestHeartbeat:
         listener_b._client.connect.assert_awaited_once()
         # User C: full restart triggered
         manager._restart_listener_for_user.assert_awaited_once_with(USER_C)
+
+
+# =========================================================================
+# Proactive auth check
+# =========================================================================
+
+
+class TestProactiveAuthCheck:
+    """Tests for proactive is_user_authorized() check in heartbeat."""
+
+    @pytest.mark.asyncio
+    async def test_detects_revoked_session(self):
+        """A connected client whose session was revoked (is_user_authorized
+        returns False) should be deactivated and stopped."""
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=True)
+        mock_listener._client.is_user_authorized = AsyncMock(return_value=False)
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        # Set heartbeat count so auth check fires
+        manager._heartbeat_count = AUTH_CHECK_INTERVAL - 1
+
+        await manager._heartbeat()
+
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
+
+    @pytest.mark.asyncio
+    async def test_skips_on_non_check_cycle(self):
+        """Auth check should NOT run on non-check cycles."""
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=True)
+        mock_listener._client.is_user_authorized = AsyncMock(return_value=False)
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        # Set heartbeat count so auth check does NOT fire
+        manager._heartbeat_count = 1
+
+        await manager._heartbeat()
+
+        # Auth check should not have been called
+        mock_listener._client.is_user_authorized.assert_not_awaited()
+        # Session should NOT be deactivated
+        manager._repo.deactivate_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_handles_auth_key_error(self):
+        """AuthKeyError during proactive auth check should deactivate."""
+        from telethon.errors import AuthKeyDuplicatedError
+
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=True)
+        mock_listener._client.is_user_authorized = AsyncMock(
+            side_effect=AuthKeyDuplicatedError(request=None),
+        )
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        manager._heartbeat_count = AUTH_CHECK_INTERVAL - 1
+
+        await manager._heartbeat()
+
+        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
+
+    @pytest.mark.asyncio
+    async def test_transient_error_does_not_deactivate(self):
+        """A transient error during auth check (e.g., network timeout)
+        should NOT deactivate the session — just log and continue."""
+        manager = _make_manager()
+
+        mock_listener = _mock_listener(connected=True)
+        mock_listener._client.is_user_authorized = AsyncMock(
+            side_effect=ConnectionError("timeout"),
+        )
+        manager._listeners = {USER_A: mock_listener}
+        manager._failure_counts = {USER_A: 0}
+        manager._monitored_channels = {USER_A: {"ch1"}}
+
+        manager._heartbeat_count = AUTH_CHECK_INTERVAL - 1
+
+        await manager._heartbeat()
+
+        # Should NOT deactivate — transient error
+        manager._repo.deactivate_session.assert_not_awaited()
+
+
+# =========================================================================
+# Startup backoff
+# =========================================================================
+
+
+class TestStartupBackoff:
+    """Tests for exponential startup backoff on persistent failures."""
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_skips_user_after_max_retries(self, MockListener):
+        """A user with >MAX_STARTUP_RETRIES failures should be skipped
+        on non-backoff cycles."""
+        manager = _make_manager()
+        manager._repo.load_active_sessions = AsyncMock(
+            return_value=[(USER_A, SESSION_A)],
+        )
+        # User A has failed 4 times (beyond MAX_STARTUP_RETRIES=3)
+        manager._startup_failures = {USER_A: MAX_STARTUP_RETRIES + 1}
+        # Heartbeat count does NOT align with backoff cycle
+        manager._heartbeat_count = 1
+
+        await manager._sync_sessions()
+
+        # Listener should NOT have been created
+        MockListener.assert_not_called()
+        assert USER_A not in manager._listeners
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_retries_on_backoff_cycle(self, MockListener):
+        """A user with >MAX_STARTUP_RETRIES failures should be retried
+        when the heartbeat count aligns with the backoff schedule."""
+        mock_listener = _mock_listener()
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._repo.load_active_sessions = AsyncMock(
+            return_value=[(USER_A, SESSION_A)],
+        )
+        # User A has failed 4 times — skip_cycles = (4-3+1)*10 = 20
+        manager._startup_failures = {USER_A: MAX_STARTUP_RETRIES + 1}
+        # Set heartbeat count to align with backoff cycle (divisible by 20)
+        manager._heartbeat_count = 20
+
+        await manager._sync_sessions()
+
+        # Listener SHOULD have been created (retry on backoff cycle)
+        assert mock_listener.start.await_count == 1
+
+        # Cleanup
+        manager._listeners.clear()
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_resets_on_success(self, MockListener):
+        """Successful start should clear the startup failure count."""
+        mock_listener = _mock_listener()
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._startup_failures = {USER_A: 5}
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels={"ch1"},
+        )
+
+        assert result is True
+        assert USER_A not in manager._startup_failures
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_increments_on_failure(self, MockListener):
+        """Failed start should increment the startup failure count."""
+        mock_listener = _mock_listener()
+        mock_listener.start = AsyncMock(side_effect=Exception("network error"))
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+
+        result = await manager._start_listener_for_user(
+            USER_A, SESSION_A, channels=set(),
+        )
+
+        assert result is False
+        assert manager._startup_failures[USER_A] == 1
+
+    @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.TelegramListener")
+    async def test_no_backoff_within_max_retries(self, MockListener):
+        """Users with fewer than MAX_STARTUP_RETRIES failures should
+        always be retried (no backoff)."""
+        mock_listener = _mock_listener()
+        MockListener.return_value = mock_listener
+
+        manager = _make_manager()
+        manager._repo.load_active_sessions = AsyncMock(
+            return_value=[(USER_A, SESSION_A)],
+        )
+        # 2 failures — below threshold
+        manager._startup_failures = {USER_A: 2}
+        manager._heartbeat_count = 1
+
+        await manager._sync_sessions()
+
+        # Should still attempt startup
+        assert mock_listener.start.await_count == 1
 
 
 # =========================================================================
