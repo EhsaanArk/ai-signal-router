@@ -27,7 +27,8 @@ from src.adapters.telegram.repository import (
     TelegramSessionRepository,
     _capture_user_exception,
 )
-from src.core.interfaces import QueuePort
+from src.adapters.proxy.provider import NoOpProxyProvider
+from src.core.interfaces import ProxyProvider, QueuePort
 
 logger = logging.getLogger(__name__)
 
@@ -97,13 +98,15 @@ class MultiUserListenerManager:
         enc_key: bytes,
         email_notifier: object | None = None,
         proxy: dict | None = None,
+        proxy_provider: ProxyProvider | None = None,
     ) -> None:
         self._api_id = api_id
         self._api_hash = api_hash
         self._queue_port = queue_port
         self._engine = engine
-        self._proxy = proxy
+        self._proxy = proxy  # Global fallback proxy (TELEGRAM_PROXY_URL)
         self._email_notifier = email_notifier
+        self._proxy_provider: ProxyProvider = proxy_provider or NoOpProxyProvider()
 
         self._repo = TelegramSessionRepository(engine, enc_key)
         self._listeners: dict[UUID, TelegramListener] = {}
@@ -214,11 +217,14 @@ class MultiUserListenerManager:
             logger.debug("Listener already active for user %s, skipping", user_id)
             return True
 
+        # Per-user proxy from provider, falling back to global proxy
+        user_proxy = self._proxy_provider.get_proxy_for_user(user_id) or self._proxy
+
         listener = TelegramListener(
             api_id=self._api_id,
             api_hash=self._api_hash,
             queue_port=self._queue_port,
-            proxy=self._proxy,
+            proxy=user_proxy,
         )
 
         # Load channels if not pre-loaded (e.g. restart scenario)
