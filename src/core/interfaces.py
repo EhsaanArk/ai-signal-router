@@ -186,3 +186,21 @@ class UserRepository(Protocol):
     async def get_by_id(self, user_id: UUID) -> User | None:
         """Look up a user by primary key."""
         ...
+
+
+# ---------------------------------------------------------------------------
+# Proxy provider (per-user residential proxy for Telegram connections)
+# ---------------------------------------------------------------------------
+
+class ProxyProvider(Protocol):
+    """Provides per-user SOCKS5 proxy configuration for Telegram clients.
+
+    Implementations generate a Telethon-compatible proxy dict for each
+    user, enabling per-user IP isolation at scale.  When the provider
+    returns ``None``, the caller should fall back to the global proxy
+    (``TELEGRAM_PROXY_URL``) or connect directly.
+    """
+
+    def get_proxy_for_user(self, user_id: UUID) -> dict | None:
+        """Return a Telethon-compatible proxy dict, or ``None``."""
+        ...

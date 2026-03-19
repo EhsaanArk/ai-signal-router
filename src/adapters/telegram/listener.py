@@ -376,6 +376,7 @@ if __name__ == "__main__":
         else:
             # ── Multi-user mode (SaaS) ───────────────────────────────────
             from src.adapters.telegram.manager import MultiUserListenerManager
+            from src.adapters.proxy import get_proxy_provider
             import signal
 
             enc_key = os.environ["ENCRYPTION_KEY"].encode()
@@ -387,6 +388,9 @@ if __name__ == "__main__":
                 from src.adapters.email.sender import ResendNotifier
                 email_notifier = ResendNotifier(api_key=resend_key)
 
+            # Per-user proxy provider (IPRoyal) with global proxy fallback
+            proxy_provider = get_proxy_provider()
+
             manager = MultiUserListenerManager(
                 api_id=api_id,
                 api_hash=api_hash,
@@ -395,6 +399,7 @@ if __name__ == "__main__":
                 enc_key=enc_key,
                 email_notifier=email_notifier,
                 proxy=proxy,
+                proxy_provider=proxy_provider,
             )
 
             logger.info("Starting multi-user listener manager...")
