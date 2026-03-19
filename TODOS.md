@@ -127,6 +127,66 @@ Shipped in PR #52. Sentry breadcrumbs added to `_heartbeat()` with category `tel
 
 ---
 
+## P2 — Template Builder: Money Management Mode Awareness
+
+**What:** Ask users their SageMaster Assist's money management mode in the routing rule setup, then show/hide `balance` and `lots` fields contextually in the template builder.
+
+**Why:** SageMaster V2 has conditional field requirements based on the Assist's money management mode:
+- `balance`: only used with "Indicator provider x percent w ratio check mode"
+- `lots`: only used with "Indicator provider x percent w ratio check mode" or "Indicator provider x percent w/o ratio check mode"
+- Other modes ignore these fields entirely
+
+Currently users see `balance` and `lots` with no context about when they matter. This leads to confusion and unnecessary configuration. The template builder should ask "What money management mode is your Assist using?" and conditionally show/hide fields.
+
+**Pros:**
+- Self-explanatory UX — no guesswork about which fields matter
+- Prevents users from configuring fields that SageMaster ignores
+- Builds on the existing template builder field metadata system (platforms, groups, required flags)
+
+**Cons:**
+- Requires storing the money management mode per routing rule (new DB column or template metadata)
+- SageMaster may add new modes in the future — needs to be extensible
+- Users may not know which mode they're using without checking SageMaster
+
+**Context:**
+- Template builder already has `platforms`, `v2Only`, `required`, and `group` metadata on `KNOWN_FIELDS`
+- Could add a `moneyManagementMode` prop to `TemplateBuilder` that controls visibility of balance/lots
+- The mode options would be: "Default (ignore balance/lots)", "Indicator provider x percent w ratio check mode" (needs balance + lots), "Indicator provider x percent w/o ratio check mode" (needs lots only)
+- Consider showing this as a dropdown in the routing rule form (V2 only), with a tooltip linking to SageMaster's docs
+
+**Effort:** M (human) → S (CC)
+**Priority:** P2
+**Depends on:** Template builder field validation (PR #72, shipped)
+**Added:** 2026-03-19 (live testing session)
+
+---
+
+## P2 — Add Missing SageMaster Forex Action Types to Pipeline
+
+**What:** Add support for `close_all_orders_at_market_price`, `close_all_orders_at_market_price_and_stop_assist`, `start_assist`, and `stop_assist` actions.
+
+**Why:** SageMaster supports these actions but our pipeline doesn't recognize them. If a signal provider sends "close all" or "stop strategy", we'd ignore it.
+
+**Pros:**
+- Complete parity with SageMaster's webhook spec
+- Users can forward more signal types
+
+**Cons:**
+- Need to update parser prompt to recognize these intents
+- Need to update `SignalAction` enum and mapper
+- "close all" is destructive — needs careful handling
+
+**Context:**
+- Full spec now documented in `docs/WEBHOOK_PAYLOADS.md`
+- `close_all_orders_at_market_price` doesn't need a symbol — closes everything
+- `start_assist`/`stop_assist` are strategy management, not trade signals
+- These are rare actions — P2 priority
+
+**Effort:** M (human) → S (CC)
+**Priority:** P2
+**Depends on:** Nothing
+**Added:** 2026-03-19 (full spec review)
+
 ## P2 — Pipeline dry-run smoke test for post-deploy verification
 
 **What:** Add a `dry_run` flag to the signal workflow so a synthetic test signal can be sent through QStash → workflow → parser → mapper without dispatching to the actual webhook.
