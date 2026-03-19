@@ -6,8 +6,20 @@ import { Header } from "./header";
 import { MobileNav } from "./mobile-nav";
 import { EmailVerifyBanner } from "@/components/shared/email-verify-banner";
 import { PageLoader } from "@/components/shared/loading-spinner";
+import { NavigationProgress } from "@/components/shared/navigation-progress";
+import { OfflineBanner } from "@/components/shared/offline-banner";
+import { VersionToast } from "@/components/shared/version-toast";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
 import { useTelegramDisconnectAlert } from "@/hooks/use-telegram-disconnect-alert";
+
+function SuspenseFallback() {
+  return (
+    <>
+      <NavigationProgress />
+      <PageLoader />
+    </>
+  );
+}
 
 function SetupIncompleteBanner() {
   const [dismissed, setDismissed] = useState(
@@ -52,13 +64,15 @@ export function DashboardLayout() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header onMenuClick={() => setMobileOpen(true)} />
         <main className="flex-1 overflow-y-auto p-3 md:p-4 lg:p-5">
+          <OfflineBanner />
           <EmailVerifyBanner />
           <SetupIncompleteBanner />
-          <Suspense fallback={<PageLoader />}>
+          <Suspense fallback={<SuspenseFallback />}>
             <Outlet />
           </Suspense>
         </main>
       </div>
+      <VersionToast />
     </div>
   );
 }
