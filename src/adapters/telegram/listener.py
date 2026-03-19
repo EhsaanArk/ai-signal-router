@@ -114,15 +114,27 @@ class TelegramListener:
         # Prime Telethon's entity cache so it can deserialise incoming updates.
         # When we know which channels to monitor, fetch only those entities
         # (lightweight) instead of the full dialog list (heavy, flood-wait prone).
+        #
+        # IMPORTANT: bare integer IDs are ambiguous — Telethon assumes they are
+        # user IDs.  For channels/supergroups we must pass PeerChannel(bare_id)
+        # so Telethon constructs the correct marked ID (-100XXXXXXXXXX).
         if monitored_channels:
+            from telethon.tl.types import PeerChannel
+
             for ch_id in monitored_channels:
                 try:
-                    await self._client.get_entity(int(ch_id))
+                    # Try as a channel first (most common for signal sources)
+                    await self._client.get_entity(PeerChannel(int(ch_id)))
                 except Exception:
-                    logger.warning(
-                        "Could not pre-fetch entity for channel %s (user %s)",
-                        ch_id, user_id,
-                    )
+                    # Fall back to bare int (might be a user/group chat)
+                    try:
+                        await self._client.get_entity(int(ch_id))
+                    except Exception:
+                        logger.warning(
+                            "Could not pre-fetch entity for channel %s (user %s) "
+                            "— messages will still be processed via ID matching",
+                            ch_id, user_id,
+                        )
         else:
             await self._client.get_dialogs()
 
@@ -149,9 +161,16 @@ class TelegramListener:
             )
             sentry_sdk.capture_exception(exc)
             chat = None
-        # Always use the bare (unmarked) ID to match channels.py format.
-        # event.chat_id may include a -100 prefix; abs() strips it.
-        channel_id = str(chat.id) if chat else str(abs(event.chat_id))
+        # Always use the bare (unmarked) ID to match the DB format.
+        # event.chat_id for channels is "marked": -100XXXXXXXXXX.
+        # abs() only strips the minus sign, NOT the 100 prefix.
+        # Telethon's resolve_id() correctly extracts the bare ID.
+        if chat:
+            channel_id = str(chat.id)
+        else:
+            from telethon.utils import resolve_id
+            bare_id, _ = resolve_id(event.chat_id)
+            channel_id = str(bare_id)
 
         # Skip channels the user hasn't configured routing rules for.
         # When _monitored_channels is empty no channel should pass through —

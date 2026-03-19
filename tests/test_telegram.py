@@ -425,7 +425,9 @@ class TestTelegramListenerStart:
     @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
     async def test_start_with_channels_uses_get_entity(self, mock_client_cls, _mock_ss):
-        """start() with monitored_channels should use get_entity instead of get_dialogs."""
+        """start() with monitored_channels should use get_entity with PeerChannel."""
+        from telethon.tl.types import PeerChannel
+
         mock_client = _make_mock_client()
         mock_client.get_entity = AsyncMock()
         mock_client_cls.return_value = mock_client
@@ -443,10 +445,11 @@ class TestTelegramListenerStart:
             monitored_channels={"12345", "67890"},
         )
 
-        # get_entity should be called for each channel
-        assert mock_client.get_entity.await_count == 2
-        mock_client.get_entity.assert_any_await(12345)
-        mock_client.get_entity.assert_any_await(67890)
+        # get_entity should be called with PeerChannel for each channel
+        assert mock_client.get_entity.await_count >= 2
+        calls = [c.args[0] for c in mock_client.get_entity.await_args_list]
+        assert PeerChannel(12345) in calls
+        assert PeerChannel(67890) in calls
         # get_dialogs should NOT be called
         mock_client.get_dialogs.assert_not_awaited()
 
@@ -564,16 +567,18 @@ class TestTelegramListenerOnNewMessage:
     @patch(_LISTENER_STRING_SESSION)
     @patch("src.adapters.telegram.listener.TelegramClient")
     async def test_on_new_message_uses_chat_id_fallback(self, mock_client_cls, _mock_ss):
-        """When get_chat() returns None, event.chat_id should be used as fallback."""
+        """When get_chat() returns None, resolve_id should extract bare channel ID."""
         mock_client = _make_mock_client()
         mock_client_cls.return_value = mock_client
 
         queue_port = AsyncMock()
+        # The bare channel ID for -1009876543210 is 9876543210
+        # (resolve_id strips the -100 prefix, not just the minus sign)
         listener = TelegramListener(
             api_id=FAKE_API_ID,
             api_hash=FAKE_API_HASH,
             queue_port=queue_port,
-            monitored_channels={str(abs(-1009876543210))},
+            monitored_channels={"9876543210"},
         )
         await listener.start(user_id=SAMPLE_USER_ID, session_string=FAKE_SESSION_STRING)
 
@@ -583,13 +588,13 @@ class TestTelegramListenerOnNewMessage:
         event.message.id = 99
         event.chat_id = -1009876543210
         event.get_chat = AsyncMock(return_value=None)
+        event.message.reply_to = None
 
         await listener._on_new_message(event)
 
         enqueued_signal: RawSignal = queue_port.enqueue.call_args[0][0]
-        # When get_chat() returns None, the listener uses abs(event.chat_id)
-        # to strip the -100 prefix and match channels.py format
-        assert enqueued_signal.channel_id == str(abs(-1009876543210))
+        # resolve_id correctly extracts bare ID from marked channel ID
+        assert enqueued_signal.channel_id == "9876543210"
 
     @pytest.mark.asyncio
     @patch(_LISTENER_STRING_SESSION)
