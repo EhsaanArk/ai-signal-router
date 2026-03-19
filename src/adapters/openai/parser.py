@@ -56,8 +56,8 @@ Determine the **action** type from the message intent:
   If the message specifies a lot size (e.g. "close 0.3 lots"), set `lots` to the amount (e.g. "0.3").
   If ambiguous, prefer `percentage` over `lots`. Default to `percentage: 50` if neither is clear.
 - **breakeven**: Move stop loss to entry/breakeven. Keywords: "move SL to breakeven", "move SL to BE", "breakeven", "BE".
-- **close_position**: Fully close an existing position for a specific symbol. Keywords: "close position", "exit", "close trade", "market has reversed". Must reference a specific symbol.
-- **close_all**: Close ALL open positions across all symbols. Keywords: "close all trades", "close everything", "flatten all", "liquidate all". No symbol needed — set symbol to "ALL".
+- **close_position**: Fully close an existing position for a specific symbol. Keywords: "close position", "exit", "close trade", "market has reversed". Must reference a specific symbol. If the message says "close all XAUUSD" — that's close_position for XAUUSD, NOT close_all.
+- **close_all**: Close ALL open positions across ALL symbols (no specific symbol). Keywords: "close all trades", "close everything", "flatten all", "liquidate all", "close all" (without a symbol). No symbol needed — set symbol to "ALL".
 - **close_all_stop**: Close all positions AND stop the trading bot/strategy. Keywords: "close all and stop", "shut down", "emergency stop". No symbol needed — set symbol to "ALL".
 - **start_assist**: Resume/start a trading bot or strategy. Keywords: "start the bot", "resume trading", "activate", "enable strategy". No symbol needed — set symbol to "ALL".
 - **stop_assist**: Pause/stop a trading bot or strategy without closing positions. Keywords: "stop the bot", "pause trading", "disable", "stop strategy". No symbol needed — set symbol to "ALL".
