@@ -21,11 +21,32 @@ The `{strategy_uuid}` is unique to each user's strategy and is provided by the u
 *   **Date:** `{{time}}`
 
 ### 2.2 Forex V1 vs V2
-*   **V1 (Static Strategy):** Uses fixed SL/TP and money management defined in the SageMaster strategy. The webhook only triggers the action.
-*   **V2 (Dynamic Signal):** The webhook payload overrides the strategy's SL/TP and money management settings.
-*   **Note:** Both V1 and V2 support the same trade management actions (close, partial close, breakeven). The difference is only in the entry payload fields.
 
-### 2.3 Forex Entry Actions
+*   **V1 (Static Strategy / "Custom TradingView Alert"):** Uses fixed SL/TP and money management defined in the SageMaster strategy. The webhook only triggers the action.
+*   **V2 (Dynamic Signal / "Custom TradingView Alert V2"):** The webhook payload overrides the strategy's SL/TP and money management settings.
+*   **Note:** Both V1 and V2 support the same trade management actions (close, partial close, breakeven). The difference is only in the entry payload fields.
+*   **CRITICAL:** The V1/V2 choice must match the **Trigger Condition** configured on the SageMaster Assist ("Custom TradingView Alert" for V1, "Custom TradingView Alert V2" for V2).
+
+### 2.3 Forex V2 Field Requirements
+
+**Money Management Mode Dependency:**
+*   `balance`: Only used when Assist money management is set to "Indicator provider x percent w ratio check mode". Otherwise the strategy ignores it — leave default or omit.
+*   `lots`: Only used when Assist money management is set to "Indicator provider x percent w ratio check mode" or "Indicator provider x percent w/o ratio check mode". Otherwise the strategy ignores it.
+
+**TP/SL Options (need at least one from each pair):**
+*   `takeProfits`: Array of price values, e.g., `[1.1050, 1.1100]`. Supports TradingView variables.
+*   `takeProfitsPips`: Array of pip values, e.g., `[15, 30, 45]`. Multiple values enable laddered TP with partial closes when Assist SL/TP mode is set to "Set indicator TP laddered and SL".
+*   `stopLoss`: Price value or TradingView variable.
+*   `stopLossPips`: Pip value, e.g., `30`.
+*   The webhook only needs **either** `takeProfits` OR `takeProfitsPips` (not both). Same for `stopLoss` OR `stopLossPips`.
+
+**Price Field:**
+*   `price`: Recommended to use `{{close}}`. Can be changed to `{{open}}`, `{{high}}`, or `{{low}}`.
+
+**CRITICAL:** If a V2 entry payload is sent with empty TP/SL fields (e.g., `takeProfits: []`, `stopLoss: null`), SageMaster's Assist will reject it with "Invalid S/L or T/P". Empty optional fields must be **stripped** from the payload entirely.
+
+### 2.4 Forex Entry Actions
+
 **V1 Entry (Long/Short):**
 ```json
 {
@@ -38,7 +59,7 @@ The `{strategy_uuid}` is unique to each user's strategy and is provided by the u
 ```
 *(Use `start_short_market_deal` for short positions)*
 
-**V2 Entry (Long/Short):**
+**V2 Entry (Long/Short — Market):**
 ```json
 {
   "type": "start_long_market_deal",
@@ -50,11 +71,32 @@ The `{strategy_uuid}` is unique to each user's strategy and is provided by the u
   "balance": 1000,
   "lots": 1,
   "takeProfits": [ {{tpPrice}} ],
-  "stopLoss": {{slPrice}}
+  "takeProfitsPips": [30],
+  "stopLoss": {{slPrice}},
+  "stopLossPips": 30
 }
 ```
 
-### 2.4 Forex Trade Management Actions (V1 & V2)
+**V2 Entry (Long/Short — Limit):**
+```json
+{
+  "type": "start_long_limit_deal",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}",
+  "symbol": "XAUUSD",
+  "price": "{{close}}",
+  "balance": 1000,
+  "lots": 1,
+  "takeProfits": [ {{tpPrice}} ],
+  "takeProfitsPips": [30],
+  "stopLoss": {{slPrice}},
+  "stopLossPips": 30
+}
+```
+*(Use `start_short_limit_deal` for short limit positions)*
+
+### 2.5 Forex Trade Management Actions (V1 & V2)
 
 **Close Position:**
 ```json
@@ -64,6 +106,26 @@ The `{strategy_uuid}` is unique to each user's strategy and is provided by the u
   "source": "forex",
   "date": "{{time}}",
   "symbol": "XAUUSD"
+}
+```
+
+**Close All Positions:**
+```json
+{
+  "type": "close_all_orders_at_market_price",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}"
+}
+```
+
+**Close All Positions & Stop Assist:**
+```json
+{
+  "type": "close_all_orders_at_market_price_and_stop_assist",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}"
 }
 ```
 
@@ -87,11 +149,12 @@ The `{strategy_uuid}` is unique to each user's strategy and is provided by the u
   "source": "forex",
   "date": "{{time}}",
   "symbol": "XAUUSD",
-  "percentage": 50
+  "percentage": 10
 }
 ```
 
 **Move SL to Breakeven:**
+Adjusts the SL to the entry price (breakeven) with optional pip adjustment. Negative values move SL before entry for buy / after entry for sell. 0 = move to exact entry price.
 ```json
 {
   "type": "move_sl_to_breakeven",
@@ -100,6 +163,26 @@ The `{strategy_uuid}` is unique to each user's strategy and is provided by the u
   "date": "{{time}}",
   "symbol": "XAUUSD",
   "slAdjustment": 0
+}
+```
+
+**Start Assist:**
+```json
+{
+  "type": "start_assist",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}"
+}
+```
+
+**Stop Assist:**
+```json
+{
+  "type": "stop_assist",
+  "assistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "source": "forex",
+  "date": "{{time}}"
 }
 ```
 
@@ -216,4 +299,14 @@ The SageMaster API will return standard HTTP status codes.
 *   `404 Not Found`: The specified ID or symbol could not be found.
 *   `500 Internal Server Error`: An error occurred on the SageMaster platform.
 
+**Known Assist-level errors (HTTP 200 but trade rejected):**
+*   "Invalid S/L or T/P" — Empty TP/SL arrays or null values in V2 payload. Solution: strip empty optional fields.
+
 The dispatcher must log all non-200 responses in the `signal_logs` table for troubleshooting.
+
+## 5. Unsupported Actions
+
+The following signal actions have **no SageMaster equivalent** and must be filtered by the pipeline:
+*   `modify_tp` — SageMaster does not support modifying TP after trade is open
+*   `modify_sl` — SageMaster does not support modifying SL after trade is open (only breakeven via `move_sl_to_breakeven`)
+*   `add_to_position` — Not supported for Forex (Crypto uses `open_extra_order`)

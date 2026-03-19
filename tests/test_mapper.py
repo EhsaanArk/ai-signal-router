@@ -577,7 +577,7 @@ def test_mismatch_hardcoded_symbol_field():
 
 
 def test_close_placeholder_no_price():
-    """{{close}} should resolve to empty string when entry_price is None."""
+    """{{close}} should be stripped when entry_price is None (avoids SageMaster rejection)."""
     rule = _rule_with_template({
         "type": "start_deal",
         "tradeSymbol": "{{ticker}}",
@@ -585,7 +585,7 @@ def test_close_placeholder_no_price():
     })
     signal = ParsedSignal(symbol="ETH/USDT", direction="long", entry_price=None)
     payload = build_webhook_payload(signal, rule)
-    assert payload["price"] == ""
+    assert "price" not in payload  # empty optional fields stripped
     assert payload["tradeSymbol"] == "ETH/USDT"
 
 

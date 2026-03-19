@@ -53,6 +53,10 @@ class SignalAction(str, Enum):
     partial_close_pct = "partially_close_by_percentage"
     breakeven = "move_sl_to_breakeven"
     close_position = "close_order_at_market_price"
+    close_all = "close_all_orders_at_market_price"
+    close_all_stop = "close_all_orders_at_market_price_and_stop_assist"
+    start_assist = "start_assist"
+    stop_assist = "stop_assist"
     extra_order = "open_extra_order"  # crypto only
 
 

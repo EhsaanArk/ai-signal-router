@@ -90,6 +90,14 @@ def _signal_action(signal: ParsedSignal) -> SignalAction:
         return SignalAction.breakeven
     if action == "close_position":
         return SignalAction.close_position
+    if action == "close_all":
+        return SignalAction.close_all
+    if action == "close_all_stop":
+        return SignalAction.close_all_stop
+    if action == "start_assist":
+        return SignalAction.start_assist
+    if action == "stop_assist":
+        return SignalAction.stop_assist
     if action == "modify_sl":
         # modify_sl maps to breakeven with slAdjustment when new_sl is available
         return SignalAction.breakeven
@@ -221,6 +229,12 @@ def build_webhook_payload(
         payload: dict = _replace_placeholders(rule.webhook_body_template, signal)
         _strip_entry_fields(payload)
 
+        # Symbol-less actions: strip symbol fields (these operate on all positions or the Assist itself)
+        _SYMBOLLESS_ACTIONS = {SignalAction.close_all, SignalAction.close_all_stop, SignalAction.start_assist, SignalAction.stop_assist}
+        if action in _SYMBOLLESS_ACTIONS:
+            for field in ("symbol", "tradeSymbol", "eventSymbol"):
+                payload.pop(field, None)
+
         if is_crypto:
             # Map forex SignalAction to documented crypto type string
             crypto_key = action.name  # e.g. "partial_close_pct", "breakeven"
@@ -248,9 +262,9 @@ def build_webhook_payload(
         payload["eventSymbol"] = signal.symbol
     if payload.get("source") == "":
         payload["source"] = signal.source_asset_class
-    # Signal-driven fields — fill when template has the key with empty/falsy value.
-    # For forex these are gated by V2; for crypto they're always available
-    # (SageMaster Crypto has no V1/V2 split — TP/SL are additional template fields).
+    # Signal-driven fields — fill when template has the key with empty/falsy
+    # value.  Gated by V2 for forex; crypto always fills (no V1/V2 split).
+    # Empty fields are stripped below so SageMaster doesn't reject them.
     should_fill_signal_fields = rule.payload_version == "V2" or is_crypto
     if should_fill_signal_fields:
         if payload.get("price") == "":
@@ -270,6 +284,23 @@ def build_webhook_payload(
     # Crypto entry also needs position_type from signal direction
     if is_crypto and "position_type" in payload and not payload["position_type"]:
         payload["position_type"] = signal.direction or "long"
+
+    # Strip empty/falsy optional fields so SageMaster doesn't try to process
+    # them (e.g., empty takeProfits:[] causes "Invalid S/L or T/P" rejection).
+    # Core fields (type, assistId/aiAssistId, source, symbol, date) are never
+    # stripped — they're always required.
+    _OPTIONAL_FIELDS = {
+        "price", "balance", "lots",
+        "takeProfits", "takeProfitsPips", "stopLoss", "stopLossPips",
+        "take_profits", "stop_loss",
+        "position_type", "is_market", "order_price",
+        "lotSize", "percentage", "slAdjustment", "sl_adjustment",
+    }
+    payload = {
+        k: v for k, v in payload.items()
+        if k not in _OPTIONAL_FIELDS or (v != "" and v != [] and v is not None)
+    }
+
     return payload
 
 

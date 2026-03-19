@@ -186,27 +186,26 @@ class TestV2SchemaCompliance:
             payload = build_webhook_payload(signal, rule)
             assert len(payload["takeProfits"]) == tp_count
 
-    def test_v2_no_entry_price_yields_empty_string(self):
-        """When entry_price is None, V2 price field should be empty string."""
+    def test_v2_no_entry_price_stripped(self):
+        """When entry_price is None, price field should be stripped from payload."""
         signal = _make_signal(entry_price=None)
         rule = _make_rule("V2")
         payload = build_webhook_payload(signal, rule)
-        assert payload["price"] == ""
+        assert "price" not in payload  # empty optional fields stripped
 
-    def test_v2_no_stop_loss_yields_none(self):
-        """When stop_loss is None, V2 stopLoss field should be None."""
+    def test_v2_no_stop_loss_stripped(self):
+        """When stop_loss is None, stopLoss field should be stripped from payload."""
         signal = _make_signal(stop_loss=None)
         rule = _make_rule("V2")
         payload = build_webhook_payload(signal, rule)
-        assert payload["stopLoss"] is None
+        assert "stopLoss" not in payload  # empty optional fields stripped
 
-    def test_v2_empty_take_profits_stays_empty(self):
-        """When take_profits is empty, V2 takeProfits should remain empty list."""
+    def test_v2_empty_take_profits_stripped(self):
+        """When take_profits is empty, takeProfits should be stripped from payload."""
         signal = _make_signal(take_profits=[])
         rule = _make_rule("V2")
         payload = build_webhook_payload(signal, rule)
-        # Empty list from signal fills empty list in template — stays empty
-        assert payload["takeProfits"] == []
+        assert "takeProfits" not in payload  # empty optional fields stripped
 
 
 # =====================================================================
@@ -425,13 +424,13 @@ class TestEndToEndPayloadConstruction:
         assert set(payload.keys()) == {"type", "assistId", "source", "symbol", "date"}
 
     def test_e2e_v2_null_fields_present(self):
-        """V2 payload with no SL/TP should have empty/None values from template."""
+        """V2 payload with no SL/TP should strip empty fields (avoids SageMaster rejection)."""
         signal = _make_signal(entry_price=None, stop_loss=None, take_profits=[])
         rule = _make_rule("V2")
         payload = build_webhook_payload(signal, rule)
-        assert payload["price"] == ""
-        assert payload["stopLoss"] is None
-        assert payload["takeProfits"] == []
+        assert "price" not in payload
+        assert "stopLoss" not in payload
+        assert "takeProfits" not in payload
 
     @pytest.mark.parametrize(
         "direction, asset_class",

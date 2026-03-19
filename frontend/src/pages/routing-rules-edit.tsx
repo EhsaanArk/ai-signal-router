@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { TemplateBuilder, sanitizeTradingViewJson } from "@/components/forms/template-builder";
+import { TemplateBuilder, sanitizeTradingViewJson, validateRequiredFields } from "@/components/forms/template-builder";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Lightbulb, Loader2, Plus, X, XCircle } from "lucide-react";
 import { useRoutingRules, useUpdateRule } from "@/hooks/use-routing-rules";
@@ -299,6 +299,19 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
     }
     setTemplateError("");
 
+    // Validate required fields for SageMaster destinations
+    if (destinationType !== "custom" && parsedTemplate) {
+      const missing = validateRequiredFields(
+        JSON.stringify(parsedTemplate),
+        destinationType,
+        version,
+      );
+      if (missing.length > 0) {
+        setTemplateError(`Missing required fields: ${missing.join(", ")}`);
+        return;
+      }
+    }
+
     const mappings: Record<string, string> = {};
     for (const pair of pairs) {
       if (pair.from && pair.to) {
@@ -517,6 +530,8 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
           if (templateError) setTemplateError("");
         }}
         error={templateError}
+        destinationType={destinationType}
+        payloadVersion={version}
       />
 
       {/* Template mismatch warning */}
