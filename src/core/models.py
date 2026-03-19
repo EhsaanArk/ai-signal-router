@@ -53,6 +53,7 @@ class SignalAction(str, Enum):
     partial_close_pct = "partially_close_by_percentage"
     breakeven = "move_sl_to_breakeven"
     close_position = "close_order_at_market_price"
+    extra_order = "open_extra_order"  # crypto only
 
 
 # Crypto action type strings — differ from forex per WEBHOOK_PAYLOADS.md
@@ -63,6 +64,7 @@ CRYPTO_ACTION_TYPE: dict[str, str] = {
     "partial_close_lot": "partially_closed_by_percentage",  # no lot support
     "partial_close_pct": "partially_closed_by_percentage",
     "breakeven": "moved_sl_adjustment",
+    "extra_order": "open_extra_order",
 }
 
 
@@ -103,7 +105,7 @@ class ParsedSignal(BaseModel):
 
     action: Literal[
         "entry", "partial_close", "breakeven", "close_position",
-        "modify_sl", "modify_tp", "trailing_sl",
+        "modify_sl", "modify_tp", "trailing_sl", "extra_order",
     ] = "entry"
     symbol: str
     direction: Literal["long", "short"] = "long"
@@ -121,6 +123,8 @@ class ParsedSignal(BaseModel):
     trailing_sl_pips: int | None = None
     take_profit_pips: list[int] = Field(default_factory=list)
     stop_loss_pips: int | None = None
+    is_market: bool | None = None
+    order_price: float | None = None
 
 
 # ---------------------------------------------------------------------------

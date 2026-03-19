@@ -93,6 +93,8 @@ def _signal_action(signal: ParsedSignal) -> SignalAction:
     if action == "modify_sl":
         # modify_sl maps to breakeven with slAdjustment when new_sl is available
         return SignalAction.breakeven
+    if action == "extra_order":
+        return SignalAction.extra_order
     if action == "modify_tp":
         # modify_tp has no SageMaster equivalent — will be logged as unsupported
         raise ValueError("Action 'modify_tp' is not supported by SageMaster")
@@ -165,6 +167,11 @@ def _inject_crypto_management_fields(
         else:
             payload["sl_adjustment"] = 0
         payload["position_type"] = position_type
+    elif action == SignalAction.extra_order:
+        payload["position_type"] = position_type
+        payload["is_market"] = signal.is_market if signal.is_market is not None else True
+        if signal.order_price is not None:
+            payload["order_price"] = signal.order_price
     # close_position needs no extra fields beyond type
     return payload
 
@@ -241,18 +248,28 @@ def build_webhook_payload(
         payload["eventSymbol"] = signal.symbol
     if payload.get("source") == "":
         payload["source"] = signal.source_asset_class
-    # V2 fields — only fill if template has the key with empty value
-    if rule.payload_version == "V2":
+    # Signal-driven fields — fill when template has the key with empty/falsy value.
+    # For forex these are gated by V2; for crypto they're always available
+    # (SageMaster Crypto has no V1/V2 split — TP/SL are additional template fields).
+    should_fill_signal_fields = rule.payload_version == "V2" or is_crypto
+    if should_fill_signal_fields:
         if payload.get("price") == "":
             payload["price"] = str(signal.entry_price) if signal.entry_price is not None else ""
+        if "take_profits" in payload and not payload["take_profits"]:
+            payload["take_profits"] = signal.take_profits
         if "takeProfits" in payload and not payload["takeProfits"]:
             payload["takeProfits"] = signal.take_profits
         if "takeProfitsPips" in payload and not payload["takeProfitsPips"]:
             payload["takeProfitsPips"] = signal.take_profit_pips or []
         if "stopLoss" in payload and not payload["stopLoss"]:
             payload["stopLoss"] = signal.stop_loss
+        if "stop_loss" in payload and not payload["stop_loss"]:
+            payload["stop_loss"] = signal.stop_loss
         if "stopLossPips" in payload and not payload["stopLossPips"]:
             payload["stopLossPips"] = signal.stop_loss_pips
+    # Crypto entry also needs position_type from signal direction
+    if is_crypto and "position_type" in payload and not payload["position_type"]:
+        payload["position_type"] = signal.direction or "long"
     return payload
 
 
