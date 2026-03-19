@@ -48,10 +48,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 type Tab = "prompt" | "sandbox" | "model";
 
-const tabs: { key: Tab; label: string; icon: typeof Brain }[] = [
-  { key: "prompt", label: "System Prompt", icon: Brain },
-  { key: "sandbox", label: "Test Sandbox", icon: FlaskConical },
-  { key: "model", label: "Model Config", icon: Settings2 },
+const tabs: { key: Tab; label: string; shortLabel: string; icon: typeof Brain }[] = [
+  { key: "prompt", label: "System Prompt", shortLabel: "Prompt", icon: Brain },
+  { key: "sandbox", label: "Test Sandbox", shortLabel: "Sandbox", icon: FlaskConical },
+  { key: "model", label: "Model Config", shortLabel: "Config", icon: Settings2 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -590,7 +590,7 @@ function ModelConfigTab() {
               step={0.05}
               value={currentTemp}
               onChange={(e) => setTemperature(parseFloat(e.target.value))}
-              className="w-64 accent-primary"
+              className="w-64 h-2 rounded-full appearance-none cursor-pointer bg-muted accent-primary [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-sm"
             />
             <div className="flex justify-between w-64 text-[10px] text-muted-foreground mt-1">
               <span>0.0 (deterministic)</span>
@@ -659,7 +659,8 @@ export function AdminParserPage() {
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
-              {tab.label}
+              <span className="hidden sm:inline">{tab.label}</span>
+              <span className="sm:hidden">{tab.shortLabel}</span>
             </button>
           );
         })}
