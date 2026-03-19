@@ -1,4 +1,4 @@
-import { lazy, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { ProtectedRoute } from "@/components/layout/protected-route";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
@@ -9,20 +9,21 @@ import { ResetPasswordPage } from "@/pages/reset-password";
 import { VerifyEmailPage } from "@/pages/verify-email";
 import { NotFound } from "@/components/shared/not-found";
 import { useAuth } from "@/contexts/auth-context";
+import { lazyRetry } from "@/lib/lazy-retry";
 
-const DashboardPage = lazy(() => import("./pages/dashboard"));
-const TelegramPage = lazy(() => import("./pages/telegram"));
-const RoutingRulesPage = lazy(() => import("./pages/routing-rules"));
-const RoutingRulesNewPage = lazy(() => import("./pages/routing-rules-new"));
-const RoutingRulesEditPage = lazy(() => import("./pages/routing-rules-edit"));
-const LogsPage = lazy(() => import("./pages/logs"));
-const SettingsPage = lazy(() => import("./pages/settings"));
-const SetupPage = lazy(() => import("./pages/setup"));
-const AdminHealthPage = lazy(() => import("./pages/admin/health"));
-const AdminUsersPage = lazy(() => import("./pages/admin/users"));
-const AdminUserDetailPage = lazy(() => import("./pages/admin/user-detail"));
-const AdminSignalsPage = lazy(() => import("./pages/admin/signals"));
-const AdminSystemRulesPage = lazy(() => import("./pages/admin/system-rules"));
+const DashboardPage = lazyRetry(() => import("./pages/dashboard"));
+const TelegramPage = lazyRetry(() => import("./pages/telegram"));
+const RoutingRulesPage = lazyRetry(() => import("./pages/routing-rules"));
+const RoutingRulesNewPage = lazyRetry(() => import("./pages/routing-rules-new"));
+const RoutingRulesEditPage = lazyRetry(() => import("./pages/routing-rules-edit"));
+const LogsPage = lazyRetry(() => import("./pages/logs"));
+const SettingsPage = lazyRetry(() => import("./pages/settings"));
+const SetupPage = lazyRetry(() => import("./pages/setup"));
+const AdminHealthPage = lazyRetry(() => import("./pages/admin/health"));
+const AdminUsersPage = lazyRetry(() => import("./pages/admin/users"));
+const AdminUserDetailPage = lazyRetry(() => import("./pages/admin/user-detail"));
+const AdminSignalsPage = lazyRetry(() => import("./pages/admin/signals"));
+const AdminSystemRulesPage = lazyRetry(() => import("./pages/admin/system-rules"));
 
 function AdminRoute({ children }: { children: ReactNode }) {
   const { user } = useAuth();
