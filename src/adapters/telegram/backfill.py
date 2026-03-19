@@ -79,7 +79,13 @@ async def backfill_missed_signals(
                 continue
 
             # 2. Fetch recent messages from Telegram history
-            entity = await listener._client.get_entity(int(channel_id))
+            # Use PeerChannel for channels (bare int is ambiguous — Telethon
+            # assumes user IDs).  Fall back to bare int for group chats.
+            from telethon.tl.types import PeerChannel
+            try:
+                entity = await listener._client.get_entity(PeerChannel(int(channel_id)))
+            except Exception:
+                entity = await listener._client.get_entity(int(channel_id))
             messages = await listener._client.get_messages(
                 entity,
                 min_id=last_seen_id,

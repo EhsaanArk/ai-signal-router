@@ -7,7 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -83,11 +83,15 @@ def create_app() -> FastAPI:
             import sentry_sdk
 
             service_role = os.environ.get("SERVICE_ROLE", "api")
+            sentry_env = os.environ.get(
+                "SENTRY_ENVIRONMENT",
+                "development" if local_mode else "staging",
+            )
             sentry_sdk.init(
                 dsn=sentry_dsn,
                 send_default_pii=True,
                 traces_sample_rate=0.1,
-                environment="production" if not local_mode else "development",
+                environment=sentry_env,
                 server_name=f"sgm-{service_role}",
             )
             sentry_sdk.set_tag("service.role", service_role)
@@ -267,6 +271,89 @@ def create_app() -> FastAPI:
                     content={"status": "unhealthy", "database": db_status},
                 )
         return {"status": "ok", "database": db_status}
+
+    # ------------------------------------------------------------------
+    # Deploy health check (unauthenticated — aggregate counts only)
+    # ------------------------------------------------------------------
+    @application.get("/health/deploy")
+    @limiter.limit("6/minute")
+    async def deploy_health_check(request: Request):
+        """Post-deploy verification endpoint.
+
+        Returns current session/listener/channel counts plus a comparison
+        against the pre-shutdown snapshot saved by the previous container.
+        No PII — only aggregate counts and UUIDs.
+        """
+        from sqlalchemy import func, select as sa_select
+
+        from src.adapters.db.models import (
+            RoutingRuleModel,
+            SignalLogModel,
+            TelegramSessionModel,
+        )
+        from src.adapters.db.session import get_async_session_factory
+        from src.adapters.telegram.deploy_snapshot import (
+            compare_snapshots,
+            read_pre_deploy_snapshot,
+        )
+
+        # Current state from DB
+        try:
+            factory = get_async_session_factory()
+            async with factory() as db:
+                active_sessions = (await db.execute(
+                    sa_select(func.count()).select_from(TelegramSessionModel)
+                    .where(TelegramSessionModel.is_active.is_(True))
+                )).scalar_one()
+
+                active_session_users = (await db.execute(
+                    sa_select(TelegramSessionModel.user_id)
+                    .where(TelegramSessionModel.is_active.is_(True))
+                )).scalars().all()
+
+                active_channels = (await db.execute(
+                    sa_select(func.count(func.distinct(
+                        RoutingRuleModel.source_channel_id
+                    ))).where(RoutingRuleModel.is_active.is_(True))
+                )).scalar_one()
+
+                last_signal = (await db.execute(
+                    sa_select(SignalLogModel.processed_at)
+                    .order_by(SignalLogModel.processed_at.desc())
+                    .limit(1)
+                )).scalar_one_or_none()
+        except Exception as exc:
+            logger.error("Deploy health check DB query failed: %s", exc)
+            return JSONResponse(
+                status_code=503,
+                content={"status": "unhealthy", "error": str(exc)},
+            )
+
+        current = {
+            "active_sessions": active_sessions,
+            "connected_listeners": active_sessions,  # DB reflects connected state
+            "channels_monitored": active_channels,
+            "user_ids": [str(uid) for uid in active_session_users],
+            "last_signal_at": last_signal.isoformat() if last_signal else None,
+        }
+
+        # Compare against pre-deploy snapshot
+        cache = request.app.state.cache
+        pre_snapshot = await read_pre_deploy_snapshot(cache)
+
+        comparison = None
+        deploy_health = "HEALTHY"
+        if pre_snapshot:
+            comparison = compare_snapshots(pre_snapshot, current)
+            deploy_health = comparison["verdict"]
+
+        return {
+            "status": "ok",
+            "deploy_health": deploy_health,
+            "current": current,
+            "pre_deploy_snapshot": pre_snapshot,
+            "comparison": comparison,
+        }
 
     # ------------------------------------------------------------------
     # Mount routers

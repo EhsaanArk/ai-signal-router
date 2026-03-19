@@ -21,6 +21,24 @@ import { useRoutingRules } from "@/hooks/use-routing-rules";
 import { useTelegramStatus } from "@/hooks/use-telegram";
 import { cn } from "@/lib/utils";
 
+/** Map route paths to their dynamic import functions for prefetching on hover */
+const routePrefetchMap: Record<string, () => Promise<unknown>> = {
+  "/": () => import("../../pages/dashboard"),
+  "/telegram": () => import("../../pages/telegram"),
+  "/routing-rules": () => import("../../pages/routing-rules"),
+  "/logs": () => import("../../pages/logs"),
+  "/settings": () => import("../../pages/settings"),
+  "/admin/health": () => import("../../pages/admin/health"),
+  "/admin/users": () => import("../../pages/admin/users"),
+  "/admin/signals": () => import("../../pages/admin/signals"),
+  "/admin/system-rules": () => import("../../pages/admin/system-rules"),
+};
+
+function prefetchRoute(path: string) {
+  const loader = routePrefetchMap[path];
+  if (loader) loader().catch(() => { /* chunk prefetch failed — no-op */ });
+}
+
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/telegram", label: "Telegram", icon: MessageSquare },
@@ -73,6 +91,7 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
                 <Link
                   to={item.path}
                   onClick={onNavClick}
+                  onMouseEnter={() => prefetchRoute(item.path)}
                   className={cn(
                     "relative flex h-10 w-10 items-center justify-center rounded-md transition-colors",
                     isActive
@@ -113,6 +132,7 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
                   <Link
                     to={item.path}
                     onClick={onNavClick}
+                    onMouseEnter={() => prefetchRoute(item.path)}
                     className={cn(
                       "relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
                       isActive

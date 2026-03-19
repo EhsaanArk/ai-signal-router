@@ -114,15 +114,27 @@ class TelegramListener:
         # Prime Telethon's entity cache so it can deserialise incoming updates.
         # When we know which channels to monitor, fetch only those entities
         # (lightweight) instead of the full dialog list (heavy, flood-wait prone).
+        #
+        # IMPORTANT: bare integer IDs are ambiguous — Telethon assumes they are
+        # user IDs.  For channels/supergroups we must pass PeerChannel(bare_id)
+        # so Telethon constructs the correct marked ID (-100XXXXXXXXXX).
         if monitored_channels:
+            from telethon.tl.types import PeerChannel
+
             for ch_id in monitored_channels:
                 try:
-                    await self._client.get_entity(int(ch_id))
+                    # Try as a channel first (most common for signal sources)
+                    await self._client.get_entity(PeerChannel(int(ch_id)))
                 except Exception:
-                    logger.warning(
-                        "Could not pre-fetch entity for channel %s (user %s)",
-                        ch_id, user_id,
-                    )
+                    # Fall back to bare int (might be a user/group chat)
+                    try:
+                        await self._client.get_entity(int(ch_id))
+                    except Exception:
+                        logger.warning(
+                            "Could not pre-fetch entity for channel %s (user %s) "
+                            "— messages will still be processed via ID matching",
+                            ch_id, user_id,
+                        )
         else:
             await self._client.get_dialogs()
 
@@ -149,9 +161,16 @@ class TelegramListener:
             )
             sentry_sdk.capture_exception(exc)
             chat = None
-        # Always use the bare (unmarked) ID to match channels.py format.
-        # event.chat_id may include a -100 prefix; abs() strips it.
-        channel_id = str(chat.id) if chat else str(abs(event.chat_id))
+        # Always use the bare (unmarked) ID to match the DB format.
+        # event.chat_id for channels is "marked": -100XXXXXXXXXX.
+        # abs() only strips the minus sign, NOT the 100 prefix.
+        # Telethon's resolve_id() correctly extracts the bare ID.
+        if chat:
+            channel_id = str(chat.id)
+        else:
+            from telethon.utils import resolve_id
+            bare_id, _ = resolve_id(event.chat_id)
+            channel_id = str(bare_id)
 
         # Skip channels the user hasn't configured routing rules for.
         # When _monitored_channels is empty no channel should pass through —
@@ -232,11 +251,15 @@ if __name__ == "__main__":
         import sentry_sdk
 
         local_mode_env = os.environ.get("LOCAL_MODE", "false").lower() == "true"
+        sentry_env = os.environ.get(
+            "SENTRY_ENVIRONMENT",
+            "development" if local_mode_env else "staging",
+        )
         sentry_sdk.init(
             dsn=sentry_dsn,
             send_default_pii=True,
             traces_sample_rate=0.1,
-            environment="production" if not local_mode_env else "development",
+            environment=sentry_env,
             server_name="sgm-listener",
         )
         sentry_sdk.set_tag("service.role", "listener")
@@ -353,6 +376,7 @@ if __name__ == "__main__":
         else:
             # ── Multi-user mode (SaaS) ───────────────────────────────────
             from src.adapters.telegram.manager import MultiUserListenerManager
+            from src.adapters.proxy import get_proxy_provider
             import signal
 
             enc_key = os.environ["ENCRYPTION_KEY"].encode()
@@ -364,6 +388,9 @@ if __name__ == "__main__":
                 from src.adapters.email.sender import ResendNotifier
                 email_notifier = ResendNotifier(api_key=resend_key)
 
+            # Per-user proxy provider (IPRoyal) with global proxy fallback
+            proxy_provider = get_proxy_provider()
+
             manager = MultiUserListenerManager(
                 api_id=api_id,
                 api_hash=api_hash,
@@ -372,10 +399,36 @@ if __name__ == "__main__":
                 enc_key=enc_key,
                 email_notifier=email_notifier,
                 proxy=proxy,
+                proxy_provider=proxy_provider,
             )
 
             logger.info("Starting multi-user listener manager...")
             await manager.start()
+
+            # ── Post-startup deploy health self-check ─────────────────────
+            # Compare current state against the pre-shutdown snapshot saved
+            # by the previous container (if any).  This detects session loss
+            # caused by AuthKeyDuplicatedError during rolling deploys.
+            redis_url = os.environ.get("REDIS_URL", "")
+            if redis_url:
+                from src.adapters.redis.client import RedisCacheAdapter
+                import redis.asyncio as aioredis
+                from src.adapters.telegram.deploy_snapshot import (
+                    run_post_startup_check,
+                )
+
+                _check_redis = aioredis.from_url(redis_url, decode_responses=True)
+                _check_cache = RedisCacheAdapter(_check_redis)
+                try:
+                    await run_post_startup_check(
+                        _check_cache,
+                        manager._listeners,
+                        manager._monitored_channels,
+                    )
+                except Exception as exc:
+                    logger.warning("Post-startup health check failed: %s", exc)
+                finally:
+                    await _check_redis.aclose()
 
             # ── Graceful shutdown on SIGTERM ──────────────────────────────
             # Railway sends SIGTERM before replacing the container.  We must
@@ -385,9 +438,11 @@ if __name__ == "__main__":
             # AuthKeyDuplicatedError and invalidate user sessions.
             #
             #   SIGTERM received
+            #     → save pre-shutdown snapshot to Redis
             #     → manager.stop() disconnects all Telethon clients
             #     → sessions released cleanly
             #     → new container connects without conflict
+            #     → new container compares snapshot → logs deploy health
             #     → backfill recovers any signals missed during the gap
             shutdown_event = asyncio.Event()
             loop = asyncio.get_running_loop()
@@ -405,17 +460,29 @@ if __name__ == "__main__":
             except (KeyboardInterrupt, asyncio.CancelledError):
                 pass
             finally:
+                # ── Save pre-shutdown snapshot to Redis ────────────────────
+                if redis_url:
+                    from src.adapters.telegram.deploy_snapshot import (
+                        save_pre_shutdown_snapshot,
+                    )
+
+                    await save_pre_shutdown_snapshot(
+                        redis_url,
+                        manager._listeners,
+                        manager._monitored_channels,
+                    )
+
                 logger.info("Shutting down — disconnecting all Telegram clients...")
                 try:
-                    # Give manager 25s to disconnect all clients.  Railway
+                    # Give manager 23s to disconnect all clients.  Railway
                     # sends SIGKILL after gracefulShutdownTimeoutSeconds (30s
-                    # in railway.toml).  The 5s buffer ensures we log a clean
-                    # exit rather than being killed mid-disconnect.
-                    await asyncio.wait_for(manager.stop(), timeout=25.0)
+                    # in railway.toml).  The snapshot write + 2s buffer
+                    # accounts for the remaining time.
+                    await asyncio.wait_for(manager.stop(), timeout=23.0)
                     logger.info("All clients disconnected. Exiting cleanly.")
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "Shutdown timed out after 25s — "
+                        "Shutdown timed out after 23s — "
                         "some clients may not have disconnected cleanly."
                     )
 
