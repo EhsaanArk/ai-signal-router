@@ -430,7 +430,7 @@ function TestSandboxTab() {
       )}
 
       {/* Test Dispatch */}
-      {testParse.data?.parsed?.is_valid_signal && (
+      {testParse.data?.parsed?.is_valid_signal === true && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium">
