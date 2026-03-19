@@ -248,25 +248,25 @@ def build_webhook_payload(
         payload["eventSymbol"] = signal.symbol
     if payload.get("source") == "":
         payload["source"] = signal.source_asset_class
-    # Signal-driven fields — always fill when the template has the key with
-    # empty/falsy value AND the signal provides data.  V1/V2 distinction is
-    # implicit: if the template has TP/SL fields and the signal has TP/SL
-    # data, they get filled.  If the signal has no TP/SL, the fields stay
-    # empty and are stripped below so SageMaster doesn't reject them.
-    if payload.get("price") == "":
-        payload["price"] = str(signal.entry_price) if signal.entry_price is not None else ""
-    if "take_profits" in payload and not payload["take_profits"]:
-        payload["take_profits"] = signal.take_profits
-    if "takeProfits" in payload and not payload["takeProfits"]:
-        payload["takeProfits"] = signal.take_profits
-    if "takeProfitsPips" in payload and not payload["takeProfitsPips"]:
-        payload["takeProfitsPips"] = signal.take_profit_pips or []
-    if "stopLoss" in payload and not payload["stopLoss"]:
-        payload["stopLoss"] = signal.stop_loss
-    if "stop_loss" in payload and not payload["stop_loss"]:
-        payload["stop_loss"] = signal.stop_loss
-    if "stopLossPips" in payload and not payload["stopLossPips"]:
-        payload["stopLossPips"] = signal.stop_loss_pips
+    # Signal-driven fields — fill when template has the key with empty/falsy
+    # value.  Gated by V2 for forex; crypto always fills (no V1/V2 split).
+    # Empty fields are stripped below so SageMaster doesn't reject them.
+    should_fill_signal_fields = rule.payload_version == "V2" or is_crypto
+    if should_fill_signal_fields:
+        if payload.get("price") == "":
+            payload["price"] = str(signal.entry_price) if signal.entry_price is not None else ""
+        if "take_profits" in payload and not payload["take_profits"]:
+            payload["take_profits"] = signal.take_profits
+        if "takeProfits" in payload and not payload["takeProfits"]:
+            payload["takeProfits"] = signal.take_profits
+        if "takeProfitsPips" in payload and not payload["takeProfitsPips"]:
+            payload["takeProfitsPips"] = signal.take_profit_pips or []
+        if "stopLoss" in payload and not payload["stopLoss"]:
+            payload["stopLoss"] = signal.stop_loss
+        if "stop_loss" in payload and not payload["stop_loss"]:
+            payload["stop_loss"] = signal.stop_loss
+        if "stopLossPips" in payload and not payload["stopLossPips"]:
+            payload["stopLossPips"] = signal.stop_loss_pips
     # Crypto entry also needs position_type from signal direction
     if is_crypto and "position_type" in payload and not payload["position_type"]:
         payload["position_type"] = signal.direction or "long"
