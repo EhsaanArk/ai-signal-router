@@ -92,7 +92,8 @@ async def save_pre_shutdown_snapshot(
             )
             return True
         finally:
-            await client.aclose()
+            close = getattr(client, "aclose", None) or client.close
+            await close()
     except Exception as exc:
         logger.warning("Failed to save pre-shutdown snapshot: %s", exc)
         return False
