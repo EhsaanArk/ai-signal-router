@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { TemplateBuilder, sanitizeTradingViewJson, validateRequiredFields } from "@/components/forms/template-builder";
+import { TemplateBuilder, MoneyManagementSelect, sanitizeTradingViewJson, validateRequiredFields, type MoneyManagementMode } from "@/components/forms/template-builder";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Lightbulb, Loader2, Plus, X, XCircle } from "lucide-react";
 import { useRoutingRules, useUpdateRule } from "@/hooks/use-routing-rules";
@@ -188,6 +188,10 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
     const lots = rule.risk_overrides?.lots;
     return typeof lots === "string" ? lots : "";
   });
+  const [mmMode, setMmMode] = useState<MoneyManagementMode>(() => {
+    const stored = rule.risk_overrides?.money_management_mode;
+    return (typeof stored === "string" ? stored : "unsure") as MoneyManagementMode;
+  });
   const [destinationType, setDestinationType] = useState<DestinationType>(
     (rule.destination_type as DestinationType) || "sagemaster_forex"
   );
@@ -301,10 +305,12 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
 
     // Validate required fields for SageMaster destinations
     if (destinationType !== "custom" && parsedTemplate) {
+      const mmForValidation = version === "V2" && destinationType === "sagemaster_forex" ? mmMode : undefined;
       const missing = validateRequiredFields(
         JSON.stringify(parsedTemplate),
         destinationType,
         version,
+        mmForValidation,
       );
       if (missing.length > 0) {
         setTemplateError(`Missing required fields: ${missing.join(", ")}`);
@@ -322,6 +328,9 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
     const riskOverrides: Record<string, unknown> = {};
     if (lotSize.trim()) {
       riskOverrides.lots = lotSize.trim();
+    }
+    if (version === "V2" && destinationType === "sagemaster_forex" && mmMode !== "unsure") {
+      riskOverrides.money_management_mode = mmMode;
     }
 
     await onSubmit({
@@ -392,6 +401,7 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
               onClick={() => {
                 setDestinationType(dt.value);
                 if (dt.value === "sagemaster_crypto") setVersion("V1");
+                if (dt.value !== "sagemaster_forex") setMmMode("unsure");
               }}
               className={cn(
                 "rounded-md border px-3 py-2.5 text-left transition-colors",
@@ -500,7 +510,10 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
         ) : (
           <RadioGroup
             value={version}
-            onValueChange={(v: string) => setVersion(v as "V1" | "V2")}
+            onValueChange={(v: string) => {
+              setVersion(v as "V1" | "V2");
+              if (v === "V1") setMmMode("unsure");
+            }}
           >
             <div className="flex gap-2">
               <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
@@ -522,6 +535,11 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
         )}
       </div>
 
+      {/* Money Management Mode (V2 Forex only) */}
+      {version === "V2" && destinationType === "sagemaster_forex" && (
+        <MoneyManagementSelect value={mmMode} onChange={setMmMode} />
+      )}
+
       {/* Webhook Body Template */}
       <TemplateBuilder
         value={templateText}
@@ -532,6 +550,7 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
         error={templateError}
         destinationType={destinationType}
         payloadVersion={version}
+        moneyManagementMode={version === "V2" && destinationType === "sagemaster_forex" ? mmMode : undefined}
       />
 
       {/* Template mismatch warning */}

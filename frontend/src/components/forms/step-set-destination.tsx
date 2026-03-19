@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { TemplateBuilder, sanitizeTradingViewJson, validateRequiredFields } from "./template-builder";
+import { TemplateBuilder, MoneyManagementSelect, sanitizeTradingViewJson, validateRequiredFields, type MoneyManagementMode } from "./template-builder";
 import { apiFetch } from "@/lib/api";
 import { cn, extractAccountIdFromUrl, extractTemplateMetadata } from "@/lib/utils";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
@@ -17,6 +17,7 @@ interface Props {
     webhook_body_template?: Record<string, unknown> | null;
     destination_type?: DestinationType;
     destination_label?: string;
+    money_management_mode?: MoneyManagementMode;
   };
   onNext: (
     url: string,
@@ -24,6 +25,7 @@ interface Props {
     webhookBodyTemplate: Record<string, unknown> | null,
     destinationType: DestinationType,
     destinationLabel: string,
+    moneyManagementMode?: MoneyManagementMode,
   ) => void;
   onBack: (
     url: string,
@@ -31,6 +33,7 @@ interface Props {
     webhookBodyTemplate: Record<string, unknown> | null,
     destinationType: DestinationType,
     destinationLabel: string,
+    moneyManagementMode?: MoneyManagementMode,
   ) => void;
 }
 
@@ -70,6 +73,7 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
   const [templateError, setTemplateError] = useState("");
   const [templateInfo, setTemplateInfo] = useState("");
   const [destinationType, setDestinationType] = useState<DestinationType>(initialData?.destination_type ?? "sagemaster_forex");
+  const [mmMode, setMmMode] = useState<MoneyManagementMode>(initialData?.money_management_mode ?? "unsure");
   // Preserved across back/next navigation; no UI input yet
   const destinationLabel = initialData?.destination_label ?? "";
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "failed">("idle");
@@ -188,10 +192,12 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
 
     // Validate required fields for SageMaster destinations
     if (destinationType !== "custom" && parsedTemplate) {
+      const mmForValidation = version === "V2" && destinationType === "sagemaster_forex" ? mmMode : undefined;
       const missing = validateRequiredFields(
         JSON.stringify(parsedTemplate),
         destinationType,
         version,
+        mmForValidation,
       );
       if (missing.length > 0) {
         setTemplateError(`Missing required fields: ${missing.join(", ")}`);
@@ -211,7 +217,8 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
       }
     }
 
-    onNext(url, version, parsedTemplate, destinationType, destinationLabel);
+    const mmToPass = version === "V2" && destinationType === "sagemaster_forex" ? mmMode : undefined;
+    onNext(url, version, parsedTemplate, destinationType, destinationLabel, mmToPass);
   }
 
   return (
@@ -227,6 +234,7 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
               onClick={() => {
                 setDestinationType(dt.value);
                 if (dt.value === "sagemaster_crypto") setVersion("V1");
+                if (dt.value !== "sagemaster_forex") setMmMode("unsure");
               }}
               className={cn(
                 "rounded-md border px-3 py-2.5 text-left transition-colors",
@@ -478,7 +486,10 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
         ) : (
           <RadioGroup
             value={version}
-            onValueChange={(v: string) => setVersion(v as "V1" | "V2")}
+            onValueChange={(v: string) => {
+              setVersion(v as "V1" | "V2");
+              if (v === "V1") setMmMode("unsure");
+            }}
           >
             <div className="flex gap-2">
               <div className="flex items-center space-x-2 rounded-md border px-3 py-2 flex-1">
@@ -499,6 +510,11 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
           </RadioGroup>
         )}
       </div>
+
+      {/* Money Management Mode (V2 Forex only) */}
+      {version === "V2" && destinationType === "sagemaster_forex" && (
+        <MoneyManagementSelect value={mmMode} onChange={setMmMode} />
+      )}
 
       {/* Template Builder */}
       {templateLocked && templateMeta.assistId ? (
@@ -539,6 +555,7 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
           error={templateError}
           destinationType={destinationType}
           payloadVersion={version}
+          moneyManagementMode={version === "V2" && destinationType === "sagemaster_forex" ? mmMode : undefined}
         />
       )}
 
@@ -560,7 +577,8 @@ export function StepSetDestination({ initialData, onNext, onBack }: Props) {
         <Button variant="outline" size="sm" onClick={() => {
           let parsedTemplate: Record<string, unknown> | null = null;
           try { parsedTemplate = templateText.trim() ? JSON.parse(sanitizeTradingViewJson(templateText.trim())) : null; } catch { /* ignore */ }
-          onBack(url, version, parsedTemplate, destinationType, destinationLabel);
+          const mmToPass = version === "V2" && destinationType === "sagemaster_forex" ? mmMode : undefined;
+          onBack(url, version, parsedTemplate, destinationType, destinationLabel, mmToPass);
         }}>
           Back
         </Button>

@@ -9,6 +9,7 @@ import { useCreateRule } from "@/hooks/use-routing-rules";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { DestinationType, RoutingRuleCreate } from "@/types/api";
+import type { MoneyManagementMode } from "./template-builder";
 
 interface WizardData {
   source_channel_id: string;
@@ -23,6 +24,7 @@ interface WizardData {
   destination_type: DestinationType;
   enabled_actions: string[];
   keyword_blacklist: string[];
+  money_management_mode?: MoneyManagementMode;
 }
 
 interface StepDef {
@@ -66,13 +68,17 @@ export function RoutingRuleWizard({ onComplete }: Props) {
   }
 
   async function handleFinish(mappings: Record<string, string>) {
+    const finalRiskOverrides = { ...(data.risk_overrides || {}) };
+    if (data.money_management_mode && data.money_management_mode !== "unsure") {
+      finalRiskOverrides.money_management_mode = data.money_management_mode;
+    }
     const payload: RoutingRuleCreate = {
       source_channel_id: data.source_channel_id!,
       source_channel_name: data.source_channel_name,
       destination_webhook_url: data.destination_webhook_url!,
       payload_version: data.payload_version || "V1",
       symbol_mappings: mappings,
-      risk_overrides: data.risk_overrides || {},
+      risk_overrides: finalRiskOverrides,
       webhook_body_template: data.webhook_body_template ?? null,
       rule_name: data.rule_name || null,
       destination_label: null,
@@ -94,16 +100,21 @@ export function RoutingRuleWizard({ onComplete }: Props) {
 
   // Called when Actions step is the final step (SageMaster path)
   async function handleActionsFinish(enabledActions: string[], riskOverrides: Record<string, unknown>, keywordBlacklist: string[]) {
-    setData((prev) => ({ ...prev, enabled_actions: enabledActions, risk_overrides: riskOverrides, keyword_blacklist: keywordBlacklist }));
+    // Merge MM mode into risk_overrides if set
+    const finalRiskOverrides = { ...riskOverrides };
+    if (data.money_management_mode && data.money_management_mode !== "unsure") {
+      finalRiskOverrides.money_management_mode = data.money_management_mode;
+    }
+    setData((prev) => ({ ...prev, enabled_actions: enabledActions, risk_overrides: finalRiskOverrides, keyword_blacklist: keywordBlacklist }));
     // Submit directly with empty mappings
-    const merged = { ...data, enabled_actions: enabledActions, risk_overrides: riskOverrides, keyword_blacklist: keywordBlacklist };
+    const merged = { ...data, enabled_actions: enabledActions, risk_overrides: finalRiskOverrides, keyword_blacklist: keywordBlacklist };
     const payload: RoutingRuleCreate = {
       source_channel_id: merged.source_channel_id!,
       source_channel_name: merged.source_channel_name,
       destination_webhook_url: merged.destination_webhook_url!,
       payload_version: merged.payload_version || "V1",
       symbol_mappings: {},
-      risk_overrides: riskOverrides,
+      risk_overrides: finalRiskOverrides,
       webhook_body_template: merged.webhook_body_template ?? null,
       rule_name: merged.rule_name || null,
       destination_label: merged.destination_label || null,
@@ -190,23 +201,26 @@ export function RoutingRuleWizard({ onComplete }: Props) {
             webhook_body_template: data.webhook_body_template,
             destination_type: data.destination_type,
             destination_label: data.destination_label,
+            money_management_mode: data.money_management_mode,
           }}
-          onNext={(url, version, webhookBodyTemplate, destinationType, destinationLabel) =>
+          onNext={(url, version, webhookBodyTemplate, destinationType, destinationLabel, moneyManagementMode) =>
             handleNext({
               destination_webhook_url: url,
               payload_version: version,
               webhook_body_template: webhookBodyTemplate,
               destination_type: destinationType,
               destination_label: destinationLabel,
+              money_management_mode: moneyManagementMode,
             })
           }
-          onBack={(url, version, webhookBodyTemplate, destinationType, destinationLabel) =>
+          onBack={(url, version, webhookBodyTemplate, destinationType, destinationLabel, moneyManagementMode) =>
             handleBack({
               destination_webhook_url: url,
               payload_version: version,
               webhook_body_template: webhookBodyTemplate,
               destination_type: destinationType,
               destination_label: destinationLabel,
+              money_management_mode: moneyManagementMode,
             })
           }
         />

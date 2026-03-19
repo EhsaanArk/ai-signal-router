@@ -127,7 +127,9 @@ Shipped in PR #52. Sentry breadcrumbs added to `_heartbeat()` with category `tel
 
 ---
 
-## P2 — Template Builder: Money Management Mode Awareness
+## ~~P2 — Template Builder: Money Management Mode Awareness~~ DONE (PR pending)
+
+Shipped in `feature/SGM-041-mm-mode-awareness`. MM mode dropdown (V2 Forex only) in both create wizard and edit page. Stored in `risk_overrides` JSON — no DB migration. Shared `MoneyManagementSelect` component + 10 unit tests.
 
 **What:** Ask users their SageMaster Assist's money management mode in the routing rule setup, then show/hide `balance` and `lots` fields contextually in the template builder.
 
