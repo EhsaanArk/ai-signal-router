@@ -1,9 +1,12 @@
+import { useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
   Circle,
   Copy,
+  FlaskConical,
+  Loader2,
   Reply,
   Route,
   XCircle,
@@ -18,9 +21,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useCopyToClipboard } from "@/hooks/use-clipboard";
+import { useReplaySignal } from "@/hooks/use-admin-parser";
 import { useRoutingRules } from "@/hooks/use-routing-rules";
+import { useAuth } from "@/contexts/auth-context";
 import { cn, humanizeAction } from "@/lib/utils";
-import type { RoutingRuleResponse, SignalLogResponse } from "@/types/api";
+import type { ReplayResponse, RoutingRuleResponse, SignalLogResponse, ValidationCheck } from "@/types/api";
 
 interface Props {
   log: SignalLogResponse | null;
@@ -138,9 +143,105 @@ function DataField({ label, value, mono }: { label: string; value: string | null
   );
 }
 
+function ReplayComparison({ replay }: { replay: ReplayResponse }) {
+  const original = replay.original_parsed;
+  const newParsed = replay.new_parsed;
+
+  // Find fields that differ
+  const allKeys = new Set([
+    ...Object.keys(original || {}),
+    ...Object.keys(newParsed),
+  ]);
+  const diffs: { key: string; old: unknown; new_: unknown }[] = [];
+  const same: { key: string; value: unknown }[] = [];
+
+  for (const key of allKeys) {
+    const oldVal = original?.[key];
+    const newVal = newParsed[key];
+    if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+      diffs.push({ key, old: oldVal, new_: newVal });
+    } else {
+      same.push({ key, value: newVal });
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className="text-[10px]">
+          {replay.model_used}
+        </Badge>
+        <Badge variant="outline" className="text-[10px]">
+          temp: {replay.temperature_used}
+        </Badge>
+      </div>
+
+      {/* Validation checks */}
+      {replay.validation_checks.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Validation</p>
+          {replay.validation_checks.map((check: ValidationCheck, i: number) => (
+            <div key={i} className="flex items-start gap-1.5 text-[11px]">
+              {check.passed ? (
+                <CheckCircle2 className="h-3 w-3 text-emerald-500 mt-0.5 shrink-0" />
+              ) : (
+                <XCircle className="h-3 w-3 text-rose-500 mt-0.5 shrink-0" />
+              )}
+              <span className={check.passed ? "text-muted-foreground" : "text-rose-600"}>
+                {check.name}: {check.message}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Differences */}
+      {diffs.length > 0 ? (
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+            Changed Fields ({diffs.length})
+          </p>
+          <div className="space-y-1.5">
+            {diffs.map((d) => (
+              <div key={d.key} className="rounded bg-muted p-2 text-[11px]">
+                <span className="font-mono font-medium">{d.key}</span>
+                <div className="flex gap-3 mt-0.5">
+                  <span className="text-rose-500 line-through">
+                    {JSON.stringify(d.old) ?? "null"}
+                  </span>
+                  <span className="text-emerald-500">
+                    {JSON.stringify(d.new_)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="text-[11px] text-emerald-600">
+          No differences — current parser config produces identical results.
+        </p>
+      )}
+
+      {/* Full new result */}
+      <details className="text-[11px]">
+        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+          Full re-parsed result
+        </summary>
+        <pre className="whitespace-pre-wrap rounded-sm bg-muted p-2 font-mono text-[10px] mt-1 max-h-48 overflow-y-auto">
+          {JSON.stringify(newParsed, null, 2)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
 export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
   const copy = useCopyToClipboard();
   const { data: rules } = useRoutingRules();
+  const { user } = useAuth();
+  const replayMutation = useReplaySignal();
+  const [replayResult, setReplayResult] = useState<ReplayResponse | null>(null);
 
   if (!log) return null;
 
@@ -393,6 +494,47 @@ export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Reason</p>
               <p className="text-xs text-amber-600 dark:text-amber-400">{humanizeErrorMessage(log.error_message)}</p>
             </div>
+          )}
+
+          {/* Signal Replay (admin only) */}
+          {user?.is_admin && (
+            <>
+              <Separator />
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Re-parse with Current Config
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    disabled={replayMutation.isPending}
+                    onClick={() => {
+                      setReplayResult(null);
+                      replayMutation.mutate(log.id, {
+                        onSuccess: (data) => setReplayResult(data),
+                      });
+                    }}
+                  >
+                    {replayMutation.isPending ? (
+                      <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />
+                    ) : (
+                      <FlaskConical className="mr-1 h-2.5 w-2.5" />
+                    )}
+                    Re-parse
+                  </Button>
+                </div>
+                {replayMutation.isError && (
+                  <p className="text-[11px] text-rose-500">
+                    {replayMutation.error instanceof Error
+                      ? replayMutation.error.message
+                      : "Re-parse failed"}
+                  </p>
+                )}
+                {replayResult && <ReplayComparison replay={replayResult} />}
+              </div>
+            </>
           )}
         </div>
       </SheetContent>
