@@ -225,3 +225,73 @@ export interface AdminHealthStats {
   active_routing_rules: number;
   active_telegram_sessions: number;
 }
+
+// Parser Manager types
+
+export interface ParserConfigResponse {
+  id: string;
+  config_key: string;
+  system_prompt: string | null;
+  model_name: string | null;
+  temperature: number | null;
+  version: number;
+  is_active: boolean;
+  change_note: string | null;
+  changed_by_email: string | null;
+  created_at: string;
+}
+
+export interface PaginatedParserHistory {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ParserConfigResponse[];
+}
+
+export interface TestParseRequest {
+  raw_message: string;
+  custom_instructions?: string | null;
+}
+
+export interface ValidationCheck {
+  name: string;
+  passed: boolean;
+  message: string;
+}
+
+export interface TestParseResponse {
+  parsed: Record<string, unknown>;
+  model_used: string;
+  temperature_used: number;
+  validation_checks: ValidationCheck[];
+  webhook_payload: Record<string, unknown> | null;
+}
+
+export interface ReplayResponse {
+  original_parsed: Record<string, unknown> | null;
+  new_parsed: Record<string, unknown>;
+  model_used: string;
+  temperature_used: number;
+  validation_checks: ValidationCheck[];
+  raw_message: string;
+}
+
+export interface TestDispatchRequest {
+  raw_message: string;
+  routing_rule_id: string;
+  custom_instructions?: string | null;
+}
+
+export interface TestDispatchResponse {
+  status_code: number;
+  response_body: string;
+}
+
+// Global Settings
+export interface GlobalSetting {
+  key: string;
+  value: string;
+  description: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+}

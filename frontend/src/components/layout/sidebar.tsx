@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
   BookOpen,
+  Brain,
   LayoutDashboard,
   MessageSquare,
   Radio,
@@ -32,6 +33,8 @@ const routePrefetchMap: Record<string, () => Promise<unknown>> = {
   "/admin/users": () => import("../../pages/admin/users"),
   "/admin/signals": () => import("../../pages/admin/signals"),
   "/admin/system-rules": () => import("../../pages/admin/system-rules"),
+  "/admin/parser": () => import("../../pages/admin/parser"),
+  "/admin/settings": () => import("../../pages/admin/settings"),
 };
 
 function prefetchRoute(path: string) {
@@ -115,7 +118,7 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
 
       {/* Admin Nav */}
       {user?.is_admin && (
-        <div className="flex flex-col items-center gap-1 border-t border-sidebar-border py-2">
+        <div className="flex flex-col items-center gap-1 border-t border-sidebar-border py-2 overflow-y-auto">
           <span className="text-[8px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-0.5">
             Admin
           </span>
@@ -124,6 +127,8 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
             { path: "/admin/users", label: "Users", icon: Users },
             { path: "/admin/signals", label: "All Signals", icon: Radio },
             { path: "/admin/system-rules", label: "System Rules", icon: BookOpen },
+            { path: "/admin/parser", label: "AI Parser", icon: Brain },
+            { path: "/admin/settings", label: "Settings", icon: Settings },
           ].map((item) => {
             const isActive = location.pathname.startsWith(item.path);
             return (

@@ -15,7 +15,7 @@ from uuid import UUID
 import pytest
 
 from src.adapters.telegram.backfill import (
-    BACKFILL_MAX_AGE_SECONDS,
+    _BACKFILL_MAX_AGE_SECONDS_DEFAULT as BACKFILL_MAX_AGE_SECONDS,
     backfill_missed_signals,
 )
 from src.core.models import RawSignal

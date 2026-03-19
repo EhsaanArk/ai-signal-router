@@ -259,6 +259,65 @@ class SignalLogModel(Base):
     )
 
 
+class ParserConfigModel(Base):
+    __tablename__ = "parser_config"
+    __table_args__ = (
+        Index("idx_parser_config_active", "is_active"),
+        Index("idx_parser_config_key", "config_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    config_key: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )
+    system_prompt: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    model_name: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
+    temperature: Mapped[float | None] = mapped_column(
+        nullable=True
+    )
+    version: Mapped[int] = mapped_column(
+        nullable=False, default=1
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default="true"
+    )
+    change_note: Mapped[str | None] = mapped_column(
+        String(500), nullable=True
+    )
+    changed_by_email: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class GlobalSettingModel(Base):
+    __tablename__ = "global_settings"
+
+    key: Mapped[str] = mapped_column(
+        String(100), primary_key=True
+    )
+    value: Mapped[str] = mapped_column(
+        String(500), nullable=False
+    )
+    description: Mapped[str | None] = mapped_column(
+        String(500), nullable=True
+    )
+    updated_by: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class PasswordResetTokenModel(Base):
     __tablename__ = "password_reset_tokens"
 
