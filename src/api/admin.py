@@ -9,16 +9,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import case, exists, func, select
+from sqlalchemy import case, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
+    ParserConfigModel,
     RoutingRuleModel,
     SignalLogModel,
     TelegramSessionModel,
     UserModel,
 )
-from src.api.deps import get_admin_user, get_cache, get_db
+from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings
 from src.core.models import User
 
 logger = logging.getLogger(__name__)
@@ -649,4 +650,595 @@ async def admin_listener_health(
         active_sessions=active,
         inactive_sessions=len(sessions) - active,
         sessions=sessions,
+    )
+
+
+# ---------------------------------------------------------------------------
+# AI Parser Manager
+# ---------------------------------------------------------------------------
+
+
+class ParserConfigResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    id: UUID
+    config_key: str
+    system_prompt: str | None
+    model_name: str | None
+    temperature: float | None
+    version: int
+    is_active: bool
+    change_note: str | None
+    changed_by_email: str | None
+    created_at: str
+
+
+class SystemPromptUpdate(BaseModel):
+    system_prompt: str = Field(..., min_length=10, max_length=50000)
+    change_note: str | None = None
+
+
+class ModelConfigUpdate(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    model_name: str = Field(..., pattern=r"^(gpt-4o-mini|gpt-4o|gpt-4-turbo)$")
+    temperature: float = Field(..., ge=0.0, le=1.0)
+    change_note: str | None = None
+
+
+class TestParseRequest(BaseModel):
+    raw_message: str = Field(..., min_length=1, max_length=5000)
+    custom_instructions: str | None = None
+
+
+class ValidationCheck(BaseModel):
+    name: str
+    passed: bool
+    message: str
+
+
+class TestParseResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    parsed: dict[str, Any]
+    model_used: str
+    temperature_used: float
+    validation_checks: list[ValidationCheck] = []
+    webhook_payload: dict[str, Any] | None = None
+
+
+class TestDispatchRequest(BaseModel):
+    raw_message: str = Field(..., min_length=1, max_length=5000)
+    routing_rule_id: str
+    custom_instructions: str | None = None
+
+
+class TestDispatchResponse(BaseModel):
+    status_code: int
+    response_body: str
+
+
+class ReplayResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    original_parsed: dict[str, Any] | None
+    new_parsed: dict[str, Any]
+    model_used: str
+    temperature_used: float
+    validation_checks: list[ValidationCheck] = []
+    raw_message: str
+
+
+class PaginatedParserHistory(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[ParserConfigResponse]
+
+
+def _config_to_response(row: ParserConfigModel) -> ParserConfigResponse:
+    return ParserConfigResponse(
+        id=row.id,
+        config_key=row.config_key,
+        system_prompt=row.system_prompt,
+        model_name=row.model_name,
+        temperature=row.temperature,
+        version=row.version,
+        is_active=row.is_active,
+        change_note=row.change_note,
+        changed_by_email=row.changed_by_email,
+        created_at=row.created_at.isoformat() if row.created_at else "",
+    )
+
+
+async def _save_config_version(
+    db: AsyncSession,
+    cache: Any,
+    config_key: str,
+    admin_email: str,
+    change_note: str | None = None,
+    *,
+    system_prompt: str | None = None,
+    model_name: str | None = None,
+    temperature: float | None = None,
+) -> ParserConfigModel:
+    """Deactivate current active config, insert new version, bust cache."""
+    max_version = (await db.execute(
+        select(func.coalesce(func.max(ParserConfigModel.version), 0)).where(
+            ParserConfigModel.config_key == config_key,
+        )
+    )).scalar_one()
+
+    await db.execute(
+        update(ParserConfigModel)
+        .where(
+            ParserConfigModel.config_key == config_key,
+            ParserConfigModel.is_active.is_(True),
+        )
+        .values(is_active=False)
+    )
+
+    new_row = ParserConfigModel(
+        config_key=config_key,
+        system_prompt=system_prompt,
+        model_name=model_name,
+        temperature=temperature,
+        version=max_version + 1,
+        is_active=True,
+        change_note=change_note,
+        changed_by_email=admin_email,
+    )
+    db.add(new_row)
+    await db.flush()
+    await db.refresh(new_row)
+
+    await cache.delete("parser:config")
+
+    return new_row
+
+
+@admin_router.get("/parser/prompt", response_model=ParserConfigResponse)
+async def get_parser_prompt(
+    _admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ParserConfigResponse:
+    """Get the active system prompt, or the hardcoded default if none set."""
+    row = (await db.execute(
+        select(ParserConfigModel).where(
+            ParserConfigModel.config_key == "system_prompt",
+            ParserConfigModel.is_active.is_(True),
+        )
+    )).scalar_one_or_none()
+
+    if row:
+        return _config_to_response(row)
+
+    from src.adapters.openai.parser import OpenAISignalParser
+
+    return ParserConfigResponse(
+        id=UUID("00000000-0000-0000-0000-000000000000"),
+        config_key="system_prompt",
+        system_prompt=OpenAISignalParser.get_default_system_prompt(),
+        model_name=None,
+        temperature=None,
+        version=0,
+        is_active=True,
+        change_note="Hardcoded default",
+        changed_by_email=None,
+        created_at="",
+    )
+
+
+@admin_router.get("/parser/prompt/history", response_model=PaginatedParserHistory)
+async def get_parser_prompt_history(
+    _admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = 20,
+    offset: int = 0,
+) -> PaginatedParserHistory:
+    """Get version history of system prompt changes."""
+    base = select(ParserConfigModel).where(
+        ParserConfigModel.config_key == "system_prompt",
+    )
+
+    total = (await db.execute(
+        select(func.count()).select_from(base.subquery())
+    )).scalar_one()
+
+    rows = (await db.execute(
+        base.order_by(ParserConfigModel.version.desc())
+        .limit(limit)
+        .offset(offset)
+    )).scalars().all()
+
+    return PaginatedParserHistory(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[_config_to_response(r) for r in rows],
+    )
+
+
+@admin_router.put("/parser/prompt", response_model=ParserConfigResponse)
+async def update_parser_prompt(
+    body: SystemPromptUpdate,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
+) -> ParserConfigResponse:
+    """Save a new system prompt version."""
+    new_row = await _save_config_version(
+        db, cache, "system_prompt", admin.email,
+        change_note=body.change_note,
+        system_prompt=body.system_prompt,
+    )
+    return _config_to_response(new_row)
+
+
+@admin_router.post(
+    "/parser/prompt/revert/{version_id}",
+    response_model=ParserConfigResponse,
+)
+async def revert_parser_prompt(
+    version_id: UUID,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
+) -> ParserConfigResponse:
+    """Revert to a previous system prompt version."""
+    old_row = (await db.execute(
+        select(ParserConfigModel).where(ParserConfigModel.id == version_id)
+    )).scalar_one_or_none()
+
+    if old_row is None or old_row.config_key != "system_prompt":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Version not found",
+        )
+
+    new_row = await _save_config_version(
+        db, cache, "system_prompt", admin.email,
+        change_note=f"Reverted from version {old_row.version}",
+        system_prompt=old_row.system_prompt,
+    )
+    return _config_to_response(new_row)
+
+
+@admin_router.get("/parser/model", response_model=ParserConfigResponse)
+async def get_parser_model(
+    _admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ParserConfigResponse:
+    """Get the active model configuration."""
+    row = (await db.execute(
+        select(ParserConfigModel).where(
+            ParserConfigModel.config_key == "model_config",
+            ParserConfigModel.is_active.is_(True),
+        )
+    )).scalar_one_or_none()
+
+    if row:
+        return _config_to_response(row)
+
+    return ParserConfigResponse(
+        id=UUID("00000000-0000-0000-0000-000000000000"),
+        config_key="model_config",
+        system_prompt=None,
+        model_name="gpt-4o-mini",
+        temperature=0.0,
+        version=0,
+        is_active=True,
+        change_note="Default configuration",
+        changed_by_email=None,
+        created_at="",
+    )
+
+
+@admin_router.put("/parser/model", response_model=ParserConfigResponse)
+async def update_parser_model(
+    body: ModelConfigUpdate,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
+) -> ParserConfigResponse:
+    """Update model configuration."""
+    new_row = await _save_config_version(
+        db, cache, "model_config", admin.email,
+        change_note=body.change_note,
+        model_name=body.model_name,
+        temperature=body.temperature,
+    )
+    return _config_to_response(new_row)
+
+
+@admin_router.post("/parser/test", response_model=TestParseResponse)
+async def test_parse_signal(
+    body: TestParseRequest,
+    _admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TestParseResponse:
+    """Dry-run parse a raw signal message. No signal log or webhook dispatch."""
+    import uuid as _uuid
+
+    from src.adapters.openai import OpenAISignalParser
+    from src.core.models import RawSignal
+
+    system_prompt, model_name, temperature = await _load_active_parser_config(db)
+
+    parser = OpenAISignalParser(
+        api_key=settings.OPENAI_API_KEY,
+        model=model_name,
+        temperature=temperature,
+    )
+
+    raw = RawSignal(
+        user_id=_uuid.UUID("00000000-0000-0000-0000-000000000000"),
+        channel_id="test-sandbox",
+        raw_message=body.raw_message,
+    )
+
+    parsed = await parser.parse(
+        raw,
+        custom_instructions=body.custom_instructions,
+        system_prompt=system_prompt,
+    )
+
+    parsed_dict = parsed.model_dump()
+    checks = _validate_parsed_signal(parsed)
+
+    return TestParseResponse(
+        parsed=parsed_dict,
+        model_used=model_name,
+        temperature_used=temperature,
+        validation_checks=checks,
+    )
+
+
+def _validate_parsed_signal(parsed: Any) -> list[ValidationCheck]:
+    """Run validation checks on a parsed signal."""
+    from src.core.models import SignalAction
+
+    checks: list[ValidationCheck] = []
+
+    # Check is_valid_signal
+    checks.append(ValidationCheck(
+        name="Valid Signal",
+        passed=parsed.is_valid_signal,
+        message="Signal is valid" if parsed.is_valid_signal else f"Invalid: {parsed.ignore_reason or 'unknown reason'}",
+    ))
+
+    if not parsed.is_valid_signal:
+        return checks  # Skip further checks for invalid signals
+
+    # Check symbol
+    checks.append(ValidationCheck(
+        name="Symbol Present",
+        passed=parsed.symbol != "UNKNOWN" and bool(parsed.symbol),
+        message=f"Symbol: {parsed.symbol}" if parsed.symbol != "UNKNOWN" else "Symbol is UNKNOWN",
+    ))
+
+    # Check action is valid enum
+    valid_actions = {a.value for a in SignalAction}
+    action_valid = parsed.action in valid_actions
+    checks.append(ValidationCheck(
+        name="Valid Action",
+        passed=action_valid,
+        message=f"Action: {parsed.action}" if action_valid else f"Unknown action: {parsed.action}",
+    ))
+
+    # Check direction
+    checks.append(ValidationCheck(
+        name="Valid Direction",
+        passed=parsed.direction in ("long", "short"),
+        message=f"Direction: {parsed.direction}",
+    ))
+
+    # Check order_type
+    checks.append(ValidationCheck(
+        name="Valid Order Type",
+        passed=parsed.order_type in ("market", "limit", "stop"),
+        message=f"Order type: {parsed.order_type}",
+    ))
+
+    # Check asset class
+    valid_classes = {"forex", "crypto", "indices", "commodities"}
+    checks.append(ValidationCheck(
+        name="Valid Asset Class",
+        passed=parsed.source_asset_class in valid_classes,
+        message=f"Asset class: {parsed.source_asset_class}",
+    ))
+
+    # Entry price consistency
+    if parsed.action == "entry":
+        if parsed.order_type == "limit" and parsed.entry_price is None:
+            checks.append(ValidationCheck(
+                name="Limit Order Price",
+                passed=False,
+                message="Limit order requires entry_price",
+            ))
+        else:
+            checks.append(ValidationCheck(
+                name="Entry Price",
+                passed=True,
+                message=f"Entry: {parsed.entry_price}" if parsed.entry_price else "Market order (no price)",
+            ))
+
+    # TP/SL sanity
+    if parsed.take_profits:
+        checks.append(ValidationCheck(
+            name="Take Profits",
+            passed=True,
+            message=f"{len(parsed.take_profits)} TP levels: {parsed.take_profits}",
+        ))
+
+    if parsed.stop_loss is not None and parsed.entry_price is not None:
+        if parsed.direction == "long" and parsed.stop_loss >= parsed.entry_price:
+            checks.append(ValidationCheck(
+                name="SL Below Entry (Long)",
+                passed=False,
+                message=f"SL ({parsed.stop_loss}) should be below entry ({parsed.entry_price}) for long",
+            ))
+        elif parsed.direction == "short" and parsed.stop_loss <= parsed.entry_price:
+            checks.append(ValidationCheck(
+                name="SL Above Entry (Short)",
+                passed=False,
+                message=f"SL ({parsed.stop_loss}) should be above entry ({parsed.entry_price}) for short",
+            ))
+        else:
+            checks.append(ValidationCheck(
+                name="SL Position",
+                passed=True,
+                message=f"SL: {parsed.stop_loss} (correct side of entry)",
+            ))
+
+    return checks
+
+
+async def _load_active_parser_config(
+    db: AsyncSession,
+) -> tuple[str | None, str, float]:
+    """Load active parser config from DB. Returns (system_prompt, model_name, temperature)."""
+    model_row = (await db.execute(
+        select(ParserConfigModel).where(
+            ParserConfigModel.config_key == "model_config",
+            ParserConfigModel.is_active.is_(True),
+        )
+    )).scalar_one_or_none()
+
+    prompt_row = (await db.execute(
+        select(ParserConfigModel).where(
+            ParserConfigModel.config_key == "system_prompt",
+            ParserConfigModel.is_active.is_(True),
+        )
+    )).scalar_one_or_none()
+
+    model_name = model_row.model_name if model_row else "gpt-4o-mini"
+    temperature = model_row.temperature if model_row else 0.0
+    system_prompt = prompt_row.system_prompt if prompt_row else None
+
+    return system_prompt, model_name, temperature
+
+
+@admin_router.post("/parser/replay/{signal_log_id}", response_model=ReplayResponse)
+async def replay_signal(
+    signal_log_id: UUID,
+    _admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ReplayResponse:
+    """Re-parse a historical signal with the current parser config."""
+    import uuid as _uuid
+
+    from src.adapters.openai import OpenAISignalParser
+    from src.core.models import RawSignal
+
+    signal_log = (await db.execute(
+        select(SignalLogModel).where(SignalLogModel.id == signal_log_id)
+    )).scalar_one_or_none()
+
+    if signal_log is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Signal log not found",
+        )
+
+    system_prompt, model_name, temperature = await _load_active_parser_config(db)
+
+    parser = OpenAISignalParser(
+        api_key=settings.OPENAI_API_KEY,
+        model=model_name,
+        temperature=temperature,
+    )
+
+    raw = RawSignal(
+        user_id=signal_log.user_id,
+        channel_id=signal_log.channel_id or "replay",
+        raw_message=signal_log.raw_message,
+    )
+
+    parsed = await parser.parse(raw, system_prompt=system_prompt)
+    checks = _validate_parsed_signal(parsed)
+
+    return ReplayResponse(
+        original_parsed=signal_log.parsed_data,
+        new_parsed=parsed.model_dump(),
+        model_used=model_name,
+        temperature_used=temperature,
+        validation_checks=checks,
+        raw_message=signal_log.raw_message,
+    )
+
+
+@admin_router.post("/parser/test-dispatch", response_model=TestDispatchResponse)
+async def test_dispatch_signal(
+    body: TestDispatchRequest,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TestDispatchResponse:
+    """Parse a signal and dispatch to a routing rule's webhook (sandbox test)."""
+    import uuid as _uuid
+
+    from src.adapters.openai import OpenAISignalParser
+    from src.adapters.webhook import WebhookDispatcher
+    from src.core.models import RawSignal, RoutingRule
+
+    # Load routing rule
+    rule_row = (await db.execute(
+        select(RoutingRuleModel).where(RoutingRuleModel.id == _uuid.UUID(body.routing_rule_id))
+    )).scalar_one_or_none()
+
+    if rule_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Routing rule not found",
+        )
+
+    system_prompt, model_name, temperature = await _load_active_parser_config(db)
+
+    parser = OpenAISignalParser(
+        api_key=settings.OPENAI_API_KEY,
+        model=model_name,
+        temperature=temperature,
+    )
+
+    raw = RawSignal(
+        user_id=admin.id,
+        channel_id="test-sandbox",
+        raw_message=body.raw_message,
+    )
+
+    parsed = await parser.parse(
+        raw,
+        custom_instructions=body.custom_instructions,
+        system_prompt=system_prompt,
+    )
+
+    if not parsed.is_valid_signal:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Signal is not valid: {parsed.ignore_reason}",
+        )
+
+    # Build routing rule domain object
+    rule = RoutingRule(
+        id=rule_row.id,
+        user_id=rule_row.user_id,
+        source_channel_id=rule_row.source_channel_id,
+        destination_webhook_url=rule_row.destination_webhook_url,
+        payload_version=rule_row.payload_version,
+        symbol_mappings=rule_row.symbol_mappings or {},
+        risk_overrides=rule_row.risk_overrides or {},
+        webhook_body_template=rule_row.webhook_body_template,
+        destination_type=rule_row.destination_type,
+    )
+
+    # Dispatch via webhook dispatcher (handles mapping, payload, retries)
+    async with WebhookDispatcher() as dispatcher:
+        result = await dispatcher.dispatch(parsed, rule)
+
+    return TestDispatchResponse(
+        status_code=200 if result.success else 500,
+        response_body=result.error_message or "Dispatched successfully",
     )
