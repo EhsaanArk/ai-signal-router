@@ -68,6 +68,7 @@ interface FieldState {
   value: string;
   isDynamic: boolean;
   isCustom: boolean;
+  disabled?: boolean;
 }
 
 interface TemplateBuilderProps {
@@ -139,7 +140,7 @@ function dynamicPlaceholder(known: typeof KNOWN_FIELDS[number] | undefined, curr
 function fieldsToJson(fields: FieldState[]): string {
   const obj: Record<string, unknown> = {};
   for (const field of fields) {
-    if (!field.key) continue;
+    if (!field.key || field.disabled) continue;
     if (!field.isCustom) {
       if (field.isDynamic) {
         const known = KNOWN_FIELDS.find((f) => f.key === field.key);
@@ -232,7 +233,7 @@ export function TemplateBuilder({ value, onChange, error }: TemplateBuilderProps
     }]);
   }
 
-  // Available known fields that aren't already added
+  // Available known fields that aren't already added (disabled fields count as added)
   const availableFields = useMemo(() => {
     const usedKeys = new Set(fields.map((f) => f.key));
     return KNOWN_FIELDS.filter((f) => !usedKeys.has(f.key));
@@ -287,9 +288,13 @@ export function TemplateBuilder({ value, onChange, error }: TemplateBuilderProps
           {fields.map((field, i) => {
             const known = KNOWN_FIELDS.find((f) => f.key === field.key);
             const hasDynamic = known?.dynamic !== undefined;
+            const isDisabled = field.disabled;
 
             return (
-              <div key={i} className="flex items-center gap-2">
+              <div key={i} className={cn(
+                "flex items-center gap-2 transition-opacity",
+                isDisabled && "opacity-40",
+              )}>
                 {/* Field key */}
                 {field.isCustom ? (
                   <Input
@@ -298,10 +303,14 @@ export function TemplateBuilder({ value, onChange, error }: TemplateBuilderProps
                       updateField(i, { key: e.target.value })
                     }
                     placeholder="field name"
+                    disabled={isDisabled}
                     className="h-7 w-28 text-[11px] font-mono shrink-0"
                   />
                 ) : (
-                  <span className="w-28 text-[11px] font-mono text-muted-foreground shrink-0 truncate" title={field.key}>
+                  <span className={cn(
+                    "w-28 text-[11px] font-mono shrink-0 truncate",
+                    isDisabled ? "text-muted-foreground/50 line-through" : "text-muted-foreground",
+                  )} title={field.key}>
                     {field.key}
                   </span>
                 )}
@@ -317,15 +326,15 @@ export function TemplateBuilder({ value, onChange, error }: TemplateBuilderProps
                       ? (known?.dynamicLabel || "Dynamic")
                       : (known?.placeholder || "value")
                   }
-                  disabled={field.isDynamic}
+                  disabled={field.isDynamic || isDisabled}
                   className={cn(
                     "h-7 flex-1 text-[11px] font-mono",
-                    field.isDynamic && "bg-primary/5 text-muted-foreground"
+                    field.isDynamic && !isDisabled && "bg-primary/5 text-muted-foreground"
                   )}
                 />
 
                 {/* Dynamic toggle */}
-                {hasDynamic && (
+                {hasDynamic && !isDisabled && (
                   <button
                     type="button"
                     onClick={() => updateField(i, { isDynamic: !field.isDynamic, value: field.isDynamic ? "" : field.value })}
@@ -342,16 +351,20 @@ export function TemplateBuilder({ value, onChange, error }: TemplateBuilderProps
                   </button>
                 )}
 
-                {/* Remove */}
-                <Button
+                {/* Disable/enable toggle */}
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  onClick={() => removeField(i)}
+                  onClick={() => updateField(i, { disabled: !isDisabled })}
+                  className={cn(
+                    "h-7 w-7 flex items-center justify-center rounded-md shrink-0 transition-colors",
+                    isDisabled
+                      ? "text-muted-foreground/50 hover:text-foreground hover:bg-muted"
+                      : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  )}
+                  title={isDisabled ? "Enable field" : "Disable field"}
                 >
-                  <X className="h-3 w-3" />
-                </Button>
+                  {isDisabled ? <Plus className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                </button>
               </div>
             );
           })}

@@ -41,8 +41,9 @@ export function useUpdateRule() {
         method: "PUT",
         body: JSON.stringify(data),
       }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["routing-rules"] });
+      queryClient.invalidateQueries({ queryKey: ["routing-rule", variables.id] });
     },
   });
 }
@@ -52,8 +53,9 @@ export function useDeleteRule() {
   return useMutation({
     mutationFn: (id: string) =>
       apiFetch<void>(`/routing-rules/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["routing-rules"] });
+      queryClient.removeQueries({ queryKey: ["routing-rule", id] });
     },
   });
 }
