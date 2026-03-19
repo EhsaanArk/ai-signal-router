@@ -173,6 +173,39 @@ Note: Crypto does not support partial close by lot, only by percentage.
 }
 ```
 
+**Add Funds / Extra Order:**
+```json
+{
+  "type": "open_extra_order",
+  "aiAssistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "exchange": "binance",
+  "tradeSymbol": "BTC/USDT",
+  "eventSymbol": "{{ticker}}",
+  "price": "{{close}}",
+  "date": "{{time}}",
+  "position_type": "long",
+  "is_market": false,
+  "order_price": 30000
+}
+```
+
+**Start Deal with TP/SL (percentage-based):**
+Note: Crypto TP/SL values are **percentages**, not prices (e.g., `[1,2,5]` = 1%, 2%, 5%).
+```json
+{
+  "type": "start_deal",
+  "aiAssistId": "eec79a52-1ab9-4d9b-a7ca-126a2f5e0307",
+  "exchange": "binance",
+  "tradeSymbol": "BTC/USDT",
+  "position_type": "long",
+  "eventSymbol": "{{ticker}}",
+  "price": "{{close}}",
+  "date": "{{time}}",
+  "take_profits": [1, 2, 5],
+  "stopLoss": 10
+}
+```
+
 ## 4. Error Handling
 
 The SageMaster API will return standard HTTP status codes.

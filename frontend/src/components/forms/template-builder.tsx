@@ -35,6 +35,12 @@ const KNOWN_FIELDS: {
   { key: "lotSize", label: "Lot Size", placeholder: "e.g., 0.1" },
   { key: "percentage", label: "Percentage", placeholder: "e.g., 50" },
   { key: "slAdjustment", label: "SL Adjustment", placeholder: "e.g., 0" },
+  // Crypto-specific fields
+  { key: "position_type", label: "Position Type", placeholder: "e.g., long", dynamic: "", dynamicLabel: "From signal" },
+  { key: "is_market", label: "Is Market", placeholder: "true or false" },
+  { key: "order_price", label: "Order Price", placeholder: "e.g., 30000" },
+  { key: "take_profits", label: "Take Profits (%)", placeholder: "e.g., [1, 2, 5]", dynamic: "", dynamicLabel: "From signal" },
+  { key: "sl_adjustment", label: "SL Adjustment (Crypto)", placeholder: "e.g., 0" },
 ];
 
 const KNOWN_KEYS = new Set(KNOWN_FIELDS.map((f) => f.key));
