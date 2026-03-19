@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
@@ -153,12 +154,19 @@ def create_access_token(data: dict, settings: Settings) -> str:
 # ---------------------------------------------------------------------------
 
 
+_USER_CACHE_TTL = 300  # 5 minutes
+
+
 async def get_current_user(
+    request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> User:
     """Decode the bearer token and return the corresponding :class:`User`.
+
+    Uses Redis cache (5-min TTL) to avoid a DB query on every protected request.
+    Falls back to DB on cache miss or Redis failure.
 
     Raises :class:`HTTPException` 401 if the token is invalid or the user
     does not exist.
@@ -181,6 +189,38 @@ async def get_current_user(
         logger.debug("JWT decode failed: %s", exc)
         raise credentials_exception from exc
 
+    # Try Redis cache first
+    cache = getattr(request.app.state, "cache", None)
+    cache_key = f"user:{user_id}"
+    if cache:
+        try:
+            cached = await cache.get(cache_key)
+            if cached:
+                data = json.loads(cached)
+                user = User(
+                    id=UUID(data["id"]),
+                    email=data["email"],
+                    password_hash=data["password_hash"],
+                    subscription_tier=SubscriptionTier(data["subscription_tier"]),
+                    is_admin=data.get("is_admin", False),
+                    is_disabled=data.get("is_disabled", False),
+                    email_verified=data.get("email_verified", False),
+                    created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
+                )
+                if user.is_disabled:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Account is disabled",
+                    )
+                return user
+        except (json.JSONDecodeError, KeyError, ValueError):
+            logger.debug("User cache parse error for %s, falling back to DB", user_id)
+        except HTTPException:
+            raise
+        except Exception:
+            logger.debug("User cache read failed for %s, falling back to DB", user_id)
+
+    # Cache miss — query DB
     result = await db.execute(select(UserModel).where(UserModel.id == user_id))
     user_row = result.scalar_one_or_none()
 
@@ -193,7 +233,7 @@ async def get_current_user(
             detail="Account is disabled",
         )
 
-    return User(
+    user = User(
         id=user_row.id,
         email=user_row.email,
         password_hash=user_row.password_hash,
@@ -203,6 +243,24 @@ async def get_current_user(
         email_verified=getattr(user_row, "email_verified", False),
         created_at=user_row.created_at,
     )
+
+    # Store in cache
+    if cache:
+        try:
+            await cache.set(cache_key, json.dumps({
+                "id": str(user.id),
+                "email": user.email,
+                "password_hash": user.password_hash,
+                "subscription_tier": user.subscription_tier.value,
+                "is_admin": user.is_admin,
+                "is_disabled": user.is_disabled,
+                "email_verified": user.email_verified,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+            }), ttl_seconds=_USER_CACHE_TTL)
+        except Exception:
+            logger.debug("Failed to cache user %s", user_id)
+
+    return user
 
 
 async def get_admin_user(

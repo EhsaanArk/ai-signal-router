@@ -238,6 +238,11 @@ class TestAuthLoginJSON:
         data = resp.json()
         assert "access_token" in data
         assert data["token_type"] == "bearer"
+        # Login now returns user profile to avoid /auth/me round-trip
+        assert "user" in data
+        assert data["user"]["email"] == SAMPLE_USER_EMAIL
+        assert "subscription_tier" in data["user"]
+        assert "is_admin" in data["user"]
 
     async def test_login_json_wrong_password(self, client: AsyncClient):
         resp = await client.post(

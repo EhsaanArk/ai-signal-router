@@ -75,6 +75,25 @@ class UserMeResponse(BaseModel):
     created_at: str
 
 
+class LoginResponse(BaseModel):
+    """Login response with token + user profile — eliminates extra /auth/me round-trip."""
+    access_token: str
+    token_type: str = "bearer"
+    user: UserMeResponse
+
+
+def _user_me_from_row(row: UserModel) -> UserMeResponse:
+    """Build a UserMeResponse from a DB row — DRY helper for login, register, and /me."""
+    return UserMeResponse(
+        id=row.id,
+        email=row.email,
+        subscription_tier=row.subscription_tier,
+        is_admin=getattr(row, "is_admin", False),
+        email_verified=getattr(row, "email_verified", False),
+        created_at=row.created_at.isoformat() if row.created_at else "",
+    )
+
+
 class ForgotPasswordRequest(BaseModel):
     email: str
 
@@ -262,15 +281,15 @@ async def login(
     return TokenResponse(access_token=token)
 
 
-@router.post("/auth/login-json", response_model=TokenResponse)
+@router.post("/auth/login-json", response_model=LoginResponse)
 @limiter.limit("5/minute")
 async def login_json(
     request: Request,
     body: LoginRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> TokenResponse:
-    """JSON-based login endpoint (convenience wrapper around the form login)."""
+) -> LoginResponse:
+    """JSON-based login — returns token + user profile to avoid extra /auth/me round-trip."""
     result = await db.execute(
         select(UserModel).where(UserModel.email == body.email.lower())
     )
@@ -293,7 +312,10 @@ async def login_json(
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
     )
-    return TokenResponse(access_token=token)
+    return LoginResponse(
+        access_token=token,
+        user=_user_me_from_row(user_row),
+    )
 
 
 @router.get("/auth/me", response_model=UserMeResponse)
@@ -307,13 +329,13 @@ async def get_me(
         subscription_tier=current_user.subscription_tier.value,
         is_admin=current_user.is_admin,
         email_verified=current_user.email_verified,
-        created_at=current_user.created_at.isoformat(),
+        created_at=current_user.created_at.isoformat() if current_user.created_at else "",
     )
 
 
 @router.post(
     "/auth/register",
-    response_model=TokenResponse,
+    response_model=LoginResponse,
     status_code=status.HTTP_201_CREATED,
 )
 @limiter.limit("3/minute")
@@ -322,7 +344,7 @@ async def register(
     body: RegisterRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> TokenResponse:
+) -> LoginResponse:
     """Register a new user and return a JWT."""
     # Check email uniqueness (case-insensitive)
     normalised_email = body.email.lower()
@@ -375,7 +397,10 @@ async def register(
     token = create_access_token(
         data={"sub": str(new_user.id)}, settings=settings
     )
-    return TokenResponse(access_token=token)
+    return LoginResponse(
+        access_token=token,
+        user=_user_me_from_row(new_user),
+    )
 
 
 @router.post("/auth/forgot-password", response_model=MessageResponse)
@@ -883,8 +908,16 @@ async def telegram_verify_code(
 async def telegram_status(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    cache=Depends(get_cache),
 ) -> TelegramStatusResponse:
     """Check whether the current user has an active Telegram session."""
+    # Check cache first (30s TTL — matches frontend refetch interval)
+    cache_key = f"tg_status:{current_user.id}"
+    cached = await cache.get(cache_key)
+    if cached:
+        import json as _json
+        return TelegramStatusResponse(**_json.loads(cached))
+
     result = await db.execute(
         select(TelegramSessionModel)
         .where(
@@ -896,33 +929,37 @@ async def telegram_status(
     )
     session = result.scalar_one_or_none()
     if session is not None:
-        return TelegramStatusResponse(
+        response = TelegramStatusResponse(
             connected=True,
             phone_number=session.phone_number,
             connected_at=session.created_at.isoformat() if session.created_at else None,
         )
-
-    # No active session — check for the most recent inactive session
-    # to provide disconnection context to the frontend.
-    result = await db.execute(
-        select(TelegramSessionModel)
-        .where(TelegramSessionModel.user_id == current_user.id)
-        .order_by(TelegramSessionModel.updated_at.desc())
-        .limit(1)
-    )
-    last_session = result.scalar_one_or_none()
-    if last_session and last_session.disconnected_reason:
-        return TelegramStatusResponse(
-            connected=False,
-            phone_number=last_session.phone_number,
-            disconnected_at=(
-                last_session.disconnected_at.isoformat()
-                if last_session.disconnected_at else None
-            ),
-            disconnected_reason=last_session.disconnected_reason,
+    else:
+        # No active session — check for the most recent inactive session
+        # to provide disconnection context to the frontend.
+        result = await db.execute(
+            select(TelegramSessionModel)
+            .where(TelegramSessionModel.user_id == current_user.id)
+            .order_by(TelegramSessionModel.updated_at.desc())
+            .limit(1)
         )
+        last_session = result.scalar_one_or_none()
+        if last_session and last_session.disconnected_reason:
+            response = TelegramStatusResponse(
+                connected=False,
+                phone_number=last_session.phone_number,
+                disconnected_at=(
+                    last_session.disconnected_at.isoformat()
+                    if last_session.disconnected_at else None
+                ),
+                disconnected_reason=last_session.disconnected_reason,
+            )
+        else:
+            response = TelegramStatusResponse(connected=False)
 
-    return TelegramStatusResponse(connected=False)
+    # Cache for 30s (matches frontend refetch interval)
+    await cache.set(cache_key, response.model_dump_json(), ttl_seconds=30)
+    return response
 
 
 @router.post("/telegram/disconnect", response_model=MessageResponse)
