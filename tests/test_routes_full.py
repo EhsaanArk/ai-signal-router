@@ -238,6 +238,11 @@ class TestAuthLoginJSON:
         data = resp.json()
         assert "access_token" in data
         assert data["token_type"] == "bearer"
+        # Login now returns user profile to avoid /auth/me round-trip
+        assert "user" in data
+        assert data["user"]["email"] == SAMPLE_USER_EMAIL
+        assert "subscription_tier" in data["user"]
+        assert "is_admin" in data["user"]
 
     async def test_login_json_wrong_password(self, client: AsyncClient):
         resp = await client.post(
@@ -869,3 +874,132 @@ class TestPhoneUniqueness:
 
         assert resp.status_code == 409
         assert "already connected" in resp.json()["detail"]
+
+
+# ===========================================================================
+# Login Performance & Caching Tests (PR #62)
+# ===========================================================================
+
+
+class TestLoginReturnsUser:
+    """Login and register endpoints should return user profile alongside token."""
+
+    async def test_login_json_includes_user_profile(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/login-json",
+            json={"email": SAMPLE_USER_EMAIL, "password": SAMPLE_USER_PASSWORD},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "user" in data
+        user = data["user"]
+        assert user["email"] == SAMPLE_USER_EMAIL
+        assert "id" in user
+        assert "subscription_tier" in user
+        assert "is_admin" in user
+        assert "email_verified" in user
+        assert "created_at" in user
+
+    async def test_register_includes_user_profile(self, client: AsyncClient):
+        resp = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "newuser@example.com", "password": "newpass123"},
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert "user" in data
+        assert data["user"]["email"] == "newuser@example.com"
+        assert data["user"]["subscription_tier"] == "free"
+        assert data["user"]["is_admin"] is False
+
+
+class TestUserCache:
+    """get_current_user should cache user in Redis and bust on mutations."""
+
+    async def test_user_cached_after_first_request(self, test_app):
+        """After a protected request, user should be in cache."""
+        app, _ = test_app
+        # Login to get a real token
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            login_resp = await ac.post(
+                "/api/v1/auth/login-json",
+                json={"email": SAMPLE_USER_EMAIL, "password": SAMPLE_USER_PASSWORD},
+            )
+            token = login_resp.json()["access_token"]
+
+            # Call /auth/me (protected endpoint) which triggers get_current_user
+            me_resp = await ac.get(
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert me_resp.status_code == 200
+
+            # Check that user is now cached
+            cache = app.state.cache
+            cached = await cache.get(f"user:{SAMPLE_USER_ID}")
+            assert cached is not None
+            import json
+            data = json.loads(cached)
+            assert data["email"] == SAMPLE_USER_EMAIL
+            # password_hash should NOT be in cache (security)
+            assert "password_hash" not in data
+
+    async def test_user_cache_busted_on_email_verify(self, test_app):
+        """Verifying email should clear the user cache."""
+        app, session_factory = test_app
+        cache = app.state.cache
+
+        # Pre-populate cache
+        import json
+        await cache.set(f"user:{SAMPLE_USER_ID}", json.dumps({
+            "id": str(SAMPLE_USER_ID),
+            "email": SAMPLE_USER_EMAIL,
+            "subscription_tier": "free",
+            "is_admin": False,
+            "is_disabled": False,
+            "email_verified": False,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }), ttl_seconds=300)
+
+        # Create a verification token
+        from src.adapters.db.models import EmailVerificationTokenModel
+        raw_token = "test-verify-token-123"
+        token_hash = pwd_context.hash(raw_token)
+        async with session_factory() as session:
+            session.add(EmailVerificationTokenModel(
+                user_id=SAMPLE_USER_ID,
+                token_hash=token_hash,
+                expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            ))
+            await session.commit()
+
+        # Verify email
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/api/v1/auth/verify-email",
+                json={"token": raw_token},
+            )
+            assert resp.status_code == 200
+
+        # Cache should be busted
+        cached = await cache.get(f"user:{SAMPLE_USER_ID}")
+        assert cached is None
+
+
+class TestTelegramStatusCache:
+    """Telegram status endpoint should cache responses."""
+
+    async def test_telegram_status_cached(self, authed_client):
+        """First call hits DB, second call should use cache."""
+        # First call
+        resp1 = await authed_client.get("/api/v1/telegram/status")
+        assert resp1.status_code == 200
+        data1 = resp1.json()
+        assert data1["connected"] is False
+
+        # Second call should return same data (from cache)
+        resp2 = await authed_client.get("/api/v1/telegram/status")
+        assert resp2.status_code == 200
+        assert resp2.json() == data1

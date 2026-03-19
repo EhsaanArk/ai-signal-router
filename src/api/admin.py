@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import case, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -295,6 +295,7 @@ async def admin_get_user(
 async def admin_update_user(
     user_id: UUID,
     body: AdminUserUpdate,
+    request: Request,
     _admin: Annotated[User, Depends(get_admin_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AdminUserSummary:
@@ -317,6 +318,10 @@ async def admin_update_user(
 
     await db.flush()
     await db.refresh(user_row)
+
+    # Bust user cache so changes (tier, disable) are reflected immediately
+    cache = request.app.state.cache
+    await cache.delete(f"user:{user_id}")
 
     # Get counts for response
     rule_count = (await db.execute(

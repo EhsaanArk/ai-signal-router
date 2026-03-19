@@ -3,6 +3,12 @@ export interface TokenResponse {
   token_type: string;
 }
 
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: UserMe;
+}
+
 export interface UserMe {
   id: string;
   email: string;

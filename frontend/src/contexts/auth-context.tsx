@@ -10,7 +10,7 @@ import {
 import { apiFetch } from "@/lib/api";
 import { getToken, getTokenExpiry, removeToken, setToken } from "@/lib/auth";
 import { toast } from "sonner";
-import type { TokenResponse, UserMe } from "@/types/api";
+import type { LoginResponse, UserMe } from "@/types/api";
 
 interface AuthContextValue {
   user: UserMe | null;
@@ -40,28 +40,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (token) {
+    // Only fetch /auth/me on page refresh (token exists but user is null).
+    // After login/register, user is already set — skip the round-trip.
+    if (token && !user) {
       fetchUser().finally(() => setIsLoading(false));
     } else {
       setIsLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, fetchUser]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await apiFetch<TokenResponse>("/auth/login-json", {
+    const res = await apiFetch<LoginResponse>("/auth/login-json", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
     setToken(res.access_token);
+    setUser(res.user);
     setTokenState(res.access_token);
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
-    const res = await apiFetch<TokenResponse>("/auth/register", {
+    const res = await apiFetch<LoginResponse>("/auth/register", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
     setToken(res.access_token);
+    setUser(res.user);
     setTokenState(res.access_token);
   }, []);
 
