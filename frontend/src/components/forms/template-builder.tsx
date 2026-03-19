@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, X, Zap } from "lucide-react";
+import { Eye, EyeOff, Plus, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -359,11 +359,11 @@ export function TemplateBuilder({ value, onChange, error }: TemplateBuilderProps
                     "h-7 w-7 flex items-center justify-center rounded-md shrink-0 transition-colors",
                     isDisabled
                       ? "text-muted-foreground/50 hover:text-foreground hover:bg-muted"
-                      : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      : "text-muted-foreground hover:text-muted-foreground/60 hover:bg-muted"
                   )}
-                  title={isDisabled ? "Enable field" : "Disable field"}
+                  title={isDisabled ? "Enable field — include in webhook" : "Disable field — exclude from webhook"}
                 >
-                  {isDisabled ? <Plus className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                  {isDisabled ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                 </button>
               </div>
             );
