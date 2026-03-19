@@ -450,7 +450,18 @@ class TestHeartbeat:
 
 
 class TestProactiveAuthCheck:
-    """Tests for proactive is_user_authorized() check in heartbeat."""
+    """Tests for proactive is_user_authorized() check in heartbeat.
+
+    Auth checks are staggered per user: each user is assigned a slot
+    based on ``hash(user_id) % AUTH_CHECK_INTERVAL``.
+    """
+
+    @staticmethod
+    def _auth_check_heartbeat(user_id: UUID) -> int:
+        """Return heartbeat_count that triggers auth check for this user."""
+        slot = hash(user_id) % AUTH_CHECK_INTERVAL
+        # _heartbeat() increments first, so set to (target - 1)
+        return slot - 1 if slot > 0 else AUTH_CHECK_INTERVAL - 1
 
     @pytest.mark.asyncio
     async def test_detects_revoked_session(self):
@@ -465,7 +476,7 @@ class TestProactiveAuthCheck:
         manager._monitored_channels = {USER_A: {"ch1"}}
 
         # Set heartbeat count so auth check fires
-        manager._heartbeat_count = AUTH_CHECK_INTERVAL - 1
+        manager._heartbeat_count = self._auth_check_heartbeat(USER_A)
 
         await manager._heartbeat()
 
@@ -473,7 +484,7 @@ class TestProactiveAuthCheck:
 
     @pytest.mark.asyncio
     async def test_skips_on_non_check_cycle(self):
-        """Auth check should NOT run on non-check cycles."""
+        """Auth check should NOT run when it's not this user's slot."""
         manager = _make_manager()
 
         mock_listener = _mock_listener(connected=True)
@@ -482,8 +493,11 @@ class TestProactiveAuthCheck:
         manager._failure_counts = {USER_A: 0}
         manager._monitored_channels = {USER_A: {"ch1"}}
 
-        # Set heartbeat count so auth check does NOT fire
-        manager._heartbeat_count = 1
+        # Set heartbeat count so auth check does NOT fire for USER_A
+        # Use a slot that's offset from USER_A's slot
+        user_slot = hash(USER_A) % AUTH_CHECK_INTERVAL
+        other_slot = (user_slot + 1) % AUTH_CHECK_INTERVAL
+        manager._heartbeat_count = other_slot - 1 if other_slot > 0 else AUTH_CHECK_INTERVAL - 1
 
         await manager._heartbeat()
 
@@ -507,7 +521,7 @@ class TestProactiveAuthCheck:
         manager._failure_counts = {USER_A: 0}
         manager._monitored_channels = {USER_A: {"ch1"}}
 
-        manager._heartbeat_count = AUTH_CHECK_INTERVAL - 1
+        manager._heartbeat_count = self._auth_check_heartbeat(USER_A)
 
         await manager._heartbeat()
 
@@ -527,7 +541,7 @@ class TestProactiveAuthCheck:
         manager._failure_counts = {USER_A: 0}
         manager._monitored_channels = {USER_A: {"ch1"}}
 
-        manager._heartbeat_count = AUTH_CHECK_INTERVAL - 1
+        manager._heartbeat_count = self._auth_check_heartbeat(USER_A)
 
         await manager._heartbeat()
 

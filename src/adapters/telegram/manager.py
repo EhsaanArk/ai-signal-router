@@ -457,13 +457,13 @@ class MultiUserListenerManager:
         Runs checks in parallel with bounded concurrency to avoid
         sequential bottlenecks at scale (100+ listeners).
 
-        Every AUTH_CHECK_INTERVAL heartbeats, also proactively verifies
-        that connected sessions are still authorized by Telegram.  This
-        catches silently revoked sessions (e.g. user terminated via
-        Telegram settings) before they cause missed signals.
+        Proactive auth checks are **staggered per user** to avoid
+        thundering-herd API calls to Telegram.  Each user is assigned
+        a slot based on ``hash(user_id) % AUTH_CHECK_INTERVAL`` so that
+        at most ``ceil(N / AUTH_CHECK_INTERVAL)`` users are checked per
+        heartbeat cycle.  Every user is still checked every ~5 minutes.
         """
         self._heartbeat_count += 1
-        do_auth_check = (self._heartbeat_count % AUTH_CHECK_INTERVAL == 0)
         results: list[bool] = []
 
         async def _check_user(user_id: UUID, listener: TelegramListener) -> bool:
@@ -472,8 +472,9 @@ class MultiUserListenerManager:
                 if listener.is_connected:
                     self._failure_counts[user_id] = 0
 
-                    # Proactive auth check (every ~5 min)
-                    if do_auth_check:
+                    # Staggered proactive auth check (~5 min per user, spread across cycles)
+                    user_slot = hash(user_id) % AUTH_CHECK_INTERVAL
+                    if self._heartbeat_count % AUTH_CHECK_INTERVAL == user_slot:
                         try:
                             authorized = await listener._client.is_user_authorized()
                             if not authorized:
