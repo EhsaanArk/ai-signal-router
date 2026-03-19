@@ -405,6 +405,31 @@ if __name__ == "__main__":
             logger.info("Starting multi-user listener manager...")
             await manager.start()
 
+            # ── Post-startup deploy health self-check ─────────────────────
+            # Compare current state against the pre-shutdown snapshot saved
+            # by the previous container (if any).  This detects session loss
+            # caused by AuthKeyDuplicatedError during rolling deploys.
+            redis_url = os.environ.get("REDIS_URL", "")
+            if redis_url:
+                from src.adapters.redis.client import RedisCacheAdapter
+                import redis.asyncio as aioredis
+                from src.adapters.telegram.deploy_snapshot import (
+                    run_post_startup_check,
+                )
+
+                _check_redis = aioredis.from_url(redis_url, decode_responses=True)
+                _check_cache = RedisCacheAdapter(_check_redis)
+                try:
+                    await run_post_startup_check(
+                        _check_cache,
+                        manager._listeners,
+                        manager._monitored_channels,
+                    )
+                except Exception as exc:
+                    logger.warning("Post-startup health check failed: %s", exc)
+                finally:
+                    await _check_redis.aclose()
+
             # ── Graceful shutdown on SIGTERM ──────────────────────────────
             # Railway sends SIGTERM before replacing the container.  We must
             # disconnect all Telethon clients BEFORE the process exits so
@@ -413,9 +438,11 @@ if __name__ == "__main__":
             # AuthKeyDuplicatedError and invalidate user sessions.
             #
             #   SIGTERM received
+            #     → save pre-shutdown snapshot to Redis
             #     → manager.stop() disconnects all Telethon clients
             #     → sessions released cleanly
             #     → new container connects without conflict
+            #     → new container compares snapshot → logs deploy health
             #     → backfill recovers any signals missed during the gap
             shutdown_event = asyncio.Event()
             loop = asyncio.get_running_loop()
@@ -433,17 +460,29 @@ if __name__ == "__main__":
             except (KeyboardInterrupt, asyncio.CancelledError):
                 pass
             finally:
+                # ── Save pre-shutdown snapshot to Redis ────────────────────
+                if redis_url:
+                    from src.adapters.telegram.deploy_snapshot import (
+                        save_pre_shutdown_snapshot,
+                    )
+
+                    await save_pre_shutdown_snapshot(
+                        redis_url,
+                        manager._listeners,
+                        manager._monitored_channels,
+                    )
+
                 logger.info("Shutting down — disconnecting all Telegram clients...")
                 try:
-                    # Give manager 25s to disconnect all clients.  Railway
+                    # Give manager 23s to disconnect all clients.  Railway
                     # sends SIGKILL after gracefulShutdownTimeoutSeconds (30s
-                    # in railway.toml).  The 5s buffer ensures we log a clean
-                    # exit rather than being killed mid-disconnect.
-                    await asyncio.wait_for(manager.stop(), timeout=25.0)
+                    # in railway.toml).  The snapshot write + 2s buffer
+                    # accounts for the remaining time.
+                    await asyncio.wait_for(manager.stop(), timeout=23.0)
                     logger.info("All clients disconnected. Exiting cleanly.")
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "Shutdown timed out after 25s — "
+                        "Shutdown timed out after 23s — "
                         "some clients may not have disconnected cleanly."
                     )
 
