@@ -117,7 +117,7 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
 
       {/* Admin Nav */}
       {user?.is_admin && (
-        <div className="flex flex-col items-center gap-1 border-t border-sidebar-border py-2">
+        <div className="flex flex-col items-center gap-1 border-t border-sidebar-border py-2 overflow-y-auto">
           <span className="text-[8px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-0.5">
             Admin
           </span>
