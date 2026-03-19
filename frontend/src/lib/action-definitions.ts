@@ -69,6 +69,30 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     example: '"Add funds", "DCA", "Average down"',
     cryptoOnly: true,
   },
+  {
+    key: "close_all_orders_at_market_price",
+    label: "Close All Positions",
+    description: "Close every open trade across all symbols",
+    example: '"Close all trades", "Flatten everything"',
+  },
+  {
+    key: "close_all_orders_at_market_price_and_stop_assist",
+    label: "Close All & Stop",
+    description: "Close all positions and stop the Assist",
+    example: '"Close all and stop", "Emergency stop"',
+  },
+  {
+    key: "start_assist",
+    label: "Start Assist",
+    description: "Resume a paused Assist (allows new trades)",
+    example: '"Start the bot", "Resume trading"',
+  },
+  {
+    key: "stop_assist",
+    label: "Stop Assist",
+    description: "Pause the Assist (no new trades, existing positions untouched)",
+    example: '"Stop the bot", "Pause trading"',
+  },
 ];
 
 const ENTRY_ONLY_FIELDS = ["price", "takeProfits", "takeProfitsPips", "stopLoss", "stopLossPips", "balance"];
@@ -115,6 +139,14 @@ export function generateActionPreview(
     } else if (actionKey === "open_extra_order") {
       payload["is_market"] = true;
       payload["position_type"] = "long";
+    }
+
+    // Symbol-less actions: strip symbol fields
+    const SYMBOLLESS = ["close_all_orders_at_market_price", "close_all_orders_at_market_price_and_stop_assist", "start_assist", "stop_assist"];
+    if (SYMBOLLESS.includes(actionKey)) {
+      delete payload["symbol"];
+      delete payload["tradeSymbol"];
+      delete payload["eventSymbol"];
     }
   } else {
     // For entry, fill empty fields with example values

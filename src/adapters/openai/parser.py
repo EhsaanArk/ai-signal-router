@@ -25,7 +25,7 @@ Respond ONLY with a JSON object — no markdown, no commentary.
 ## Output Schema
 
 {
-  "action": "<'entry' | 'partial_close' | 'breakeven' | 'close_position' | 'modify_sl' | 'modify_tp' | 'trailing_sl' | 'extra_order'>",
+  "action": "<'entry' | 'partial_close' | 'breakeven' | 'close_position' | 'close_all' | 'close_all_stop' | 'start_assist' | 'stop_assist' | 'modify_sl' | 'modify_tp' | 'trailing_sl' | 'extra_order'>",
   "symbol": "<string — normalised trading symbol, e.g. EURUSD, XAUUSD, BTC/USDT, US30>",
   "direction": "<'long' | 'short'>",
   "order_type": "<'market' | 'limit' | 'stop'>",
@@ -56,31 +56,39 @@ Determine the **action** type from the message intent:
   If the message specifies a lot size (e.g. "close 0.3 lots"), set `lots` to the amount (e.g. "0.3").
   If ambiguous, prefer `percentage` over `lots`. Default to `percentage: 50` if neither is clear.
 - **breakeven**: Move stop loss to entry/breakeven. Keywords: "move SL to breakeven", "move SL to BE", "breakeven", "BE".
-- **close_position**: Fully close an existing position. Keywords: "close all", "close position", "exit", "close trade", "market has reversed".
+- **close_position**: Fully close an existing position for a specific symbol. Keywords: "close position", "exit", "close trade", "market has reversed". Must reference a specific symbol.
+- **close_all**: Close ALL open positions across all symbols. Keywords: "close all trades", "close everything", "flatten all", "liquidate all". No symbol needed — set symbol to "ALL".
+- **close_all_stop**: Close all positions AND stop the trading bot/strategy. Keywords: "close all and stop", "shut down", "emergency stop". No symbol needed — set symbol to "ALL".
+- **start_assist**: Resume/start a trading bot or strategy. Keywords: "start the bot", "resume trading", "activate", "enable strategy". No symbol needed — set symbol to "ALL".
+- **stop_assist**: Pause/stop a trading bot or strategy without closing positions. Keywords: "stop the bot", "pause trading", "disable", "stop strategy". No symbol needed — set symbol to "ALL".
 - **modify_sl**: Update stop loss to a specific price on an existing position. Keywords: "update SL to", "move SL to [price]", "new SL [price]". Set `new_sl` to the target price.
 - **modify_tp**: Update take profit to a specific price on an existing position. Keywords: "update TP to", "move TP to [price]", "new TP [price]". Set `new_tp` to the target price.
 - **trailing_sl**: Set a trailing stop loss. Keywords: "trailing stop", "trail SL", "trailing SL X pips". Set `trailing_sl_pips` to the pip distance (e.g. 30).
 - **extra_order**: Add funds or place an additional order on an existing position. Keywords: "add funds", "extra order", "add to position", "DCA", "average down", "average up", "add more". Set `is_market` to true if executing at market price, false if at a limit price. If a specific price is mentioned, set `order_price` to that value and `is_market` to false. If no price is specified, set `is_market` to true.
 
-**Follow-up actions** (`partial_close`, `breakeven`, `close_position`, `modify_sl`, `modify_tp`, `trailing_sl`, `extra_order`) are VALID signals — set `is_valid_signal` to `true`. They only need a `symbol`; `direction` can default to `"long"`.
+**Follow-up actions** (`partial_close`, `breakeven`, `close_position`, `close_all`, `close_all_stop`, `start_assist`, `stop_assist`, `modify_sl`, `modify_tp`, `trailing_sl`, `extra_order`) are VALID signals — set `is_valid_signal` to `true`. Symbol-specific actions need a `symbol`; symbol-less actions (`close_all`, `close_all_stop`, `start_assist`, `stop_assist`) should set symbol to `"ALL"` and direction to `"long"`.
 
 ## Priority Rule
 
 If a message contains **multiple actions**, pick the single highest-priority one:
 
-1. `close_position` (highest — irreversible)
-2. `partial_close` (reduces exposure)
-3. `breakeven` (protects capital)
-4. `trailing_sl` (dynamic risk)
-5. `modify_sl` (risk adjustment)
-6. `modify_tp` (lowest priority)
+1. `close_all_stop` (highest — irreversible, shuts everything down)
+2. `close_all` (closes all positions)
+3. `close_position` (closes one position)
+4. `stop_assist` (stops the bot)
+5. `partial_close` (reduces exposure)
+6. `breakeven` (protects capital)
+7. `trailing_sl` (dynamic risk)
+8. `modify_sl` (risk adjustment)
+9. `modify_tp` (lowest priority)
 
 Entry signals are never combined with follow-up actions — if the message is clearly a new trade, use `entry`.
 
 ## Classification Rules
 
 1. **Valid signals** contain at least a symbol and a direction (buy/sell/long/short),
-   OR are a follow-up action (partial_close, breakeven, close_position, modify_sl, modify_tp) with at least a symbol.
+   OR are a follow-up action (partial_close, breakeven, close_position, modify_sl, modify_tp) with at least a symbol,
+   OR are a symbol-less action (close_all, close_all_stop, start_assist, stop_assist) with clear intent.
 2. **Invalid messages** include: greetings, news, commentary, admin messages,
    motivational posts, and anything that is not an actionable trade signal.
    Set `is_valid_signal` to false and provide a concise `ignore_reason`.
