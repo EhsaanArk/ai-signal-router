@@ -7,6 +7,7 @@ import type {
   PaginatedAdminSignals,
   AdminSignalStats,
   AdminHealthStats,
+  GlobalSetting,
 } from "@/types/api";
 
 export function useAdminUsers(limit = 50, offset = 0, search?: string) {
@@ -92,5 +93,27 @@ export function useAdminHealth() {
     queryKey: ["admin-health"],
     queryFn: () => apiFetch<AdminHealthStats>("/admin/health"),
     staleTime: 60_000,
+  });
+}
+
+export function useAdminSettings() {
+  return useQuery({
+    queryKey: ["admin-settings"],
+    queryFn: () => apiFetch<GlobalSetting[]>("/admin/settings"),
+    staleTime: 30_000,
+  });
+}
+
+export function useUpdateAdminSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: Record<string, string>) =>
+      apiFetch<GlobalSetting[]>("/admin/settings", {
+        method: "PUT",
+        body: JSON.stringify({ settings }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-settings"] });
+    },
   });
 }

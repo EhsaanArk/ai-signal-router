@@ -15,6 +15,10 @@ from uuid import UUID
 import sentry_sdk
 from telethon.errors import FloodWaitError
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.adapters.db.models import GlobalSettingModel
 from src.adapters.telegram.listener import TelegramListener
 from src.adapters.telegram.repository import TelegramSessionRepository, _capture_user_exception
 from src.core.interfaces import QueuePort
@@ -22,11 +26,28 @@ from src.core.models import RawSignal
 
 logger = logging.getLogger(__name__)
 
-# Backfill: max age (seconds) for a message to be considered fresh.
-BACKFILL_MAX_AGE_SECONDS = int(os.environ.get("BACKFILL_MAX_AGE_SECONDS", "60"))
+# Backfill: env-var fallback for max age (seconds).  DB setting takes priority.
+_BACKFILL_MAX_AGE_SECONDS_DEFAULT = int(os.environ.get("BACKFILL_MAX_AGE_SECONDS", "60"))
 
 # Backfill: max messages to fetch per channel from Telegram history.
 BACKFILL_MESSAGE_LIMIT = int(os.environ.get("BACKFILL_MESSAGE_LIMIT", "20"))
+
+
+async def get_backfill_max_age(db: AsyncSession | None) -> int:
+    """Read backfill_max_age_seconds from global_settings, fall back to env var."""
+    if db is not None:
+        try:
+            result = await db.execute(
+                select(GlobalSettingModel.value).where(
+                    GlobalSettingModel.key == "backfill_max_age_seconds"
+                )
+            )
+            row = result.scalar_one_or_none()
+            if row is not None:
+                return int(row)
+        except Exception:
+            logger.debug("Failed to read backfill setting from DB, using env default")
+    return _BACKFILL_MAX_AGE_SECONDS_DEFAULT
 
 
 async def backfill_missed_signals(
@@ -35,6 +56,7 @@ async def backfill_missed_signals(
     channels: set[str],
     repo: TelegramSessionRepository,
     queue_port: QueuePort,
+    db: AsyncSession | None = None,
 ) -> None:
     """Fetch and enqueue signals that were missed during downtime.
 
@@ -63,7 +85,8 @@ async def backfill_missed_signals(
     total_backfilled = 0
     total_stale = 0
     total_duplicate = 0
-    cutoff = datetime.now(timezone.utc).timestamp() - BACKFILL_MAX_AGE_SECONDS
+    max_age = await get_backfill_max_age(db)
+    cutoff = datetime.now(timezone.utc).timestamp() - max_age
 
     for channel_id in channels:
         try:
@@ -127,7 +150,7 @@ async def backfill_missed_signals(
                         "Backfill: stale message %d in channel %s "
                         "(age=%.0fs, max=%ds)",
                         msg.id, channel_id, age_seconds,
-                        BACKFILL_MAX_AGE_SECONDS,
+                        max_age,
                     )
                     await repo.log_stale_signal(
                         user_id=user_id,
@@ -136,7 +159,7 @@ async def backfill_missed_signals(
                         raw_message=msg.text,
                         error_message=(
                             f"stale_signal: {age_seconds:.0f}s delay "
-                            f"exceeds {BACKFILL_MAX_AGE_SECONDS}s threshold"
+                            f"exceeds {max_age}s threshold"
                         ),
                     )
                     continue

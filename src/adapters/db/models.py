@@ -298,6 +298,26 @@ class ParserConfigModel(Base):
     )
 
 
+class GlobalSettingModel(Base):
+    __tablename__ = "global_settings"
+
+    key: Mapped[str] = mapped_column(
+        String(100), primary_key=True
+    )
+    value: Mapped[str] = mapped_column(
+        String(500), nullable=False
+    )
+    description: Mapped[str | None] = mapped_column(
+        String(500), nullable=True
+    )
+    updated_by: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class PasswordResetTokenModel(Base):
     __tablename__ = "password_reset_tokens"
 

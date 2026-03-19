@@ -34,6 +34,7 @@ const routePrefetchMap: Record<string, () => Promise<unknown>> = {
   "/admin/signals": () => import("../../pages/admin/signals"),
   "/admin/system-rules": () => import("../../pages/admin/system-rules"),
   "/admin/parser": () => import("../../pages/admin/parser"),
+  "/admin/settings": () => import("../../pages/admin/settings"),
 };
 
 function prefetchRoute(path: string) {
@@ -127,6 +128,7 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
             { path: "/admin/signals", label: "All Signals", icon: Radio },
             { path: "/admin/system-rules", label: "System Rules", icon: BookOpen },
             { path: "/admin/parser", label: "AI Parser", icon: Brain },
+            { path: "/admin/settings", label: "Settings", icon: Settings },
           ].map((item) => {
             const isActive = location.pathname.startsWith(item.path);
             return (
