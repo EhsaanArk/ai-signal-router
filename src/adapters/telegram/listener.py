@@ -232,11 +232,15 @@ if __name__ == "__main__":
         import sentry_sdk
 
         local_mode_env = os.environ.get("LOCAL_MODE", "false").lower() == "true"
+        sentry_env = os.environ.get(
+            "SENTRY_ENVIRONMENT",
+            "development" if local_mode_env else "staging",
+        )
         sentry_sdk.init(
             dsn=sentry_dsn,
             send_default_pii=True,
             traces_sample_rate=0.1,
-            environment="production" if not local_mode_env else "development",
+            environment=sentry_env,
             server_name="sgm-listener",
         )
         sentry_sdk.set_tag("service.role", "listener")

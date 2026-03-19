@@ -83,11 +83,15 @@ def create_app() -> FastAPI:
             import sentry_sdk
 
             service_role = os.environ.get("SERVICE_ROLE", "api")
+            sentry_env = os.environ.get(
+                "SENTRY_ENVIRONMENT",
+                "development" if local_mode else "staging",
+            )
             sentry_sdk.init(
                 dsn=sentry_dsn,
                 send_default_pii=True,
                 traces_sample_rate=0.1,
-                environment="production" if not local_mode else "development",
+                environment=sentry_env,
                 server_name=f"sgm-{service_role}",
             )
             sentry_sdk.set_tag("service.role", service_role)
