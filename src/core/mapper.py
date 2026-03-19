@@ -248,28 +248,45 @@ def build_webhook_payload(
         payload["eventSymbol"] = signal.symbol
     if payload.get("source") == "":
         payload["source"] = signal.source_asset_class
-    # Signal-driven fields — fill when template has the key with empty/falsy value.
-    # For forex these are gated by V2; for crypto they're always available
-    # (SageMaster Crypto has no V1/V2 split — TP/SL are additional template fields).
-    should_fill_signal_fields = rule.payload_version == "V2" or is_crypto
-    if should_fill_signal_fields:
-        if payload.get("price") == "":
-            payload["price"] = str(signal.entry_price) if signal.entry_price is not None else ""
-        if "take_profits" in payload and not payload["take_profits"]:
-            payload["take_profits"] = signal.take_profits
-        if "takeProfits" in payload and not payload["takeProfits"]:
-            payload["takeProfits"] = signal.take_profits
-        if "takeProfitsPips" in payload and not payload["takeProfitsPips"]:
-            payload["takeProfitsPips"] = signal.take_profit_pips or []
-        if "stopLoss" in payload and not payload["stopLoss"]:
-            payload["stopLoss"] = signal.stop_loss
-        if "stop_loss" in payload and not payload["stop_loss"]:
-            payload["stop_loss"] = signal.stop_loss
-        if "stopLossPips" in payload and not payload["stopLossPips"]:
-            payload["stopLossPips"] = signal.stop_loss_pips
+    # Signal-driven fields — always fill when the template has the key with
+    # empty/falsy value AND the signal provides data.  V1/V2 distinction is
+    # implicit: if the template has TP/SL fields and the signal has TP/SL
+    # data, they get filled.  If the signal has no TP/SL, the fields stay
+    # empty and are stripped below so SageMaster doesn't reject them.
+    if payload.get("price") == "":
+        payload["price"] = str(signal.entry_price) if signal.entry_price is not None else ""
+    if "take_profits" in payload and not payload["take_profits"]:
+        payload["take_profits"] = signal.take_profits
+    if "takeProfits" in payload and not payload["takeProfits"]:
+        payload["takeProfits"] = signal.take_profits
+    if "takeProfitsPips" in payload and not payload["takeProfitsPips"]:
+        payload["takeProfitsPips"] = signal.take_profit_pips or []
+    if "stopLoss" in payload and not payload["stopLoss"]:
+        payload["stopLoss"] = signal.stop_loss
+    if "stop_loss" in payload and not payload["stop_loss"]:
+        payload["stop_loss"] = signal.stop_loss
+    if "stopLossPips" in payload and not payload["stopLossPips"]:
+        payload["stopLossPips"] = signal.stop_loss_pips
     # Crypto entry also needs position_type from signal direction
     if is_crypto and "position_type" in payload and not payload["position_type"]:
         payload["position_type"] = signal.direction or "long"
+
+    # Strip empty/falsy optional fields so SageMaster doesn't try to process
+    # them (e.g., empty takeProfits:[] causes "Invalid S/L or T/P" rejection).
+    # Core fields (type, assistId/aiAssistId, source, symbol, date) are never
+    # stripped — they're always required.
+    _OPTIONAL_FIELDS = {
+        "price", "balance", "lots",
+        "takeProfits", "takeProfitsPips", "stopLoss", "stopLossPips",
+        "take_profits", "stop_loss",
+        "position_type", "is_market", "order_price",
+        "lotSize", "percentage", "slAdjustment", "sl_adjustment",
+    }
+    payload = {
+        k: v for k, v in payload.items()
+        if k not in _OPTIONAL_FIELDS or (v != "" and v != [] and v is not None)
+    }
+
     return payload
 
 
