@@ -200,7 +200,7 @@ async def get_current_user(
                 user = User(
                     id=UUID(data["id"]),
                     email=data["email"],
-                    password_hash=data["password_hash"],
+                    password_hash="",  # Not cached for security
                     subscription_tier=SubscriptionTier(data["subscription_tier"]),
                     is_admin=data.get("is_admin", False),
                     is_disabled=data.get("is_disabled", False),
@@ -250,7 +250,6 @@ async def get_current_user(
             await cache.set(cache_key, json.dumps({
                 "id": str(user.id),
                 "email": user.email,
-                "password_hash": user.password_hash,
                 "subscription_tier": user.subscription_tier.value,
                 "is_admin": user.is_admin,
                 "is_disabled": user.is_disabled,

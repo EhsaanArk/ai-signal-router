@@ -1,6 +1,7 @@
 """Public API router — /api/v1 endpoints for the SGM Telegram Signal Copier."""
 
 import asyncio
+import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -542,6 +543,10 @@ async def verify_email(
     # Mark token as used
     matched_token.used_at = datetime.now(timezone.utc)
 
+    # Bust user cache so the verified status is reflected immediately
+    cache = request.app.state.cache
+    await cache.delete(f"user:{matched_token.user_id}")
+
     return MessageResponse(message="Email verified successfully.")
 
 
@@ -915,8 +920,7 @@ async def telegram_status(
     cache_key = f"tg_status:{current_user.id}"
     cached = await cache.get(cache_key)
     if cached:
-        import json as _json
-        return TelegramStatusResponse(**_json.loads(cached))
+        return TelegramStatusResponse(**json.loads(cached))
 
     result = await db.execute(
         select(TelegramSessionModel)
