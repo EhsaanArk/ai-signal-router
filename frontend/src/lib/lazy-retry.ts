@@ -3,9 +3,14 @@ import type { ComponentType } from "react";
 
 type ComponentModule = { default: ComponentType<unknown> };
 
+/** SessionStorage key for chunk reload guard — shared between lazy-retry and error-boundary */
+export function getChunkReloadKey(pathname?: string): string {
+  return `chunk-reload-${pathname ?? window.location.pathname}`;
+}
+
 /**
  * Wraps React.lazy() with retry logic for chunk load failures.
- * 1. Retries once with a cache-busting query param
+ * 1. Retries once after a brief delay (handles transient network errors)
  * 2. If retry fails, does a full page reload (once per pathname)
  * 3. If already reloaded, lets the error propagate to ErrorBoundary
  */
@@ -16,13 +21,16 @@ export function lazyRetry(importFn: () => Promise<ComponentModule>) {
 async function retryImport(
   importFn: () => Promise<ComponentModule>,
 ): Promise<ComponentModule> {
-  // Retry once with cache-busting
+  // Retry after a brief delay — helps with transient network errors
+  await new Promise((resolve) => setTimeout(resolve, 500));
   try {
     const result = await importFn();
+    // Success on retry — clear any previous reload flag
+    sessionStorage.removeItem(getChunkReloadKey());
     return result;
   } catch {
-    // Retry failed — try a full page reload (once)
-    const key = `chunk-reload-${window.location.pathname}`;
+    // Retry failed — try a full page reload (once per pathname)
+    const key = getChunkReloadKey();
     const alreadyReloaded = sessionStorage.getItem(key);
 
     if (!alreadyReloaded) {
@@ -44,7 +52,8 @@ export function isChunkLoadError(error: unknown): boolean {
   const msg = error.message.toLowerCase();
   return (
     msg.includes("dynamically imported module") ||
+    msg.includes("importing a module script") ||
     msg.includes("loading chunk") ||
-    msg.includes("failed to fetch")
+    msg.includes("loading css chunk")
   );
 }

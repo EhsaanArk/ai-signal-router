@@ -2,7 +2,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import * as Sentry from "@sentry/react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { isChunkLoadError } from "@/lib/lazy-retry";
+import { isChunkLoadError, getChunkReloadKey } from "@/lib/lazy-retry";
 
 interface Props {
   children: ReactNode;
@@ -39,7 +39,7 @@ export class ErrorBoundary extends Component<Props, State> {
       });
 
       // Auto-reload after 1.5s (with sessionStorage guard to prevent loops)
-      const key = `chunk-reload-${window.location.pathname}`;
+      const key = getChunkReloadKey();
       if (!sessionStorage.getItem(key)) {
         sessionStorage.setItem(key, "1");
         this.reloadTimer = setTimeout(() => window.location.reload(), 1500);
