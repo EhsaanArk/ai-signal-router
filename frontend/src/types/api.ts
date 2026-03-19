@@ -286,3 +286,12 @@ export interface TestDispatchResponse {
   status_code: number;
   response_body: string;
 }
+
+// Global Settings
+export interface GlobalSetting {
+  key: string;
+  value: string;
+  description: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+}

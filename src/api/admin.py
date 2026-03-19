@@ -13,6 +13,7 @@ from sqlalchemy import case, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
+    GlobalSettingModel,
     ParserConfigModel,
     RoutingRuleModel,
     SignalLogModel,
@@ -1242,3 +1243,114 @@ async def test_dispatch_signal(
         status_code=200 if result.success else 500,
         response_body=result.error_message or "Dispatched successfully",
     )
+
+
+# ---------------------------------------------------------------------------
+# Global Settings
+# ---------------------------------------------------------------------------
+
+
+class GlobalSettingResponse(BaseModel):
+    key: str
+    value: str
+    description: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+class GlobalSettingsUpdateRequest(BaseModel):
+    settings: dict[str, str] = Field(
+        ...,
+        description="Key-value pairs to update. Only known keys are accepted.",
+    )
+
+
+# Keys that admin can configure, with type + bounds for validation
+KNOWN_SETTING_KEYS: dict[str, dict] = {
+    "backfill_max_age_seconds": {
+        "type": "int",
+        "min": 10,
+        "max": 600,
+        "description": "Max age (seconds) for a signal to be considered fresh during backfill.",
+    },
+}
+
+
+@admin_router.get("/settings", response_model=list[GlobalSettingResponse])
+async def get_global_settings(
+    _admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Fetch all global settings."""
+    result = await db.execute(select(GlobalSettingModel))
+    rows = result.scalars().all()
+    return [
+        GlobalSettingResponse(
+            key=r.key,
+            value=r.value,
+            description=r.description,
+            updated_by=r.updated_by,
+            updated_at=r.updated_at.isoformat() if r.updated_at else None,
+        )
+        for r in rows
+    ]
+
+
+@admin_router.put("/settings", response_model=list[GlobalSettingResponse])
+async def update_global_settings(
+    body: GlobalSettingsUpdateRequest,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Update one or more global settings. Only known keys are accepted."""
+    errors = []
+    for key, value in body.settings.items():
+        if key not in KNOWN_SETTING_KEYS:
+            errors.append(f"Unknown setting: {key}")
+            continue
+        spec = KNOWN_SETTING_KEYS[key]
+        if spec["type"] == "int":
+            try:
+                int_val = int(value)
+            except ValueError:
+                errors.append(f"{key}: must be an integer")
+                continue
+            if int_val < spec["min"] or int_val > spec["max"]:
+                errors.append(f"{key}: must be between {spec['min']} and {spec['max']}")
+                continue
+
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
+    for key, value in body.settings.items():
+        result = await db.execute(
+            select(GlobalSettingModel).where(GlobalSettingModel.key == key)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.value = value
+            row.updated_by = admin.email
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            db.add(GlobalSettingModel(
+                key=key,
+                value=value,
+                description=KNOWN_SETTING_KEYS[key].get("description"),
+                updated_by=admin.email,
+            ))
+
+    await db.commit()
+
+    # Return updated settings
+    result = await db.execute(select(GlobalSettingModel))
+    rows = result.scalars().all()
+    return [
+        GlobalSettingResponse(
+            key=r.key,
+            value=r.value,
+            description=r.description,
+            updated_by=r.updated_by,
+            updated_at=r.updated_at.isoformat() if r.updated_at else None,
+        )
+        for r in rows
+    ]
