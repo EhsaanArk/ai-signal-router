@@ -41,7 +41,7 @@ interface PipelineStep {
 
 function humanizeErrorMessage(msg: string): string {
   if (msg === "Not an actionable trade signal." || msg === "Not an actionable trade signal") {
-    return "AI parser: message too brief or ambiguous to extract a trade signal";
+    return "Sage Intelligence: message too brief or ambiguous to extract a trade signal";
   }
 
   const assetMatch = msg.match(/Signal asset class '(.+?)' is not supported by (.+?) destinations/);
@@ -99,7 +99,7 @@ function getPipelineSteps(
   if (log.status === "ignored") {
     const isParserRejection = !log.routing_rule_id;
     steps.push({
-      label: isParserRejection ? "AI Parser Filtered" : "Rule Rejected",
+      label: isParserRejection ? "Sage Intelligence Filtered" : "Rule Rejected",
       detail: humanizeErrorMessage(log.error_message || "Ignored"),
       status: "skipped",
     });
@@ -107,7 +107,7 @@ function getPipelineSteps(
   }
 
   steps.push({
-    label: "Parsed by AI",
+    label: "Sage Intelligence",
     detail: log.parsed_data
       ? `${(log.parsed_data.action as string) || "entry"} ${(log.parsed_data.symbol as string) || ""}`
       : "Parsing completed",
@@ -331,7 +331,7 @@ export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
           {parsed && (
             <>
               <div>
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">What the AI Parsed</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Signal Analysis</p>
                 <div className="grid grid-cols-3 gap-3">
                   <DataField label="Symbol" value={symbol} mono />
                   <DataField label="Direction" value={direction} />
@@ -388,7 +388,7 @@ export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                No rule evaluated — signal was filtered by the AI parser
+                No rule evaluated — signal was filtered by Sage Intelligence
               </p>
             )}
           </div>
