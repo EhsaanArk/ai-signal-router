@@ -977,6 +977,7 @@ async def test_parse_signal(
         user_id=_uuid.UUID("00000000-0000-0000-0000-000000000000"),
         channel_id="test-sandbox",
         raw_message=body.raw_message,
+        message_id=0,
     )
 
     parsed = await parser.parse(
@@ -1156,6 +1157,7 @@ async def replay_signal(
         user_id=signal_log.user_id,
         channel_id=signal_log.channel_id or "replay",
         raw_message=signal_log.raw_message,
+        message_id=signal_log.message_id or 0,
     )
 
     parsed = await parser.parse(raw, system_prompt=system_prompt)
