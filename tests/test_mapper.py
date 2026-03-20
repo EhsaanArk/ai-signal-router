@@ -948,3 +948,158 @@ def test_crypto_entry_preserves_prefilled_tp_sl():
     payload = build_webhook_payload(signal, rule)
     assert payload["take_profits"] == [1, 2, 5]
     assert payload["stopLoss"] == 10
+
+
+# ---- QA bug fixes (SGM-043) ----
+
+
+class TestV1LimitOrderPrice:
+    """Bug #2: V1 limit orders must include entry price in the payload."""
+
+    def test_v1_limit_fills_price(self):
+        rule = _rule_with_template({
+            "type": "",
+            "assistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+            "price": "",
+        }, version="V1")
+        signal = ParsedSignal(
+            symbol="EURUSD", direction="long", order_type="limit",
+            entry_price=1.0850,
+        )
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "start_long_limit_deal"
+        assert payload["price"] == "1.085"
+
+    def test_v1_market_does_not_fill_price(self):
+        rule = _rule_with_template({
+            "type": "",
+            "assistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+            "price": "",
+        }, version="V1")
+        signal = ParsedSignal(
+            symbol="EURUSD", direction="long", order_type="market",
+            entry_price=1.0850,
+        )
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "start_long_market_deal"
+        # V1 market orders should NOT fill price (gated behind V2)
+        assert "price" not in payload  # stripped as empty
+
+    def test_v1_short_limit_fills_price(self):
+        rule = _rule_with_template({
+            "type": "",
+            "assistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+            "price": "",
+        }, version="V1")
+        signal = ParsedSignal(
+            symbol="GBPUSD", direction="short", order_type="limit",
+            entry_price=1.2650,
+        )
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "start_short_limit_deal"
+        assert payload["price"] == "1.265"
+
+
+class TestLotsTypeConversion:
+    """Bug #4: V2 lots must be sent as a number, not a string."""
+
+    def test_lots_string_converted_to_float(self):
+        rule = _rule_with_template({
+            "type": "",
+            "assistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+            "lots": "0.5",
+        }, version="V2")
+        signal = ParsedSignal(symbol="EURUSD", direction="long")
+        payload = build_webhook_payload(signal, rule)
+        assert isinstance(payload["lots"], float)
+        assert payload["lots"] == 0.5
+
+    def test_lots_integer_string_converted(self):
+        rule = _rule_with_template({
+            "type": "",
+            "assistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+            "lots": "2",
+        }, version="V2")
+        signal = ParsedSignal(symbol="EURUSD", direction="long")
+        payload = build_webhook_payload(signal, rule)
+        assert isinstance(payload["lots"], float)
+        assert payload["lots"] == 2.0
+
+    def test_balance_string_converted_to_int(self):
+        rule = _rule_with_template({
+            "type": "",
+            "assistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+            "balance": "1000",
+        }, version="V2")
+        signal = ParsedSignal(symbol="EURUSD", direction="long")
+        payload = build_webhook_payload(signal, rule)
+        assert isinstance(payload["balance"], int)
+        assert payload["balance"] == 1000
+
+
+class TestBreakevenOffset:
+    """Bug #3: Breakeven with pip offset should populate slAdjustment."""
+
+    def test_breakeven_offset_forex(self):
+        rule = _rule_with_template({
+            "type": "",
+            "assistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+        }, version="V1")
+        signal = ParsedSignal(
+            symbol="EURUSD", direction="long", action="breakeven",
+            breakeven_offset_pips=-10,
+        )
+        payload = build_webhook_payload(signal, rule)
+        assert payload["type"] == "move_sl_to_breakeven"
+        assert payload["slAdjustment"] == -10
+
+    def test_breakeven_no_offset_defaults_zero(self):
+        rule = _rule_with_template({
+            "type": "",
+            "assistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+        }, version="V1")
+        signal = ParsedSignal(
+            symbol="EURUSD", direction="long", action="breakeven",
+        )
+        payload = build_webhook_payload(signal, rule)
+        assert payload["slAdjustment"] == 0
+
+    def test_breakeven_offset_crypto(self):
+        rule = _rule_with_template({
+            "type": "",
+            "aiAssistId": "assist-123",
+            "source": "",
+            "symbol": "",
+            "date": "",
+        }, version="V1", destination_type="sagemaster_crypto")
+        signal = ParsedSignal(
+            symbol="BTC/USDT", direction="long", action="breakeven",
+            source_asset_class="crypto",
+            breakeven_offset_pips=-5,
+        )
+        payload = build_webhook_payload(signal, rule)
+        assert payload["sl_adjustment"] == -5

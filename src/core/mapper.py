@@ -135,6 +135,8 @@ def _inject_management_fields(payload: dict, signal: ParsedSignal, action: Signa
             payload["slAdjustment"] = int(signal.new_sl)
         elif signal.action == "trailing_sl" and signal.trailing_sl_pips is not None:
             payload["slAdjustment"] = signal.trailing_sl_pips
+        elif signal.breakeven_offset_pips is not None:
+            payload["slAdjustment"] = signal.breakeven_offset_pips
         else:
             payload["slAdjustment"] = 0
     return payload
@@ -172,6 +174,8 @@ def _inject_crypto_management_fields(
             payload["sl_adjustment"] = int(signal.new_sl)
         elif signal.action == "trailing_sl" and signal.trailing_sl_pips is not None:
             payload["sl_adjustment"] = signal.trailing_sl_pips
+        elif signal.breakeven_offset_pips is not None:
+            payload["sl_adjustment"] = signal.breakeven_offset_pips
         else:
             payload["sl_adjustment"] = 0
         payload["position_type"] = position_type
@@ -264,11 +268,15 @@ def build_webhook_payload(
         payload["source"] = signal.source_asset_class
     # Signal-driven fields — fill when template has the key with empty/falsy
     # value.  Gated by V2 for forex; crypto always fills (no V1/V2 split).
+    # V1 limit orders also need price filled to avoid market-order fallback.
     # Empty fields are stripped below so SageMaster doesn't reject them.
+    is_limit_order = signal.order_type in ("limit", "stop")
     should_fill_signal_fields = rule.payload_version == "V2" or is_crypto
-    if should_fill_signal_fields:
+    # Always fill price for limit/stop orders regardless of payload version
+    if should_fill_signal_fields or is_limit_order:
         if payload.get("price") == "":
             payload["price"] = str(signal.entry_price) if signal.entry_price is not None else ""
+    if should_fill_signal_fields:
         if "take_profits" in payload and not payload["take_profits"]:
             payload["take_profits"] = signal.take_profits
         if "takeProfits" in payload and not payload["takeProfits"]:
@@ -284,6 +292,19 @@ def build_webhook_payload(
     # Crypto entry also needs position_type from signal direction
     if is_crypto and "position_type" in payload and not payload["position_type"]:
         payload["position_type"] = signal.direction or "long"
+
+    # Ensure numeric fields are sent as numbers, not strings.
+    # Template builder stores user input as strings; SageMaster rejects string lots.
+    if "lots" in payload and payload["lots"] is not None:
+        try:
+            payload["lots"] = float(payload["lots"])
+        except (ValueError, TypeError):
+            pass  # leave as-is; will be stripped below if empty
+    if "balance" in payload and payload["balance"] is not None:
+        try:
+            payload["balance"] = int(float(str(payload["balance"])))
+        except (ValueError, TypeError):
+            pass
 
     # Strip empty/falsy optional fields so SageMaster doesn't try to process
     # them (e.g., empty takeProfits:[] causes "Invalid S/L or T/P" rejection).
