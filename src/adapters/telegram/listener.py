@@ -428,7 +428,8 @@ if __name__ == "__main__":
                 except Exception as exc:
                     logger.warning("Post-startup health check failed: %s", exc)
                 finally:
-                    await _check_redis.aclose()
+                    _close = getattr(_check_redis, "aclose", None) or _check_redis.close
+                    await _close()
 
             # ── Graceful shutdown on SIGTERM ──────────────────────────────
             # Railway sends SIGTERM before replacing the container.  We must
