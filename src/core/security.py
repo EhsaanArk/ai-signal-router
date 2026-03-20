@@ -209,22 +209,27 @@ def validate_outbound_webhook_url(
     url: str,
     *,
     local_mode: bool | None = None,
-) -> tuple[bool, str | None]:
-    """Validate a user-provided webhook URL against SSRF-sensitive targets."""
+) -> tuple[bool, str | None, set[ipaddress._BaseAddress] | None]:
+    """Validate a user-provided webhook URL against SSRF-sensitive targets.
+
+    Returns (allowed, reason_or_None, resolved_ips_or_None).  The third
+    element contains the validated IP addresses so callers can pin DNS and
+    prevent rebinding attacks.
+    """
     try:
         parsed = urlparse(url)
     except ValueError:
-        return False, "Invalid URL"
+        return False, "Invalid URL", None
 
     if parsed.scheme not in _ALLOWED_WEBHOOK_SCHEMES:
-        return False, "URL must use http or https"
+        return False, "URL must use http or https", None
 
     host = (parsed.hostname or "").strip().lower().rstrip(".")
     if not host:
-        return False, "URL must include a valid host"
+        return False, "URL must include a valid host", None
 
     if host in _BLOCKED_HOSTNAMES or host.endswith(".localhost"):
-        return False, "Webhook host is not allowed"
+        return False, "Webhook host is not allowed", None
 
     try:
         ip_obj = ipaddress.ip_address(host)
@@ -232,15 +237,17 @@ def validate_outbound_webhook_url(
         ip_obj = None
 
     if ip_obj and _is_blocked_ip(ip_obj):
-        return False, "Webhook target resolves to a private or restricted IP address"
+        return False, "Webhook target resolves to a private or restricted IP address", None
 
-    if ip_obj is None:
-        resolved_ips, resolve_error = _resolve_host_ips(host)
-        if resolve_error:
-            if _is_local_mode(local_mode):
-                return True, None
-            return False, "Webhook host could not be resolved safely"
-        if any(_is_blocked_ip(resolved_ip) for resolved_ip in resolved_ips):
-            return False, "Webhook target resolves to a private or restricted IP address"
+    if ip_obj is not None:
+        return True, None, {ip_obj}
 
-    return True, None
+    resolved_ips, resolve_error = _resolve_host_ips(host)
+    if resolve_error:
+        if _is_local_mode(local_mode):
+            return True, None, None
+        return False, "Webhook host could not be resolved safely", None
+    if any(_is_blocked_ip(resolved_ip) for resolved_ip in resolved_ips):
+        return False, "Webhook target resolves to a private or restricted IP address", None
+
+    return True, None, resolved_ips

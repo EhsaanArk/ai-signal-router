@@ -106,8 +106,13 @@ async def _find_valid_token_row(
     db: AsyncSession,
     token_model: type[PasswordResetTokenModel] | type[EmailVerificationTokenModel],
     raw_token: str,
-) -> PasswordResetTokenModel | EmailVerificationTokenModel | None:
-    """Resolve token via lookup hash with deterministic legacy fallback for old rows."""
+) -> tuple[PasswordResetTokenModel | EmailVerificationTokenModel | None, bool]:
+    """Resolve token via lookup hash with deterministic legacy fallback.
+
+    Returns (matched_row_or_None, was_verified_by_bcrypt). When the token is
+    found via the SHA-256 lookup hash the match is deterministic and no
+    additional bcrypt verify is needed at the call site.
+    """
     now = datetime.now(timezone.utc)
     token_lookup_hash = sha256_hex(raw_token)
     result = await db.execute(
@@ -119,7 +124,8 @@ async def _find_valid_token_row(
     )
     matched_token = result.scalar_one_or_none()
     if matched_token is not None:
-        return matched_token
+        # SHA-256 is a deterministic match — no bcrypt needed.
+        return matched_token, True
 
     # Backward compatibility for legacy rows created before token_lookup_hash.
     legacy_rows = (
@@ -135,8 +141,8 @@ async def _find_valid_token_row(
     ).scalars().all()
     for row in legacy_rows:
         if pwd_context.verify(raw_token, row.token_hash):
-            return row
-    return None
+            return row, True
+    return None, False
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -512,13 +518,13 @@ async def reset_password(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
     """Reset password using a valid token."""
-    matched_token = await _find_valid_token_row(
+    matched_token, _verified = await _find_valid_token_row(
         db=db,
         token_model=PasswordResetTokenModel,
         raw_token=body.token,
     )
 
-    if matched_token is None or not pwd_context.verify(body.token, matched_token.token_hash):
+    if matched_token is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
@@ -549,13 +555,13 @@ async def verify_email(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
     """Verify a user's email using the token from the verification link."""
-    matched_token = await _find_valid_token_row(
+    matched_token, _verified = await _find_valid_token_row(
         db=db,
         token_model=EmailVerificationTokenModel,
         raw_token=body.token,
     )
 
-    if matched_token is None or not pwd_context.verify(body.token, matched_token.token_hash):
+    if matched_token is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification token",
@@ -1209,7 +1215,7 @@ async def create_routing_rule(
     cache=Depends(get_cache),
 ) -> RoutingRuleResponse:
     """Create a new routing rule after verifying the user's tier limit."""
-    allowed_url, reason = validate_outbound_webhook_url(
+    allowed_url, reason, _ips = validate_outbound_webhook_url(
         body.destination_webhook_url,
         local_mode=settings.LOCAL_MODE,
     )
@@ -1309,7 +1315,7 @@ async def update_routing_rule(
     update_data = body.model_dump(exclude_unset=True)
 
     effective_url = update_data.get("destination_webhook_url", row.destination_webhook_url)
-    allowed_url, reason = validate_outbound_webhook_url(
+    allowed_url, reason, _ips = validate_outbound_webhook_url(
         effective_url,
         local_mode=settings.LOCAL_MODE,
     )
@@ -1377,7 +1383,7 @@ async def test_webhook(
 
     try:
         url = body.url
-        allowed, reason = validate_outbound_webhook_url(
+        allowed, reason, _ips = validate_outbound_webhook_url(
             url,
             local_mode=settings.LOCAL_MODE,
         )

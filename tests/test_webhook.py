@@ -268,3 +268,36 @@ async def test_dispatch_blocks_unsafe_destination(sample_parsed_signal, sample_r
     assert result.status == "failed"
     assert "Unsafe destination webhook URL rejected" in (result.error_message or "")
     dispatcher._client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pins_dns_to_validated_ip(sample_parsed_signal, sample_routing_rule_v1):
+    """Dispatcher should POST to the validated IP, not re-resolve DNS."""
+    import ipaddress
+
+    pinned_ip = ipaddress.ip_address("93.184.216.34")
+    sample_routing_rule_v1.destination_webhook_url = "https://example.com/webhook"
+
+    mock_response = AsyncMock()
+    mock_response.is_success = True
+    mock_response.status_code = 200
+
+    dispatcher = WebhookDispatcher()
+    dispatcher._client = AsyncMock(spec=httpx.AsyncClient)
+    dispatcher._client.post = AsyncMock(return_value=mock_response)
+
+    with patch(
+        "src.adapters.webhook.dispatcher.validate_outbound_webhook_url",
+        return_value=(True, None, {pinned_ip}),
+    ):
+        result = await dispatcher.dispatch(sample_parsed_signal, sample_routing_rule_v1)
+
+    assert result.status == "success"
+    call_args = dispatcher._client.post.call_args
+    posted_url = call_args[0][0]
+    # The URL should contain the pinned IP, not the hostname
+    assert "93.184.216.34" in posted_url
+    assert "example.com" not in posted_url
+    # Host header should preserve the original hostname for TLS/vhost
+    headers = call_args[1].get("headers") or {}
+    assert headers.get("Host") == "example.com"

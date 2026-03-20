@@ -92,7 +92,7 @@ def test_auto_decrypt_fernet_fallback():
     ],
 )
 def test_validate_outbound_webhook_url_blocks_private_targets(url: str):
-    allowed, reason = validate_outbound_webhook_url(url, local_mode=False)
+    allowed, reason, _ips = validate_outbound_webhook_url(url, local_mode=False)
     assert allowed is False
     assert reason
 
@@ -105,9 +105,24 @@ def test_validate_outbound_webhook_url_blocks_private_targets(url: str):
     ],
 )
 def test_validate_outbound_webhook_url_allows_public_targets(url: str):
-    allowed, reason = validate_outbound_webhook_url(url, local_mode=False)
+    allowed, reason, resolved_ips = validate_outbound_webhook_url(url, local_mode=False)
     assert allowed is True
     assert reason is None
+    assert resolved_ips is not None and len(resolved_ips) > 0
+
+
+def test_validate_outbound_webhook_url_returns_resolved_ips_for_hostname(monkeypatch):
+    public_ip = ipaddress.ip_address("93.184.216.34")
+    monkeypatch.setattr(
+        "src.core.security._resolve_host_ips",
+        lambda host, timeout_seconds=2.0: ({public_ip}, None),
+    )
+    allowed, reason, resolved_ips = validate_outbound_webhook_url(
+        "https://example.com/webhook",
+        local_mode=False,
+    )
+    assert allowed is True
+    assert resolved_ips == {public_ip}
 
 
 def test_validate_outbound_webhook_url_blocks_hostname_resolving_to_private_ip(monkeypatch):
@@ -115,7 +130,7 @@ def test_validate_outbound_webhook_url_blocks_hostname_resolving_to_private_ip(m
         "src.core.security._resolve_host_ips",
         lambda host, timeout_seconds=2.0: ({ipaddress.ip_address("127.0.0.1")}, None),
     )
-    allowed, reason = validate_outbound_webhook_url(
+    allowed, reason, _ips = validate_outbound_webhook_url(
         "https://public.example/webhook",
         local_mode=False,
     )
@@ -128,7 +143,7 @@ def test_validate_outbound_webhook_url_allows_hostname_resolving_to_public_ip(mo
         "src.core.security._resolve_host_ips",
         lambda host, timeout_seconds=2.0: ({ipaddress.ip_address("93.184.216.34")}, None),
     )
-    allowed, reason = validate_outbound_webhook_url(
+    allowed, reason, _ips = validate_outbound_webhook_url(
         "https://public.example/webhook",
         local_mode=False,
     )
@@ -141,7 +156,7 @@ def test_validate_outbound_webhook_url_fails_closed_on_dns_error_in_non_local(mo
         "src.core.security._resolve_host_ips",
         lambda host, timeout_seconds=2.0: (set(), "Unable to resolve host"),
     )
-    allowed, reason = validate_outbound_webhook_url(
+    allowed, reason, _ips = validate_outbound_webhook_url(
         "https://public.example/webhook",
         local_mode=False,
     )
@@ -154,7 +169,7 @@ def test_validate_outbound_webhook_url_fails_open_on_dns_error_in_local_mode(mon
         "src.core.security._resolve_host_ips",
         lambda host, timeout_seconds=2.0: (set(), "Unable to resolve host"),
     )
-    allowed, reason = validate_outbound_webhook_url(
+    allowed, reason, _ips = validate_outbound_webhook_url(
         "https://public.example/webhook",
         local_mode=True,
     )
