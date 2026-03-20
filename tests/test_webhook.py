@@ -253,3 +253,18 @@ async def test_retry_on_network_error_then_success(sample_parsed_signal, sample_
 
     assert result.status == "success"
     assert result.attempt_count == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_blocks_unsafe_destination(sample_parsed_signal, sample_routing_rule_v1):
+    """Unsafe destination hosts should be rejected before any HTTP call."""
+    sample_routing_rule_v1.destination_webhook_url = "http://127.0.0.1/webhook"
+
+    dispatcher = WebhookDispatcher()
+    dispatcher._client = AsyncMock(spec=httpx.AsyncClient)
+
+    result = await dispatcher.dispatch(sample_parsed_signal, sample_routing_rule_v1)
+
+    assert result.status == "failed"
+    assert "Unsafe destination webhook URL rejected" in (result.error_message or "")
+    dispatcher._client.post.assert_not_called()

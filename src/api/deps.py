@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import logging
+import os
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -12,7 +14,8 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 from pydantic_settings import BaseSettings
 from slowapi import Limiter
 from sqlalchemy import select
@@ -28,12 +31,51 @@ logger = logging.getLogger(__name__)
 # Rate limiter
 # ---------------------------------------------------------------------------
 
+@lru_cache
+def _trusted_proxy_networks() -> tuple[ipaddress._BaseNetwork, ...]:
+    """Parse TRUSTED_PROXY_IPS env into CIDR networks."""
+    raw = os.environ.get("TRUSTED_PROXY_IPS", "")
+    networks: list[ipaddress._BaseNetwork] = []
+    for part in raw.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        try:
+            if "/" in value:
+                networks.append(ipaddress.ip_network(value, strict=False))
+            else:
+                ip_obj = ipaddress.ip_address(value)
+                bits = 32 if ip_obj.version == 4 else 128
+                networks.append(ipaddress.ip_network(f"{value}/{bits}", strict=False))
+        except ValueError:
+            logger.warning("Ignoring invalid TRUSTED_PROXY_IPS entry: %s", value)
+    return tuple(networks)
+
+
+def _is_trusted_proxy(remote_ip: str) -> bool:
+    """Return True if *remote_ip* belongs to a trusted proxy network."""
+    try:
+        ip_obj = ipaddress.ip_address(remote_ip)
+    except ValueError:
+        return False
+    return any(ip_obj in network for network in _trusted_proxy_networks())
+
+
 def _get_real_ip(request: Request) -> str:
-    """Extract client IP from X-Forwarded-For (proxy-aware) or fall back to remote address."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "127.0.0.1"
+    """Extract client IP, trusting X-Forwarded-For only from trusted proxies."""
+    remote_ip = request.client.host if request.client else "127.0.0.1"
+
+    if _is_trusted_proxy(remote_ip):
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            candidate = forwarded.split(",")[0].strip()
+            try:
+                ipaddress.ip_address(candidate)
+                return candidate
+            except ValueError:
+                logger.debug("Ignoring invalid X-Forwarded-For value: %s", candidate)
+
+    return remote_ip
 
 
 limiter = Limiter(key_func=_get_real_ip)
@@ -74,6 +116,9 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
     ADMIN_EMAILS: str = ""
     ADMIN_TIER: str = "elite"
+    TELEGRAM_BOT_WEBHOOK_SECRET: str = ""
+    TELEGRAM_BOT_LINK_SECRET: str = ""
+    TRUSTED_PROXY_IPS: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -179,13 +224,16 @@ async def get_current_user(
 
     try:
         payload = jwt.decode(
-            token, settings.JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM]
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            options={"require": ["sub", "exp"]},
         )
         user_id_str: str | None = payload.get("sub")
         if user_id_str is None:
             raise credentials_exception
         user_id = UUID(user_id_str)
-    except (JWTError, ValueError) as exc:
+    except (InvalidTokenError, ValueError) as exc:
         logger.debug("JWT decode failed: %s", exc)
         raise credentials_exception from exc
 

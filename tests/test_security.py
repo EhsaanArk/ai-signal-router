@@ -12,6 +12,7 @@ from src.core.security import (
     decrypt_session_legacy,
     encrypt_session,
     generate_key,
+    validate_outbound_webhook_url,
 )
 
 
@@ -72,3 +73,36 @@ def test_auto_decrypt_fernet_fallback():
     fernet = Fernet(key)
     cipher = fernet.encrypt(b"legacy-session").decode()
     assert decrypt_session_auto(cipher, key) == "legacy-session"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost/webhook",
+        "https://127.0.0.1/hook",
+        "https://10.0.0.1/hook",
+        "https://172.16.0.1/hook",
+        "https://192.168.1.2/hook",
+        "https://169.254.169.254/latest/meta-data",
+        "https://[::1]/hook",
+        "https://[fd00::1]/hook",
+        "https://metadata.google.internal/hook",
+    ],
+)
+def test_validate_outbound_webhook_url_blocks_private_targets(url: str):
+    allowed, reason = validate_outbound_webhook_url(url)
+    assert allowed is False
+    assert reason
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/webhook",
+        "http://api.sagemaster.io/hook",
+    ],
+)
+def test_validate_outbound_webhook_url_allows_public_targets(url: str):
+    allowed, reason = validate_outbound_webhook_url(url)
+    assert allowed is True
+    assert reason is None

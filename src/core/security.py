@@ -9,12 +9,28 @@ from the ``ENCRYPTION_KEY`` environment variable (URL-safe base64-encoded
 from __future__ import annotations
 
 import base64
+import hashlib
+import ipaddress
 import os
+from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.fernet import Fernet, InvalidToken
 
 _NONCE_SIZE = 12  # 96-bit nonce recommended for AES-GCM
+_ALLOWED_WEBHOOK_SCHEMES = {"http", "https"}
+_BLOCKED_HOSTNAMES = {
+    "localhost",
+    "metadata.google.internal",
+    "metadata",
+    "instance-data",
+    "metadata.azure.internal",
+    "metadata.aliyun.internal",
+}
+_BLOCKED_METADATA_IPS = {
+    ipaddress.ip_address("169.254.169.254"),
+    ipaddress.ip_address("100.100.100.200"),
+}
 
 
 def generate_key() -> bytes:
@@ -127,3 +143,49 @@ def decrypt_session_auto(cipher: str, key: bytes) -> str:
         return decrypt_session(cipher, key)
     except Exception:
         return decrypt_session_legacy(cipher, key)
+
+
+def sha256_hex(value: str) -> str:
+    """Return the SHA-256 hex digest for *value*."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _is_blocked_ip(ip_obj: ipaddress._BaseAddress) -> bool:
+    """Return True for IPs that should never be used as outbound webhooks."""
+    return (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_unspecified
+        or ip_obj.is_reserved
+        or ip_obj in _BLOCKED_METADATA_IPS
+    )
+
+
+def validate_outbound_webhook_url(url: str) -> tuple[bool, str | None]:
+    """Validate a user-provided webhook URL against SSRF-sensitive targets."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False, "Invalid URL"
+
+    if parsed.scheme not in _ALLOWED_WEBHOOK_SCHEMES:
+        return False, "URL must use http or https"
+
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "URL must include a valid host"
+
+    if host in _BLOCKED_HOSTNAMES or host.endswith(".localhost"):
+        return False, "Webhook host is not allowed"
+
+    try:
+        ip_obj = ipaddress.ip_address(host)
+    except ValueError:
+        ip_obj = None
+
+    if ip_obj and _is_blocked_ip(ip_obj):
+        return False, "Webhook target resolves to a private or restricted IP address"
+
+    return True, None

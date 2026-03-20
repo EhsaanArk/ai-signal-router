@@ -1,6 +1,7 @@
 """Public API router — /api/v1 endpoints for the SGM Telegram Signal Copier."""
 
 import asyncio
+import hmac
 import json
 import logging
 import secrets
@@ -10,8 +11,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
+import jwt
+from jwt import InvalidTokenError
 from passlib.context import CryptContext
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,12 +39,15 @@ from src.api.deps import (
 import sentry_sdk
 
 from src.core.models import RoutingRule, SubscriptionTier, User
+from src.core.security import sha256_hex, validate_outbound_webhook_url
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_BOT_LINK_PURPOSE = "telegram_bot_link"
+_BOT_LINK_EXP_MINUTES = 30
 
 # ============================================================================
 # Request / Response schemas
@@ -52,13 +58,13 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class RegisterRequest(BaseModel):
     """User registration payload."""
-    email: str
-    password: str
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
     """JSON login alternative to OAuth2 form data."""
-    email: str
+    email: EmailStr
     password: str
 
 
@@ -96,12 +102,12 @@ def _user_me_from_row(row: UserModel) -> UserMeResponse:
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: str
+    email: EmailStr
 
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    new_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class MessageResponse(BaseModel):
@@ -292,7 +298,7 @@ async def login_json(
 ) -> LoginResponse:
     """JSON-based login — returns token + user profile to avoid extra /auth/me round-trip."""
     result = await db.execute(
-        select(UserModel).where(UserModel.email == body.email.lower())
+        select(UserModel).where(UserModel.email == str(body.email).lower())
     )
     user_row = result.scalar_one_or_none()
 
@@ -348,7 +354,7 @@ async def register(
 ) -> LoginResponse:
     """Register a new user and return a JWT."""
     # Check email uniqueness (case-insensitive)
-    normalised_email = body.email.lower()
+    normalised_email = str(body.email).lower()
     result = await db.execute(
         select(UserModel).where(UserModel.email == normalised_email)
     )
@@ -369,6 +375,7 @@ async def register(
     db.add(EmailVerificationTokenModel(
         user_id=new_user.id,
         token_hash=verify_token_hash,
+        token_lookup_hash=sha256_hex(raw_verify_token),
         expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     ))
     await db.flush()
@@ -393,7 +400,7 @@ async def register(
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
     else:
-        logger.warning("RESEND_API_KEY not set — verify link: %s", verify_link)
+        logger.warning("RESEND_API_KEY not set — verification email not sent")
 
     token = create_access_token(
         data={"sub": str(new_user.id)}, settings=settings
@@ -414,7 +421,7 @@ async def forgot_password(
 ) -> MessageResponse:
     """Send a password reset link if the email exists. Always returns 200."""
     result = await db.execute(
-        select(UserModel).where(UserModel.email == body.email.lower())
+        select(UserModel).where(UserModel.email == str(body.email).lower())
     )
     user_row = result.scalar_one_or_none()
 
@@ -425,6 +432,7 @@ async def forgot_password(
         reset_token = PasswordResetTokenModel(
             user_id=user_row.id,
             token_hash=token_hash,
+            token_lookup_hash=sha256_hex(raw_token),
             expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         db.add(reset_token)
@@ -451,9 +459,7 @@ async def forgot_password(
                 logger.exception("Failed to send password reset email")
                 sentry_sdk.capture_exception(exc)
         else:
-            logger.warning(
-                "RESEND_API_KEY not set — reset link: %s", reset_link
-            )
+            logger.warning("RESEND_API_KEY not set — password reset email not sent")
 
     return MessageResponse(
         message="If an account exists, a reset link has been sent."
@@ -468,21 +474,33 @@ async def reset_password(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
     """Reset password using a valid token."""
+    token_lookup_hash = sha256_hex(body.token)
     result = await db.execute(
         select(PasswordResetTokenModel).where(
+            PasswordResetTokenModel.token_lookup_hash == token_lookup_hash,
             PasswordResetTokenModel.expires_at > datetime.now(timezone.utc),
             PasswordResetTokenModel.used_at.is_(None),
-        )
+        ).limit(1)
     )
-    token_rows = result.scalars().all()
+    matched_token = result.scalar_one_or_none()
 
-    matched_token: PasswordResetTokenModel | None = None
-    for row in token_rows:
-        if pwd_context.verify(body.token, row.token_hash):
-            matched_token = row
-            break
-
+    # Backward compatibility for legacy rows created before token_lookup_hash.
     if matched_token is None:
+        legacy_rows = (
+            await db.execute(
+                select(PasswordResetTokenModel).where(
+                    PasswordResetTokenModel.token_lookup_hash.is_(None),
+                    PasswordResetTokenModel.expires_at > datetime.now(timezone.utc),
+                    PasswordResetTokenModel.used_at.is_(None),
+                ).limit(50)
+            )
+        ).scalars().all()
+        for row in legacy_rows:
+            if pwd_context.verify(body.token, row.token_hash):
+                matched_token = row
+                break
+
+    if matched_token is None or not pwd_context.verify(body.token, matched_token.token_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
@@ -513,21 +531,33 @@ async def verify_email(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
     """Verify a user's email using the token from the verification link."""
+    token_lookup_hash = sha256_hex(body.token)
     result = await db.execute(
         select(EmailVerificationTokenModel).where(
+            EmailVerificationTokenModel.token_lookup_hash == token_lookup_hash,
             EmailVerificationTokenModel.expires_at > datetime.now(timezone.utc),
             EmailVerificationTokenModel.used_at.is_(None),
-        )
+        ).limit(1)
     )
-    token_rows = result.scalars().all()
+    matched_token = result.scalar_one_or_none()
 
-    matched_token: EmailVerificationTokenModel | None = None
-    for row in token_rows:
-        if pwd_context.verify(body.token, row.token_hash):
-            matched_token = row
-            break
-
+    # Backward compatibility for legacy rows created before token_lookup_hash.
     if matched_token is None:
+        legacy_rows = (
+            await db.execute(
+                select(EmailVerificationTokenModel).where(
+                    EmailVerificationTokenModel.token_lookup_hash.is_(None),
+                    EmailVerificationTokenModel.expires_at > datetime.now(timezone.utc),
+                    EmailVerificationTokenModel.used_at.is_(None),
+                ).limit(50)
+            )
+        ).scalars().all()
+        for row in legacy_rows:
+            if pwd_context.verify(body.token, row.token_hash):
+                matched_token = row
+                break
+
+    if matched_token is None or not pwd_context.verify(body.token, matched_token.token_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification token",
@@ -567,6 +597,7 @@ async def resend_verification(
     db.add(EmailVerificationTokenModel(
         user_id=current_user.id,
         token_hash=token_hash,
+        token_lookup_hash=sha256_hex(raw_token),
         expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     ))
     await db.flush()
@@ -590,14 +621,14 @@ async def resend_verification(
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
     else:
-        logger.warning("RESEND_API_KEY not set — verify link: %s", verify_link)
+        logger.warning("RESEND_API_KEY not set — verification email not sent")
 
     return MessageResponse(message="Verification email sent.")
 
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
-    new_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 @router.post("/auth/change-password", response_model=MessageResponse)
@@ -1179,6 +1210,13 @@ async def create_routing_rule(
     cache=Depends(get_cache),
 ) -> RoutingRuleResponse:
     """Create a new routing rule after verifying the user's tier limit."""
+    allowed_url, reason = validate_outbound_webhook_url(body.destination_webhook_url)
+    if not allowed_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid destination webhook URL: {reason}",
+        )
+
     # Count existing active rules
     count_result = await db.execute(
         select(func.count())
@@ -1267,6 +1305,14 @@ async def update_routing_rule(
 
     update_data = body.model_dump(exclude_unset=True)
 
+    effective_url = update_data.get("destination_webhook_url", row.destination_webhook_url)
+    allowed_url, reason = validate_outbound_webhook_url(effective_url)
+    if not allowed_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid destination webhook URL: {reason}",
+        )
+
     # Determine the effective destination_type and template after update
     effective_type = update_data.get("destination_type", row.destination_type)
     effective_template = update_data.get("webhook_body_template", row.webhook_body_template)
@@ -1324,13 +1370,11 @@ async def test_webhook(
 
     try:
         url = body.url
-        # Validate URL format
-        from urllib.parse import urlparse
-
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return TestWebhookResponse(
-                success=False, error="URL must use http or https"
+        allowed, reason = validate_outbound_webhook_url(url)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid webhook URL: {reason}",
             )
 
         test_payload = {
@@ -1348,6 +1392,8 @@ async def test_webhook(
             )
     except httpx.TimeoutException:
         return TestWebhookResponse(success=False, error="Request timed out")
+    except HTTPException:
+        raise
     except Exception as exc:
         return TestWebhookResponse(success=False, error=str(exc))
 
@@ -1516,6 +1562,45 @@ class TelegramBotLinkResponse(BaseModel):
     bot_link: str
 
 
+def _create_telegram_bot_link_token(user_id: UUID, settings: Settings) -> str:
+    """Create a signed short-lived token for Telegram bot linking."""
+    if not settings.TELEGRAM_BOT_LINK_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram bot link signing is not configured",
+        )
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "purpose": _BOT_LINK_PURPOSE,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=_BOT_LINK_EXP_MINUTES)).timestamp()),
+    }
+    return jwt.encode(
+        payload,
+        settings.TELEGRAM_BOT_LINK_SECRET,
+        algorithm="HS256",
+    )
+
+
+def _decode_telegram_bot_link_token(token: str, settings: Settings) -> UUID | None:
+    """Decode and validate a Telegram bot link token."""
+    if not settings.TELEGRAM_BOT_LINK_SECRET:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            settings.TELEGRAM_BOT_LINK_SECRET,
+            algorithms=["HS256"],
+            options={"require": ["sub", "purpose", "iat", "exp"]},
+        )
+        if payload.get("purpose") != _BOT_LINK_PURPOSE:
+            return None
+        return UUID(str(payload["sub"]))
+    except (InvalidTokenError, ValueError, TypeError):
+        return None
+
+
 @router.get("/settings/telegram-bot-link", response_model=TelegramBotLinkResponse)
 async def get_telegram_bot_link(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -1531,10 +1616,7 @@ async def get_telegram_bot_link(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Telegram bot notifications are not configured",
         )
-
-    import base64
-
-    token = base64.urlsafe_b64encode(str(current_user.id).encode()).decode().rstrip("=")
+    token = _create_telegram_bot_link_token(current_user.id, settings)
     bot_username = await _resolve_bot_username(settings.TELEGRAM_BOT_TOKEN)
     return TelegramBotLinkResponse(
         bot_link=f"https://t.me/{bot_username}?start={token}",
@@ -1568,7 +1650,9 @@ class TelegramBotUpdate(BaseModel):
 
 @router.post("/webhook/telegram-bot")
 async def telegram_bot_webhook(
+    request: Request,
     body: TelegramBotUpdate,
+    settings: Annotated[Settings, Depends(get_settings)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Receive Telegram bot updates.
@@ -1580,6 +1664,21 @@ async def telegram_bot_webhook(
     if not message:
         return {"ok": True}
 
+    if not settings.LOCAL_MODE:
+        required_secret = settings.TELEGRAM_BOT_WEBHOOK_SECRET
+        if not required_secret:
+            logger.error("Telegram bot webhook secret not configured in production mode")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Telegram bot webhook secret is not configured",
+            )
+        provided_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not provided_secret or not hmac.compare_digest(provided_secret, required_secret):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Telegram webhook secret",
+            )
+
     text = message.get("text", "")
     chat_id = message.get("chat", {}).get("id")
 
@@ -1588,15 +1687,9 @@ async def telegram_bot_webhook(
 
     token_part = text.split(" ", 1)[1].strip()
 
-    import base64
-
-    # Restore padding
-    padded = token_part + "=" * (-len(token_part) % 4)
-    try:
-        user_id_str = base64.urlsafe_b64decode(padded).decode()
-        user_id = UUID(user_id_str)
-    except Exception:
-        logger.warning("Invalid /start token: %s", token_part)
+    user_id = _decode_telegram_bot_link_token(token_part, settings)
+    if user_id is None:
+        logger.warning("Invalid /start token received for Telegram bot webhook")
         return {"ok": True}
 
     result = await db.execute(

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import base64
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import jwt
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -21,6 +22,7 @@ from sqlalchemy.orm import sessionmaker
 from src.adapters.db.models import Base, UserModel
 from src.adapters.telegram.notifier import TelegramNotifier
 from src.api.deps import Settings, get_current_user, get_db, get_settings
+from src.api.routes import _create_telegram_bot_link_token
 from src.core.models import DispatchResult, SubscriptionTier, User
 from src.main import create_app
 
@@ -44,6 +46,8 @@ def _compile_uuid_sqlite(type_, compiler, **kw):
 # ---------------------------------------------------------------------------
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+BOT_WEBHOOK_SECRET = "test-telegram-webhook-secret"
+BOT_LINK_SECRET = "test-telegram-link-secret"
 SAMPLE_USER_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 SAMPLE_USER = User(
     id=SAMPLE_USER_ID,
@@ -92,6 +96,8 @@ async def test_app():
             JWT_SECRET_KEY="test-secret",
             LOCAL_MODE=False,
             TELEGRAM_BOT_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+            TELEGRAM_BOT_WEBHOOK_SECRET=BOT_WEBHOOK_SECRET,
+            TELEGRAM_BOT_LINK_SECRET=BOT_LINK_SECRET,
         )
 
     app = create_app()
@@ -187,7 +193,13 @@ async def test_send_dispatch_summary_no_token():
 @pytest.mark.asyncio
 async def test_telegram_bot_start_links_chat_id(client, session_factory):
     """POST to /webhook/telegram-bot with /start token should store chat_id."""
-    token = base64.urlsafe_b64encode(str(SAMPLE_USER_ID).encode()).decode().rstrip("=")
+    token = _create_telegram_bot_link_token(
+        SAMPLE_USER_ID,
+        Settings(
+            LOCAL_MODE=False,
+            TELEGRAM_BOT_LINK_SECRET=BOT_LINK_SECRET,
+        ),
+    )
 
     resp = await client.post(
         "/api/v1/webhook/telegram-bot",
@@ -198,6 +210,7 @@ async def test_telegram_bot_start_links_chat_id(client, session_factory):
                 "chat": {"id": 987654321},
             },
         },
+        headers={"X-Telegram-Bot-Api-Secret-Token": BOT_WEBHOOK_SECRET},
     )
 
     assert resp.status_code == 200
@@ -227,6 +240,7 @@ async def test_telegram_bot_invalid_token(client):
                 "chat": {"id": 111},
             },
         },
+        headers={"X-Telegram-Bot-Api-Secret-Token": BOT_WEBHOOK_SECRET},
     )
     assert resp.status_code == 200
     assert resp.json().get("linked") is None
@@ -238,8 +252,61 @@ async def test_telegram_bot_no_message(client):
     resp = await client.post(
         "/api/v1/webhook/telegram-bot",
         json={"update_id": 3},
+        headers={"X-Telegram-Bot-Api-Secret-Token": BOT_WEBHOOK_SECRET},
     )
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_webhook_secret_required(client):
+    """In non-local mode, webhook requests without secret header are rejected."""
+    token = _create_telegram_bot_link_token(
+        SAMPLE_USER_ID,
+        Settings(
+            LOCAL_MODE=False,
+            TELEGRAM_BOT_LINK_SECRET=BOT_LINK_SECRET,
+        ),
+    )
+    resp = await client.post(
+        "/api/v1/webhook/telegram-bot",
+        json={
+            "update_id": 4,
+            "message": {
+                "text": f"/start {token}",
+                "chat": {"id": 333},
+            },
+        },
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_wrong_purpose_token_rejected(client):
+    """Tokens with wrong purpose claim must not link chat IDs."""
+    now = datetime.now(timezone.utc)
+    wrong_purpose = jwt.encode(
+        {
+            "sub": str(SAMPLE_USER_ID),
+            "purpose": "not_telegram_bot_link",
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=10)).timestamp()),
+        },
+        BOT_LINK_SECRET,
+        algorithm="HS256",
+    )
+    resp = await client.post(
+        "/api/v1/webhook/telegram-bot",
+        json={
+            "update_id": 5,
+            "message": {
+                "text": f"/start {wrong_purpose}",
+                "chat": {"id": 444},
+            },
+        },
+        headers={"X-Telegram-Bot-Api-Secret-Token": BOT_WEBHOOK_SECRET},
+    )
+    assert resp.status_code == 200
+    assert resp.json().get("linked") is None
 
 
 # ---------------------------------------------------------------------------

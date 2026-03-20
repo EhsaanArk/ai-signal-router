@@ -15,6 +15,7 @@ import sentry_sdk
 
 from src.core.mapper import apply_symbol_mapping, build_webhook_payload
 from src.core.models import DispatchResult, ParsedSignal, RoutingRule
+from src.core.security import validate_outbound_webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,18 @@ class WebhookDispatcher:
             payload.update(rule.risk_overrides)
 
         # 4. POST with retry logic
+        allowed, reason = validate_outbound_webhook_url(rule.destination_webhook_url)
+        if not allowed:
+            msg = f"Unsafe destination webhook URL rejected: {reason}"
+            logger.warning("Rule %s blocked by webhook URL policy: %s", rule.id, reason)
+            return DispatchResult(
+                routing_rule_id=rule.id,
+                status="failed",
+                error_message=msg,
+                webhook_payload=payload,
+                attempt_count=1,
+            )
+
         last_error: str = ""
         for attempt in range(MAX_RETRIES):
             try:

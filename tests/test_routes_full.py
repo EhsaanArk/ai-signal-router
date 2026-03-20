@@ -629,6 +629,50 @@ class TestRoutingRuleUpdateWithSymbolMappings:
         assert update_resp.json()["payload_version"] == "V2"
 
 
+class TestWebhookUrlSecurity:
+    """SSRF protections for user-provided webhook URLs."""
+
+    async def test_create_rule_rejects_private_webhook_url(self, authed_client: AsyncClient):
+        resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100777",
+                "destination_webhook_url": "http://127.0.0.1/hook",
+                "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
+            },
+        )
+        assert resp.status_code == 422
+        assert "Invalid destination webhook URL" in resp.json()["detail"]
+
+    async def test_update_rule_rejects_private_webhook_url(self, authed_client: AsyncClient):
+        create_resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100778",
+                "destination_webhook_url": "https://example.com/hook",
+                "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
+            },
+        )
+        rule_id = create_resp.json()["id"]
+
+        update_resp = await authed_client.put(
+            f"/api/v1/routing-rules/{rule_id}",
+            json={"destination_webhook_url": "https://169.254.169.254/latest/meta-data"},
+        )
+        assert update_resp.status_code == 422
+        assert "Invalid destination webhook URL" in update_resp.json()["detail"]
+
+    async def test_webhook_test_rejects_private_url_with_422(self, authed_client: AsyncClient):
+        resp = await authed_client.post(
+            "/api/v1/webhook/test",
+            json={"url": "https://localhost/test"},
+        )
+        assert resp.status_code == 422
+        assert "Invalid webhook URL" in resp.json()["detail"]
+
+
 # ===========================================================================
 # Signal Logs Tests
 # ===========================================================================

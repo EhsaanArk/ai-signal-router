@@ -126,6 +126,14 @@ class AdminHealthStats(BaseModel):
     active_telegram_sessions: int
 
 
+class AdminDeployHealthResponse(BaseModel):
+    status: str
+    deploy_health: str
+    current: dict[str, Any]
+    pre_deploy_snapshot: dict[str, Any] | None = None
+    comparison: dict[str, Any] | None = None
+
+
 # ---------------------------------------------------------------------------
 # User Management
 # ---------------------------------------------------------------------------
@@ -570,6 +578,61 @@ async def admin_health(
     )
     await cache.set(cache_key, stats.model_dump_json(), ttl_seconds=60)
     return stats
+
+
+@admin_router.get("/deploy-health", response_model=AdminDeployHealthResponse)
+async def admin_deploy_health(
+    _admin: Annotated[User, Depends(get_admin_user)],
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AdminDeployHealthResponse:
+    """Detailed deploy health view with per-user identifiers (admin only)."""
+    from src.adapters.telegram.deploy_snapshot import compare_snapshots, read_pre_deploy_snapshot
+
+    active_sessions = (await db.execute(
+        select(func.count()).select_from(TelegramSessionModel)
+        .where(TelegramSessionModel.is_active.is_(True))
+    )).scalar_one()
+
+    active_session_users = (await db.execute(
+        select(TelegramSessionModel.user_id)
+        .where(TelegramSessionModel.is_active.is_(True))
+    )).scalars().all()
+
+    active_channels = (await db.execute(
+        select(func.count(func.distinct(
+            RoutingRuleModel.source_channel_id
+        ))).where(RoutingRuleModel.is_active.is_(True))
+    )).scalar_one()
+
+    last_signal = (await db.execute(
+        select(SignalLogModel.processed_at)
+        .order_by(SignalLogModel.processed_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    current = {
+        "active_sessions": active_sessions,
+        "connected_listeners": active_sessions,
+        "channels_monitored": active_channels,
+        "user_ids": [str(uid) for uid in active_session_users],
+        "last_signal_at": last_signal.isoformat() if last_signal else None,
+    }
+
+    pre_snapshot = await read_pre_deploy_snapshot(request.app.state.cache)
+    comparison = None
+    deploy_health = "HEALTHY"
+    if pre_snapshot:
+        comparison = compare_snapshots(pre_snapshot, current)
+        deploy_health = comparison["verdict"]
+
+    return AdminDeployHealthResponse(
+        status="ok",
+        deploy_health=deploy_health,
+        current=current,
+        pre_deploy_snapshot=pre_snapshot,
+        comparison=comparison,
+    )
 
 
 # ---------------------------------------------------------------------------

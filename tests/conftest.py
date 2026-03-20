@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+from src.api.deps import _trusted_proxy_networks, limiter
 from src.core.models import ParsedSignal, RawSignal, RoutingRule
 
 
@@ -88,3 +89,29 @@ def sample_raw_signal() -> RawSignal:
         raw_message="EURUSD BUY @ 1.1000\nSL: 1.0950\nTP1: 1.1050\nTP2: 1.1100",
         message_id=42,
     )
+
+
+@pytest.fixture(autouse=True)
+def reset_limiter_state():
+    """Isolate per-test rate-limit counters, route config, and proxy cache."""
+    def _reset() -> None:
+        _trusted_proxy_networks.cache_clear()
+        if hasattr(limiter, "reset"):
+            limiter.reset()
+        storage = getattr(limiter, "_storage", None)
+        if storage and hasattr(storage, "reset"):
+            storage.reset()
+        for attr in (
+            "_route_limits",
+            "_dynamic_route_limits",
+            "_exempt_routes",
+            "_application_limits",
+            "_default_limits",
+        ):
+            collection = getattr(limiter, attr, None)
+            if hasattr(collection, "clear"):
+                collection.clear()
+
+    _reset()
+    yield
+    _reset()

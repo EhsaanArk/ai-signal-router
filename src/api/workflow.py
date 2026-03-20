@@ -8,13 +8,15 @@ endpoint) and runs the full parse → route → dispatch pipeline.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import inspect
 import logging
 from typing import Annotated
 
 import sentry_sdk
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import ParserConfigModel, RoutingRuleModel, SignalLogModel
@@ -28,6 +30,40 @@ logger = logging.getLogger(__name__)
 tracer = get_tracer("signal.pipeline")
 
 workflow_router = APIRouter(tags=["workflow"])
+
+
+def _message_lock_key(raw_signal: RawSignal) -> int:
+    """Build a stable 64-bit advisory lock key for a message."""
+    material = (
+        f"{raw_signal.user_id}:{raw_signal.channel_id}:{raw_signal.message_id}"
+    ).encode("utf-8")
+    digest = hashlib.blake2b(material, digest_size=8).digest()
+    return int.from_bytes(digest, byteorder="big", signed=True)
+
+
+async def _acquire_message_lock(db: AsyncSession, raw_signal: RawSignal) -> bool:
+    """Acquire a transaction-scoped advisory lock for this message if possible."""
+    if not raw_signal.message_id:
+        return True
+
+    bind = None
+    try:
+        bind_getter = getattr(db, "get_bind", None)
+        if callable(bind_getter):
+            maybe_bind = bind_getter()
+            bind = await maybe_bind if inspect.isawaitable(maybe_bind) else maybe_bind
+    except Exception:
+        return True
+
+    dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
+    if dialect_name != "postgresql":
+        return True
+
+    result = await db.execute(
+        text("SELECT pg_try_advisory_xact_lock(:lock_key)"),
+        {"lock_key": _message_lock_key(raw_signal)},
+    )
+    return bool(result.scalar_one())
 
 
 async def _get_parser_config(
@@ -113,6 +149,16 @@ async def process_signal(
     #          backfill or QStash retry)
     # ------------------------------------------------------------------
     if raw_signal.message_id:
+        locked = await _acquire_message_lock(db, raw_signal)
+        if not locked:
+            logger.info(
+                "Duplicate in-flight signal skipped: channel=%s message_id=%s user=%s",
+                raw_signal.channel_id,
+                raw_signal.message_id,
+                raw_signal.user_id,
+            )
+            return []
+
         existing = await db.execute(
             select(SignalLogModel.id).where(
                 SignalLogModel.channel_id == raw_signal.channel_id,
