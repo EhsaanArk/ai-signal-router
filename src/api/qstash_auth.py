@@ -14,7 +14,8 @@ import logging
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 
 from src.api.deps import Settings, get_settings
 
@@ -71,7 +72,7 @@ async def verify_qstash_signature(
                 "QStash body hash mismatch: claim=%s b64=%s hex=%s",
                 claim_hash, body_hash_b64, body_hash_hex,
             )
-        except JWTError:
+        except InvalidTokenError:
             continue
 
     raise HTTPException(

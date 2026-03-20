@@ -44,6 +44,16 @@ def _validate_production_settings(settings) -> None:
     if settings.TELEGRAM_API_ID == 0:
         errors.append("TELEGRAM_API_ID is not set — Telegram auth will fail")
 
+    if settings.TELEGRAM_BOT_TOKEN:
+        if not settings.TELEGRAM_BOT_WEBHOOK_SECRET:
+            errors.append(
+                "TELEGRAM_BOT_WEBHOOK_SECRET is required when TELEGRAM_BOT_TOKEN is set"
+            )
+        if not settings.TELEGRAM_BOT_LINK_SECRET:
+            errors.append(
+                "TELEGRAM_BOT_LINK_SECRET is required when TELEGRAM_BOT_TOKEN is set"
+            )
+
     if errors:
         for err in errors:
             logger.error("PRODUCTION CONFIG ERROR: %s", err)
@@ -282,7 +292,7 @@ def create_app() -> FastAPI:
 
         Returns current session/listener/channel counts plus a comparison
         against the pre-shutdown snapshot saved by the previous container.
-        No PII — only aggregate counts and UUIDs.
+        Public response contains only aggregate, non-PII information.
         """
         from sqlalchemy import func, select as sa_select
 
@@ -329,7 +339,7 @@ def create_app() -> FastAPI:
                 content={"status": "unhealthy", "error": str(exc)},
             )
 
-        current = {
+        current_internal = {
             "active_sessions": active_sessions,
             "connected_listeners": active_sessions,  # DB reflects connected state
             "channels_monitored": active_channels,
@@ -344,15 +354,43 @@ def create_app() -> FastAPI:
         comparison = None
         deploy_health = "HEALTHY"
         if pre_snapshot:
-            comparison = compare_snapshots(pre_snapshot, current)
+            comparison = compare_snapshots(pre_snapshot, current_internal)
             deploy_health = comparison["verdict"]
+
+        def _sanitize_snapshot(snapshot: dict | None) -> dict | None:
+            if snapshot is None:
+                return None
+            return {
+                "active_sessions": snapshot.get("active_sessions", 0),
+                "connected_listeners": snapshot.get("connected_listeners", 0),
+                "channels_monitored": snapshot.get("channels_monitored", 0),
+                "timestamp": snapshot.get("timestamp"),
+                "last_signal_at": snapshot.get("last_signal_at"),
+            }
+
+        def _sanitize_comparison(data: dict | None) -> dict | None:
+            if data is None:
+                return None
+            return {
+                "verdict": data.get("verdict"),
+                "sessions_before": data.get("sessions_before", 0),
+                "sessions_after": data.get("sessions_after", 0),
+                "sessions_delta": data.get("sessions_delta", 0),
+                "connected_before": data.get("connected_before", 0),
+                "connected_after": data.get("connected_after", 0),
+                "channels_before": data.get("channels_before", 0),
+                "channels_after": data.get("channels_after", 0),
+                "lost_user_count": len(data.get("lost_user_ids", [])),
+                "new_user_count": len(data.get("new_user_ids", [])),
+                "pre_deploy_timestamp": data.get("pre_deploy_timestamp"),
+            }
 
         return {
             "status": "ok",
             "deploy_health": deploy_health,
-            "current": current,
-            "pre_deploy_snapshot": pre_snapshot,
-            "comparison": comparison,
+            "current": _sanitize_snapshot(current_internal),
+            "pre_deploy_snapshot": _sanitize_snapshot(pre_snapshot),
+            "comparison": _sanitize_comparison(comparison),
         }
 
     # ------------------------------------------------------------------

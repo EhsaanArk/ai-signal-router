@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
-from jose import jwt
+import jwt
 
 SIGNING_KEY = "test-signing-key-current"
 NEXT_SIGNING_KEY = "test-signing-key-next"

@@ -253,3 +253,71 @@ async def test_retry_on_network_error_then_success(sample_parsed_signal, sample_
 
     assert result.status == "success"
     assert result.attempt_count == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_blocks_unsafe_destination(sample_parsed_signal, sample_routing_rule_v1):
+    """Unsafe destination hosts should be rejected before any HTTP call."""
+    sample_routing_rule_v1.destination_webhook_url = "http://127.0.0.1/webhook"
+
+    dispatcher = WebhookDispatcher()
+    dispatcher._client = AsyncMock(spec=httpx.AsyncClient)
+
+    result = await dispatcher.dispatch(sample_parsed_signal, sample_routing_rule_v1)
+
+    assert result.status == "failed"
+    assert "Unsafe destination webhook URL rejected" in (result.error_message or "")
+    dispatcher._client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_revalidates_dns_before_post(sample_parsed_signal, sample_routing_rule_v1):
+    """Dispatcher should re-validate DNS on each dispatch attempt (defense-in-depth)."""
+    import ipaddress
+
+    public_ip = ipaddress.ip_address("93.184.216.34")
+    sample_routing_rule_v1.destination_webhook_url = "https://example.com/webhook"
+
+    mock_response = AsyncMock()
+    mock_response.is_success = True
+    mock_response.status_code = 200
+
+    dispatcher = WebhookDispatcher()
+    dispatcher._client = AsyncMock(spec=httpx.AsyncClient)
+    dispatcher._client.post = AsyncMock(return_value=mock_response)
+
+    with patch(
+        "src.adapters.webhook.dispatcher.validate_outbound_webhook_url",
+        return_value=(True, None, {public_ip}),
+    ) as mock_validate:
+        result = await dispatcher.dispatch(sample_parsed_signal, sample_routing_rule_v1)
+
+    assert result.status == "success"
+    # validate_outbound_webhook_url called twice: once for initial gate, once for re-check
+    assert mock_validate.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_dns_rebind_on_recheck(sample_parsed_signal, sample_routing_rule_v1):
+    """If DNS changes to a private IP between initial check and dispatch, reject."""
+    import ipaddress
+
+    public_ip = ipaddress.ip_address("93.184.216.34")
+    sample_routing_rule_v1.destination_webhook_url = "https://example.com/webhook"
+
+    dispatcher = WebhookDispatcher()
+    dispatcher._client = AsyncMock(spec=httpx.AsyncClient)
+
+    # First call passes (initial gate), second call fails (re-check detects rebind)
+    with patch(
+        "src.adapters.webhook.dispatcher.validate_outbound_webhook_url",
+        side_effect=[
+            (True, None, {public_ip}),
+            (False, "Webhook target resolves to a private or restricted IP address", None),
+        ],
+    ):
+        result = await dispatcher.dispatch(sample_parsed_signal, sample_routing_rule_v1)
+
+    assert result.status == "failed"
+    assert "re-validation" in (result.error_message or "")
+    dispatcher._client.post.assert_not_called()
