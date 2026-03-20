@@ -102,6 +102,43 @@ def _user_me_from_row(row: UserModel) -> UserMeResponse:
     )
 
 
+async def _find_valid_token_row(
+    db: AsyncSession,
+    token_model: type[PasswordResetTokenModel] | type[EmailVerificationTokenModel],
+    raw_token: str,
+) -> PasswordResetTokenModel | EmailVerificationTokenModel | None:
+    """Resolve token via lookup hash with deterministic legacy fallback for old rows."""
+    now = datetime.now(timezone.utc)
+    token_lookup_hash = sha256_hex(raw_token)
+    result = await db.execute(
+        select(token_model).where(
+            token_model.token_lookup_hash == token_lookup_hash,
+            token_model.expires_at > now,
+            token_model.used_at.is_(None),
+        ).limit(1)
+    )
+    matched_token = result.scalar_one_or_none()
+    if matched_token is not None:
+        return matched_token
+
+    # Backward compatibility for legacy rows created before token_lookup_hash.
+    legacy_rows = (
+        await db.execute(
+            select(token_model).where(
+                token_model.token_lookup_hash.is_(None),
+                token_model.expires_at > now,
+                token_model.used_at.is_(None),
+            )
+            .order_by(token_model.created_at.desc())
+            .limit(_LEGACY_TOKEN_SCAN_LIMIT)
+        )
+    ).scalars().all()
+    for row in legacy_rows:
+        if pwd_context.verify(raw_token, row.token_hash):
+            return row
+    return None
+
+
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
@@ -475,33 +512,11 @@ async def reset_password(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
     """Reset password using a valid token."""
-    token_lookup_hash = sha256_hex(body.token)
-    result = await db.execute(
-        select(PasswordResetTokenModel).where(
-            PasswordResetTokenModel.token_lookup_hash == token_lookup_hash,
-            PasswordResetTokenModel.expires_at > datetime.now(timezone.utc),
-            PasswordResetTokenModel.used_at.is_(None),
-        ).limit(1)
+    matched_token = await _find_valid_token_row(
+        db=db,
+        token_model=PasswordResetTokenModel,
+        raw_token=body.token,
     )
-    matched_token = result.scalar_one_or_none()
-
-    # Backward compatibility for legacy rows created before token_lookup_hash.
-    if matched_token is None:
-        legacy_rows = (
-            await db.execute(
-                select(PasswordResetTokenModel).where(
-                    PasswordResetTokenModel.token_lookup_hash.is_(None),
-                    PasswordResetTokenModel.expires_at > datetime.now(timezone.utc),
-                    PasswordResetTokenModel.used_at.is_(None),
-                )
-                .order_by(PasswordResetTokenModel.created_at.desc())
-                .limit(_LEGACY_TOKEN_SCAN_LIMIT)
-            )
-        ).scalars().all()
-        for row in legacy_rows:
-            if pwd_context.verify(body.token, row.token_hash):
-                matched_token = row
-                break
 
     if matched_token is None or not pwd_context.verify(body.token, matched_token.token_hash):
         raise HTTPException(
@@ -534,33 +549,11 @@ async def verify_email(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MessageResponse:
     """Verify a user's email using the token from the verification link."""
-    token_lookup_hash = sha256_hex(body.token)
-    result = await db.execute(
-        select(EmailVerificationTokenModel).where(
-            EmailVerificationTokenModel.token_lookup_hash == token_lookup_hash,
-            EmailVerificationTokenModel.expires_at > datetime.now(timezone.utc),
-            EmailVerificationTokenModel.used_at.is_(None),
-        ).limit(1)
+    matched_token = await _find_valid_token_row(
+        db=db,
+        token_model=EmailVerificationTokenModel,
+        raw_token=body.token,
     )
-    matched_token = result.scalar_one_or_none()
-
-    # Backward compatibility for legacy rows created before token_lookup_hash.
-    if matched_token is None:
-        legacy_rows = (
-            await db.execute(
-                select(EmailVerificationTokenModel).where(
-                    EmailVerificationTokenModel.token_lookup_hash.is_(None),
-                    EmailVerificationTokenModel.expires_at > datetime.now(timezone.utc),
-                    EmailVerificationTokenModel.used_at.is_(None),
-                )
-                .order_by(EmailVerificationTokenModel.created_at.desc())
-                .limit(_LEGACY_TOKEN_SCAN_LIMIT)
-            )
-        ).scalars().all()
-        for row in legacy_rows:
-            if pwd_context.verify(body.token, row.token_hash):
-                matched_token = row
-                break
 
     if matched_token is None or not pwd_context.verify(body.token, matched_token.token_hash):
         raise HTTPException(
