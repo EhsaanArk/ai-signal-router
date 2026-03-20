@@ -690,6 +690,8 @@ class ModelConfigUpdate(BaseModel):
 class TestParseRequest(BaseModel):
     raw_message: str = Field(..., min_length=1, max_length=5000)
     custom_instructions: str | None = None
+    include_mapping: bool = False
+    routing_rule_id: str | None = None
 
 
 class ValidationCheck(BaseModel):
@@ -959,7 +961,13 @@ async def test_parse_signal(
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TestParseResponse:
-    """Dry-run parse a raw signal message. No signal log or webhook dispatch."""
+    """Dry-run parse a raw signal message. No signal log or webhook dispatch.
+
+    When ``include_mapping`` is True and a ``routing_rule_id`` is provided,
+    the mapper step is also run, producing the ``webhook_payload`` that would
+    be sent to SageMaster. This enables full pipeline dry-run testing without
+    actually dispatching.
+    """
     import uuid as _uuid
 
     from src.adapters.openai import OpenAISignalParser
@@ -989,11 +997,78 @@ async def test_parse_signal(
     parsed_dict = parsed.model_dump()
     checks = _validate_parsed_signal(parsed)
 
+    # Optional mapping step — dry-run the full pipeline
+    webhook_payload: dict[str, Any] | None = None
+    if body.include_mapping and parsed.is_valid_signal:
+        from src.core.mapper import apply_symbol_mapping, build_webhook_payload
+        from src.core.models import RoutingRule
+
+        if body.routing_rule_id:
+            rule_row = (await db.execute(
+                select(RoutingRuleModel).where(
+                    RoutingRuleModel.id == _uuid.UUID(body.routing_rule_id)
+                )
+            )).scalar_one_or_none()
+
+            if rule_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Routing rule not found for mapping dry-run",
+                )
+
+            rule = RoutingRule(
+                id=rule_row.id,
+                user_id=rule_row.user_id,
+                source_channel_id=rule_row.source_channel_id,
+                destination_webhook_url=rule_row.destination_webhook_url,
+                payload_version=rule_row.payload_version,
+                symbol_mappings=rule_row.symbol_mappings or {},
+                risk_overrides=rule_row.risk_overrides or {},
+                webhook_body_template=rule_row.webhook_body_template,
+                destination_type=rule_row.destination_type,
+            )
+        else:
+            # Use a minimal default rule for mapping preview
+            rule = RoutingRule(
+                id=_uuid.UUID("00000000-0000-0000-0000-000000000000"),
+                user_id=_uuid.UUID("00000000-0000-0000-0000-000000000000"),
+                source_channel_id="test-sandbox",
+                destination_webhook_url="https://example.com/webhook",
+                payload_version="V2",
+                webhook_body_template={
+                    "type": "",
+                    "assistId": "dry-run-preview",
+                    "source": "",
+                    "symbol": "",
+                    "date": "",
+                    "price": "",
+                    "takeProfits": [],
+                    "stopLoss": None,
+                },
+                destination_type="sagemaster_forex",
+            )
+
+        mapped_signal = apply_symbol_mapping(parsed, rule)
+        try:
+            webhook_payload = build_webhook_payload(mapped_signal, rule)
+            checks.append(ValidationCheck(
+                name="Webhook Payload",
+                passed=True,
+                message=f"Payload built successfully with {len(webhook_payload)} fields",
+            ))
+        except ValueError as exc:
+            checks.append(ValidationCheck(
+                name="Webhook Payload",
+                passed=False,
+                message=f"Mapping failed: {exc}",
+            ))
+
     return TestParseResponse(
         parsed=parsed_dict,
         model_used=model_name,
         temperature_used=temperature,
         validation_checks=checks,
+        webhook_payload=webhook_payload,
     )
 
 
