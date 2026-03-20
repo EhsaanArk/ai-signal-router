@@ -54,7 +54,7 @@ function getPipelineSteps(log: SignalLogResponse, channelName: string | null): P
   }
 
   steps.push({
-    label: "Signal Parsed by AI",
+    label: "Sage Intelligence",
     detail: log.parsed_data
       ? `${(log.parsed_data.action as string) || "entry"} ${(log.parsed_data.symbol as string) || ""}`
       : "Parsing completed",
@@ -163,7 +163,7 @@ export function LogDetailRow({ log, colSpan = 3 }: Props) {
             <div>
               <div className="flex items-center justify-between mb-1">
                 <p className="font-medium text-xs text-muted-foreground">
-                  What the AI Parsed
+                  Signal Analysis
                 </p>
                 <Button
                   variant="ghost"
