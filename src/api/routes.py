@@ -50,6 +50,24 @@ _BOT_LINK_PURPOSE = "telegram_bot_link"
 _BOT_LINK_EXP_MINUTES = 30
 _LEGACY_TOKEN_SCAN_LIMIT = 500
 
+
+def _build_verification_email_html(verify_link: str, welcome_line: str = "") -> str:
+    """Build styled HTML for email verification with a clickable button and fallback URL."""
+    intro = f"<p>{welcome_line}</p>" if welcome_line else ""
+    return (
+        '<!DOCTYPE html><html><body style="font-family:sans-serif;color:#333;'
+        'max-width:480px;margin:0 auto;padding:20px">'
+        f"{intro}"
+        "<p>Please verify your email address by clicking the button below:</p>"
+        f'<p style="text-align:center;margin:24px 0"><a href="{verify_link}" target="_blank" '
+        'style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;'
+        'border-radius:6px;text-decoration:none;font-weight:600">Verify Email</a></p>'
+        '<p style="font-size:13px;color:#666">Or copy and paste this link into your browser:</p>'
+        f'<p style="font-size:12px;word-break:break-all;color:#2563eb">{verify_link}</p>'
+        '<p style="font-size:13px;color:#666">This link expires in 24 hours.</p>'
+        "</body></html>"
+    )
+
 # ============================================================================
 # Request / Response schemas
 # ============================================================================
@@ -433,11 +451,8 @@ async def register(
                 "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                 "to": [body.email],
                 "subject": "Verify your email",
-                "html": (
-                    "<p>Welcome to Sage Radar AI! Please verify your email address "
-                    "by clicking the link below.</p>"
-                    f'<p><a href="{verify_link}">Verify Email</a></p>'
-                    "<p>This link expires in 24 hours.</p>"
+                "html": _build_verification_email_html(
+                    verify_link, "Welcome to Sage Radar AI!"
                 ),
             })
         except Exception as exc:
@@ -615,11 +630,7 @@ async def resend_verification(
                 "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                 "to": [current_user.email],
                 "subject": "Verify your email",
-                "html": (
-                    "<p>Please verify your email address by clicking the link below.</p>"
-                    f'<p><a href="{verify_link}">Verify Email</a></p>'
-                    "<p>This link expires in 24 hours.</p>"
-                ),
+                "html": _build_verification_email_html(verify_link),
             })
         except Exception as exc:
             logger.exception("Failed to send verification email")
