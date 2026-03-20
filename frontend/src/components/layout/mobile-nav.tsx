@@ -93,6 +93,7 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
                   { path: "/admin/signals", label: "All Signals", icon: Radio },
                   { path: "/admin/system-rules", label: "System Rules", icon: BookOpen },
                   { path: "/admin/parser", label: "AI Parser", icon: Brain },
+                  { path: "/admin/settings", label: "Settings", icon: Settings },
                 ].map((item) => {
                   const isActive = location.pathname.startsWith(item.path);
                   return (
