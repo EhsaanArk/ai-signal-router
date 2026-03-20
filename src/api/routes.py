@@ -48,6 +48,7 @@ router = APIRouter(prefix="/api/v1", tags=["v1"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _BOT_LINK_PURPOSE = "telegram_bot_link"
 _BOT_LINK_EXP_MINUTES = 30
+_LEGACY_TOKEN_SCAN_LIMIT = 500
 
 # ============================================================================
 # Request / Response schemas
@@ -492,7 +493,9 @@ async def reset_password(
                     PasswordResetTokenModel.token_lookup_hash.is_(None),
                     PasswordResetTokenModel.expires_at > datetime.now(timezone.utc),
                     PasswordResetTokenModel.used_at.is_(None),
-                ).limit(50)
+                )
+                .order_by(PasswordResetTokenModel.created_at.desc())
+                .limit(_LEGACY_TOKEN_SCAN_LIMIT)
             )
         ).scalars().all()
         for row in legacy_rows:
@@ -549,7 +552,9 @@ async def verify_email(
                     EmailVerificationTokenModel.token_lookup_hash.is_(None),
                     EmailVerificationTokenModel.expires_at > datetime.now(timezone.utc),
                     EmailVerificationTokenModel.used_at.is_(None),
-                ).limit(50)
+                )
+                .order_by(EmailVerificationTokenModel.created_at.desc())
+                .limit(_LEGACY_TOKEN_SCAN_LIMIT)
             )
         ).scalars().all()
         for row in legacy_rows:
@@ -1207,10 +1212,14 @@ async def create_routing_rule(
     body: RoutingRuleCreate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
     cache=Depends(get_cache),
 ) -> RoutingRuleResponse:
     """Create a new routing rule after verifying the user's tier limit."""
-    allowed_url, reason = validate_outbound_webhook_url(body.destination_webhook_url)
+    allowed_url, reason = validate_outbound_webhook_url(
+        body.destination_webhook_url,
+        local_mode=settings.LOCAL_MODE,
+    )
     if not allowed_url:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1290,6 +1299,7 @@ async def update_routing_rule(
     body: RoutingRuleUpdate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
     cache=Depends(get_cache),
 ) -> RoutingRuleResponse:
     """Update a routing rule by ID, scoped to the current user."""
@@ -1306,7 +1316,10 @@ async def update_routing_rule(
     update_data = body.model_dump(exclude_unset=True)
 
     effective_url = update_data.get("destination_webhook_url", row.destination_webhook_url)
-    allowed_url, reason = validate_outbound_webhook_url(effective_url)
+    allowed_url, reason = validate_outbound_webhook_url(
+        effective_url,
+        local_mode=settings.LOCAL_MODE,
+    )
     if not allowed_url:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1364,13 +1377,17 @@ async def delete_routing_rule(
 async def test_webhook(
     body: TestWebhookRequest,
     current_user: Annotated[User, Depends(get_current_user)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> TestWebhookResponse:
     """Send a test ping to a webhook URL to verify connectivity."""
     import httpx
 
     try:
         url = body.url
-        allowed, reason = validate_outbound_webhook_url(url)
+        allowed, reason = validate_outbound_webhook_url(
+            url,
+            local_mode=settings.LOCAL_MODE,
+        )
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

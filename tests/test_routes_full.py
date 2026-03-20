@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1030,6 +1030,89 @@ class TestUserCache:
         # Cache should be busted
         cached = await cache.get(f"user:{SAMPLE_USER_ID}")
         assert cached is None
+
+
+class TestLegacyTokenFallback:
+    """Legacy token fallback should remain deterministic for large token sets."""
+
+    async def test_verify_email_legacy_fallback_scans_beyond_50_rows(self, test_app):
+        app, session_factory = test_app
+        from src.adapters.db.models import EmailVerificationTokenModel
+
+        valid_token = "legacy-verify-target"
+        now = datetime.now(timezone.utc)
+
+        async with session_factory() as session:
+            for i in range(55):
+                token_value = valid_token if i == 0 else f"legacy-verify-{i}"
+                session.add(
+                    EmailVerificationTokenModel(
+                        user_id=SAMPLE_USER_ID,
+                        token_hash=token_value,
+                        token_lookup_hash=None,
+                        expires_at=now + timedelta(hours=1),
+                        created_at=now + timedelta(seconds=i),
+                    )
+                )
+            await session.commit()
+
+        with patch(
+            "src.api.routes.pwd_context.verify",
+            side_effect=lambda raw, stored: raw == stored,
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/api/v1/auth/verify-email",
+                    json={"token": valid_token},
+                )
+
+        assert resp.status_code == 200
+
+    async def test_reset_password_legacy_fallback_scans_beyond_50_rows(self, test_app):
+        app, session_factory = test_app
+        from src.adapters.db.models import PasswordResetTokenModel, UserModel
+
+        valid_token = "legacy-reset-target"
+        now = datetime.now(timezone.utc)
+
+        async with session_factory() as session:
+            for i in range(55):
+                token_value = valid_token if i == 0 else f"legacy-reset-{i}"
+                session.add(
+                    PasswordResetTokenModel(
+                        user_id=SAMPLE_USER_ID,
+                        token_hash=token_value,
+                        token_lookup_hash=None,
+                        expires_at=now + timedelta(hours=1),
+                        created_at=now + timedelta(seconds=i),
+                    )
+                )
+            await session.commit()
+
+        with patch(
+            "src.api.routes.pwd_context.verify",
+            side_effect=lambda raw, stored: raw == stored,
+        ), patch(
+            "src.api.routes.pwd_context.hash",
+            side_effect=lambda value: f"hashed:{value}",
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/api/v1/auth/reset-password",
+                    json={"token": valid_token, "new_password": "newpass123"},
+                )
+
+        assert resp.status_code == 200
+
+        async with session_factory() as session:
+            from sqlalchemy import select
+
+            user_row = (
+                await session.execute(select(UserModel).where(UserModel.id == SAMPLE_USER_ID))
+            ).scalar_one()
+            assert user_row.password_hash == "hashed:newpass123"
 
 
 class TestTelegramStatusCache:

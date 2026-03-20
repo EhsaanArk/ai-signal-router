@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import ipaddress
 import logging
-import os
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -33,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 @lru_cache
 def _trusted_proxy_networks() -> tuple[ipaddress._BaseNetwork, ...]:
-    """Parse TRUSTED_PROXY_IPS env into CIDR networks."""
-    raw = os.environ.get("TRUSTED_PROXY_IPS", "")
+    """Parse TRUSTED_PROXY_IPS settings into CIDR networks."""
+    raw = get_settings().TRUSTED_PROXY_IPS or ""
     networks: list[ipaddress._BaseNetwork] = []
     for part in raw.split(","):
         value = part.strip()
@@ -62,18 +61,32 @@ def _is_trusted_proxy(remote_ip: str) -> bool:
 
 
 def _get_real_ip(request: Request) -> str:
-    """Extract client IP, trusting X-Forwarded-For only from trusted proxies."""
+    """Extract client IP, trusting proxy headers only from trusted peers."""
     remote_ip = request.client.host if request.client else "127.0.0.1"
 
     if _is_trusted_proxy(remote_ip):
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
-            candidate = forwarded.split(",")[0].strip()
-            try:
-                ipaddress.ip_address(candidate)
-                return candidate
-            except ValueError:
-                logger.debug("Ignoring invalid X-Forwarded-For value: %s", candidate)
+            parsed_chain: list[str] = []
+            for part in forwarded.split(","):
+                candidate = part.strip()
+                if not candidate:
+                    continue
+                try:
+                    ipaddress.ip_address(candidate)
+                    parsed_chain.append(candidate)
+                except ValueError:
+                    logger.debug("Ignoring invalid X-Forwarded-For value: %s", candidate)
+
+            if parsed_chain:
+                # Remove trusted proxy hops from the right side of the chain.
+                while parsed_chain and _is_trusted_proxy(parsed_chain[-1]):
+                    parsed_chain.pop()
+
+                if parsed_chain:
+                    # Use the closest untrusted hop (right-most remaining IP)
+                    # to prevent spoofing via forged left-most values.
+                    return parsed_chain[-1]
 
     return remote_ip
 

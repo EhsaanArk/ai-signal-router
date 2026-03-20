@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from src.api.deps import _trusted_proxy_networks, limiter
+from src.api.deps import _trusted_proxy_networks, get_settings, limiter
 from src.core.models import ParsedSignal, RawSignal, RoutingRule
 
 
@@ -95,6 +95,7 @@ def sample_raw_signal() -> RawSignal:
 def reset_limiter_state():
     """Isolate per-test rate-limit counters, route config, and proxy cache."""
     def _reset() -> None:
+        get_settings.cache_clear()
         _trusted_proxy_networks.cache_clear()
         if hasattr(limiter, "reset"):
             limiter.reset()

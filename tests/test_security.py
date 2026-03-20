@@ -1,6 +1,7 @@
 """Tests for src.core.security — AES-256-GCM encrypt/decrypt utilities."""
 
 import base64
+import ipaddress
 
 import pytest
 from cryptography.exceptions import InvalidTag
@@ -87,10 +88,11 @@ def test_auto_decrypt_fernet_fallback():
         "https://[::1]/hook",
         "https://[fd00::1]/hook",
         "https://metadata.google.internal/hook",
+        "http://localhost./hook",
     ],
 )
 def test_validate_outbound_webhook_url_blocks_private_targets(url: str):
-    allowed, reason = validate_outbound_webhook_url(url)
+    allowed, reason = validate_outbound_webhook_url(url, local_mode=False)
     assert allowed is False
     assert reason
 
@@ -98,11 +100,63 @@ def test_validate_outbound_webhook_url_blocks_private_targets(url: str):
 @pytest.mark.parametrize(
     "url",
     [
-        "https://example.com/webhook",
-        "http://api.sagemaster.io/hook",
+        "https://93.184.216.34/webhook",
+        "http://1.1.1.1/hook",
     ],
 )
 def test_validate_outbound_webhook_url_allows_public_targets(url: str):
-    allowed, reason = validate_outbound_webhook_url(url)
+    allowed, reason = validate_outbound_webhook_url(url, local_mode=False)
+    assert allowed is True
+    assert reason is None
+
+
+def test_validate_outbound_webhook_url_blocks_hostname_resolving_to_private_ip(monkeypatch):
+    monkeypatch.setattr(
+        "src.core.security._resolve_host_ips",
+        lambda host, timeout_seconds=2.0: ({ipaddress.ip_address("127.0.0.1")}, None),
+    )
+    allowed, reason = validate_outbound_webhook_url(
+        "https://public.example/webhook",
+        local_mode=False,
+    )
+    assert allowed is False
+    assert reason
+
+
+def test_validate_outbound_webhook_url_allows_hostname_resolving_to_public_ip(monkeypatch):
+    monkeypatch.setattr(
+        "src.core.security._resolve_host_ips",
+        lambda host, timeout_seconds=2.0: ({ipaddress.ip_address("93.184.216.34")}, None),
+    )
+    allowed, reason = validate_outbound_webhook_url(
+        "https://public.example/webhook",
+        local_mode=False,
+    )
+    assert allowed is True
+    assert reason is None
+
+
+def test_validate_outbound_webhook_url_fails_closed_on_dns_error_in_non_local(monkeypatch):
+    monkeypatch.setattr(
+        "src.core.security._resolve_host_ips",
+        lambda host, timeout_seconds=2.0: (set(), "Unable to resolve host"),
+    )
+    allowed, reason = validate_outbound_webhook_url(
+        "https://public.example/webhook",
+        local_mode=False,
+    )
+    assert allowed is False
+    assert reason
+
+
+def test_validate_outbound_webhook_url_fails_open_on_dns_error_in_local_mode(monkeypatch):
+    monkeypatch.setattr(
+        "src.core.security._resolve_host_ips",
+        lambda host, timeout_seconds=2.0: (set(), "Unable to resolve host"),
+    )
+    allowed, reason = validate_outbound_webhook_url(
+        "https://public.example/webhook",
+        local_mode=True,
+    )
     assert allowed is True
     assert reason is None

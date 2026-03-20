@@ -9,9 +9,11 @@ from the ``ENCRYPTION_KEY`` environment variable (URL-safe base64-encoded
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import hashlib
 import ipaddress
 import os
+import socket
 from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -31,6 +33,8 @@ _BLOCKED_METADATA_IPS = {
     ipaddress.ip_address("169.254.169.254"),
     ipaddress.ip_address("100.100.100.200"),
 }
+_DNS_TIMEOUT_SECONDS = 2.0
+_DNS_RESOLVER_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="webhook-dns")
 
 
 def generate_key() -> bytes:
@@ -163,7 +167,49 @@ def _is_blocked_ip(ip_obj: ipaddress._BaseAddress) -> bool:
     )
 
 
-def validate_outbound_webhook_url(url: str) -> tuple[bool, str | None]:
+def _resolve_host_ips(
+    host: str,
+    timeout_seconds: float = _DNS_TIMEOUT_SECONDS,
+) -> tuple[set[ipaddress._BaseAddress], str | None]:
+    """Resolve host to IPs with a bounded timeout."""
+
+    def _lookup() -> set[str]:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        return {info[4][0] for info in infos if info[4]}
+
+    try:
+        ip_values = _DNS_RESOLVER_POOL.submit(_lookup).result(timeout=timeout_seconds)
+    except FuturesTimeoutError:
+        return set(), "DNS resolution timed out"
+    except socket.gaierror:
+        return set(), "Unable to resolve host"
+    except Exception:
+        return set(), "Unable to resolve host"
+
+    resolved: set[ipaddress._BaseAddress] = set()
+    for value in ip_values:
+        try:
+            resolved.add(ipaddress.ip_address(value))
+        except ValueError:
+            continue
+
+    if not resolved:
+        return set(), "Unable to resolve host"
+    return resolved, None
+
+
+def _is_local_mode(local_mode: bool | None) -> bool:
+    """Resolve local mode from explicit argument or environment."""
+    if local_mode is not None:
+        return local_mode
+    return os.environ.get("LOCAL_MODE", "true").lower() in ("true", "1", "yes")
+
+
+def validate_outbound_webhook_url(
+    url: str,
+    *,
+    local_mode: bool | None = None,
+) -> tuple[bool, str | None]:
     """Validate a user-provided webhook URL against SSRF-sensitive targets."""
     try:
         parsed = urlparse(url)
@@ -173,7 +219,7 @@ def validate_outbound_webhook_url(url: str) -> tuple[bool, str | None]:
     if parsed.scheme not in _ALLOWED_WEBHOOK_SCHEMES:
         return False, "URL must use http or https"
 
-    host = (parsed.hostname or "").strip().lower()
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
     if not host:
         return False, "URL must include a valid host"
 
@@ -187,5 +233,14 @@ def validate_outbound_webhook_url(url: str) -> tuple[bool, str | None]:
 
     if ip_obj and _is_blocked_ip(ip_obj):
         return False, "Webhook target resolves to a private or restricted IP address"
+
+    if ip_obj is None:
+        resolved_ips, resolve_error = _resolve_host_ips(host)
+        if resolve_error:
+            if _is_local_mode(local_mode):
+                return True, None
+            return False, "Webhook host could not be resolved safely"
+        if any(_is_blocked_ip(resolved_ip) for resolved_ip in resolved_ips):
+            return False, "Webhook target resolves to a private or restricted IP address"
 
     return True, None
