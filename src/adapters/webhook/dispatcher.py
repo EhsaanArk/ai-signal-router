@@ -7,10 +7,8 @@ URLs defined in each routing rule.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import random
-from urllib.parse import urlparse
 
 import httpx
 import sentry_sdk
@@ -24,27 +22,6 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 0.5  # seconds
 _RETRYABLE_CODES = {429, 500, 502, 503, 504}
-
-
-def _build_pinned_url(
-    original_url: str,
-    pinned_ips: set[ipaddress._BaseAddress],
-) -> tuple[str, dict[str, str]]:
-    """Rewrite *original_url* to connect via a validated IP.
-
-    Returns (url_with_ip, extra_headers) where the Host header is set to
-    the original hostname so TLS and virtual-host routing still work.
-    This prevents DNS rebinding attacks by bypassing a second DNS lookup.
-    """
-    parsed = urlparse(original_url)
-    ip_str = str(next(iter(pinned_ips)))
-    # Wrap IPv6 in brackets for URL authority
-    authority = f"[{ip_str}]" if ":" in ip_str else ip_str
-    port_suffix = f":{parsed.port}" if parsed.port else ""
-    pinned_url = parsed._replace(
-        netloc=f"{authority}{port_suffix}",
-    ).geturl()
-    return pinned_url, {"Host": parsed.hostname or ""}
 
 
 class WebhookDispatcher:
@@ -83,8 +60,8 @@ class WebhookDispatcher:
         if rule.risk_overrides:
             payload.update(rule.risk_overrides)
 
-        # 4. POST with retry logic — validate and pin DNS to prevent rebinding
-        allowed, reason, pinned_ips = validate_outbound_webhook_url(
+        # 4. POST with retry logic — validate DNS twice to mitigate rebinding
+        allowed, reason, _ips = validate_outbound_webhook_url(
             rule.destination_webhook_url
         )
         if not allowed:
@@ -98,21 +75,28 @@ class WebhookDispatcher:
                 attempt_count=1,
             )
 
-        # Build the request URL with pinned IP to avoid DNS rebinding
-        request_url = rule.destination_webhook_url
-        extra_headers: dict[str, str] = {}
-        if pinned_ips:
-            request_url, extra_headers = _build_pinned_url(
-                rule.destination_webhook_url, pinned_ips
-            )
-
         last_error: str = ""
         for attempt in range(MAX_RETRIES):
             try:
+                # Re-validate DNS on each attempt to catch rebinding between
+                # rule creation and dispatch (defense-in-depth).
+                recheck_ok, recheck_reason, _recheck_ips = validate_outbound_webhook_url(
+                    rule.destination_webhook_url
+                )
+                if not recheck_ok:
+                    msg = f"Webhook URL failed pre-dispatch re-validation: {recheck_reason}"
+                    logger.warning("Rule %s DNS re-check failed: %s", rule.id, recheck_reason)
+                    return DispatchResult(
+                        routing_rule_id=rule.id,
+                        status="failed",
+                        error_message=msg,
+                        webhook_payload=payload,
+                        attempt_count=attempt + 1,
+                    )
+
                 response = await self._client.post(
-                    request_url,
+                    rule.destination_webhook_url,
                     json=payload,
-                    headers=extra_headers or None,
                 )
 
                 if response.is_success:

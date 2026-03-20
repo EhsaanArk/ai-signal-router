@@ -271,11 +271,11 @@ async def test_dispatch_blocks_unsafe_destination(sample_parsed_signal, sample_r
 
 
 @pytest.mark.asyncio
-async def test_dispatch_pins_dns_to_validated_ip(sample_parsed_signal, sample_routing_rule_v1):
-    """Dispatcher should POST to the validated IP, not re-resolve DNS."""
+async def test_dispatch_revalidates_dns_before_post(sample_parsed_signal, sample_routing_rule_v1):
+    """Dispatcher should re-validate DNS on each dispatch attempt (defense-in-depth)."""
     import ipaddress
 
-    pinned_ip = ipaddress.ip_address("93.184.216.34")
+    public_ip = ipaddress.ip_address("93.184.216.34")
     sample_routing_rule_v1.destination_webhook_url = "https://example.com/webhook"
 
     mock_response = AsyncMock()
@@ -288,16 +288,36 @@ async def test_dispatch_pins_dns_to_validated_ip(sample_parsed_signal, sample_ro
 
     with patch(
         "src.adapters.webhook.dispatcher.validate_outbound_webhook_url",
-        return_value=(True, None, {pinned_ip}),
-    ):
+        return_value=(True, None, {public_ip}),
+    ) as mock_validate:
         result = await dispatcher.dispatch(sample_parsed_signal, sample_routing_rule_v1)
 
     assert result.status == "success"
-    call_args = dispatcher._client.post.call_args
-    posted_url = call_args[0][0]
-    # The URL should contain the pinned IP, not the hostname
-    assert "93.184.216.34" in posted_url
-    assert "example.com" not in posted_url
-    # Host header should preserve the original hostname for TLS/vhost
-    headers = call_args[1].get("headers") or {}
-    assert headers.get("Host") == "example.com"
+    # validate_outbound_webhook_url called twice: once for initial gate, once for re-check
+    assert mock_validate.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_dns_rebind_on_recheck(sample_parsed_signal, sample_routing_rule_v1):
+    """If DNS changes to a private IP between initial check and dispatch, reject."""
+    import ipaddress
+
+    public_ip = ipaddress.ip_address("93.184.216.34")
+    sample_routing_rule_v1.destination_webhook_url = "https://example.com/webhook"
+
+    dispatcher = WebhookDispatcher()
+    dispatcher._client = AsyncMock(spec=httpx.AsyncClient)
+
+    # First call passes (initial gate), second call fails (re-check detects rebind)
+    with patch(
+        "src.adapters.webhook.dispatcher.validate_outbound_webhook_url",
+        side_effect=[
+            (True, None, {public_ip}),
+            (False, "Webhook target resolves to a private or restricted IP address", None),
+        ],
+    ):
+        result = await dispatcher.dispatch(sample_parsed_signal, sample_routing_rule_v1)
+
+    assert result.status == "failed"
+    assert "re-validation" in (result.error_message or "")
+    dispatcher._client.post.assert_not_called()
