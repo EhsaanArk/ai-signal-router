@@ -266,3 +266,30 @@ Currently users see `balance` and `lots` with no context about when they matter.
 **Priority:** P3
 **Depends on:** Deploy-health endpoint (PR #62)
 **Added:** 2026-03-19 (CEO plan review)
+
+---
+
+## P2 — Remove legacy token fallback after migration window
+
+**What:** Remove the backward-compatibility code in `_find_valid_token_row()` that scans rows with `token_lookup_hash IS NULL` via bcrypt. Once all pre-migration tokens have expired, this path is dead code.
+
+**Why:** The legacy fallback scans up to 500 rows with bcrypt (~100ms each), creating a potential DoS surface. After migration 023 deploys and all old tokens expire (max 24h for email verification, 1h for password reset), no rows will have NULL `token_lookup_hash`. The fallback adds complexity for zero value.
+
+**Pros:**
+- Removes dead code and potential DoS surface
+- Simplifies `_find_valid_token_row()` to a single O(1) hash lookup
+- Reduces bcrypt CPU usage on token endpoints
+
+**Cons:**
+- If somehow old tokens persist beyond 24h (e.g., DB snapshot restore), removal would break them
+
+**Context:**
+- PR #96 adds `token_lookup_hash` column + migration 023 + the legacy fallback
+- New tokens always get a hash. Legacy tokens expire within 24h.
+- Safe to remove after PR #96 has been deployed to production for 48+ hours
+- Files to modify: `src/api/routes.py` (remove legacy branch from `_find_valid_token_row`)
+
+**Effort:** S (human) → S (CC)
+**Priority:** P2
+**Depends on:** PR #96 deployed to production for 48+ hours
+**Added:** 2026-03-20 (eng review of PR #96)

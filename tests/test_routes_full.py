@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -629,6 +629,50 @@ class TestRoutingRuleUpdateWithSymbolMappings:
         assert update_resp.json()["payload_version"] == "V2"
 
 
+class TestWebhookUrlSecurity:
+    """SSRF protections for user-provided webhook URLs."""
+
+    async def test_create_rule_rejects_private_webhook_url(self, authed_client: AsyncClient):
+        resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100777",
+                "destination_webhook_url": "http://127.0.0.1/hook",
+                "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
+            },
+        )
+        assert resp.status_code == 422
+        assert "Invalid destination webhook URL" in resp.json()["detail"]
+
+    async def test_update_rule_rejects_private_webhook_url(self, authed_client: AsyncClient):
+        create_resp = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100778",
+                "destination_webhook_url": "https://example.com/hook",
+                "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test-assist-id", "source": "", "symbol": "", "date": ""},
+            },
+        )
+        rule_id = create_resp.json()["id"]
+
+        update_resp = await authed_client.put(
+            f"/api/v1/routing-rules/{rule_id}",
+            json={"destination_webhook_url": "https://169.254.169.254/latest/meta-data"},
+        )
+        assert update_resp.status_code == 422
+        assert "Invalid destination webhook URL" in update_resp.json()["detail"]
+
+    async def test_webhook_test_rejects_private_url_with_422(self, authed_client: AsyncClient):
+        resp = await authed_client.post(
+            "/api/v1/webhook/test",
+            json={"url": "https://localhost/test"},
+        )
+        assert resp.status_code == 422
+        assert "Invalid webhook URL" in resp.json()["detail"]
+
+
 # ===========================================================================
 # Signal Logs Tests
 # ===========================================================================
@@ -986,6 +1030,89 @@ class TestUserCache:
         # Cache should be busted
         cached = await cache.get(f"user:{SAMPLE_USER_ID}")
         assert cached is None
+
+
+class TestLegacyTokenFallback:
+    """Legacy token fallback should remain deterministic for large token sets."""
+
+    async def test_verify_email_legacy_fallback_scans_beyond_50_rows(self, test_app):
+        app, session_factory = test_app
+        from src.adapters.db.models import EmailVerificationTokenModel
+
+        valid_token = "legacy-verify-target"
+        now = datetime.now(timezone.utc)
+
+        async with session_factory() as session:
+            for i in range(55):
+                token_value = valid_token if i == 0 else f"legacy-verify-{i}"
+                session.add(
+                    EmailVerificationTokenModel(
+                        user_id=SAMPLE_USER_ID,
+                        token_hash=token_value,
+                        token_lookup_hash=None,
+                        expires_at=now + timedelta(hours=1),
+                        created_at=now + timedelta(seconds=i),
+                    )
+                )
+            await session.commit()
+
+        with patch(
+            "src.api.routes.pwd_context.verify",
+            side_effect=lambda raw, stored: raw == stored,
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/api/v1/auth/verify-email",
+                    json={"token": valid_token},
+                )
+
+        assert resp.status_code == 200
+
+    async def test_reset_password_legacy_fallback_scans_beyond_50_rows(self, test_app):
+        app, session_factory = test_app
+        from src.adapters.db.models import PasswordResetTokenModel, UserModel
+
+        valid_token = "legacy-reset-target"
+        now = datetime.now(timezone.utc)
+
+        async with session_factory() as session:
+            for i in range(55):
+                token_value = valid_token if i == 0 else f"legacy-reset-{i}"
+                session.add(
+                    PasswordResetTokenModel(
+                        user_id=SAMPLE_USER_ID,
+                        token_hash=token_value,
+                        token_lookup_hash=None,
+                        expires_at=now + timedelta(hours=1),
+                        created_at=now + timedelta(seconds=i),
+                    )
+                )
+            await session.commit()
+
+        with patch(
+            "src.api.routes.pwd_context.verify",
+            side_effect=lambda raw, stored: raw == stored,
+        ), patch(
+            "src.api.routes.pwd_context.hash",
+            side_effect=lambda value: f"hashed:{value}",
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/api/v1/auth/reset-password",
+                    json={"token": valid_token, "new_password": "newpass123"},
+                )
+
+        assert resp.status_code == 200
+
+        async with session_factory() as session:
+            from sqlalchemy import select
+
+            user_row = (
+                await session.execute(select(UserModel).where(UserModel.id == SAMPLE_USER_ID))
+            ).scalar_one()
+            assert user_row.password_hash == "hashed:newpass123"
 
 
 class TestTelegramStatusCache:

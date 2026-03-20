@@ -9,6 +9,7 @@ as test_routes.py.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -378,6 +379,37 @@ async def test_single_destination_dispatch(client, session_factory, test_dispatc
     assert logs[0].status == "success"
     assert logs[0].routing_rule_id == rule_id
     assert logs[0].webhook_payload is not None
+
+
+async def test_concurrent_duplicate_inflight_only_one_dispatches(
+    client, session_factory, test_dispatcher,
+):
+    """Concurrent identical messages should process once when lock rejects in-flight duplicate."""
+    await _seed_routing_rule(session_factory, webhook_url=WEBHOOK_URL_1)
+    parsed = _make_valid_parsed_signal()
+
+    lock_mock = AsyncMock(side_effect=[True, False])
+    payload = _raw_signal_payload()
+
+    with (
+        patch("src.api.workflow._acquire_message_lock", lock_mock),
+        _mock_openai_parser(parsed),
+        _mock_httpx_post(dispatcher=test_dispatcher) as mock_post,
+    ):
+        resp1, resp2 = await asyncio.gather(
+            client.post("/api/workflow/process-signal", json=payload),
+            client.post("/api/workflow/process-signal", json=payload),
+        )
+
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+
+    bodies = [resp1.json(), resp2.json()]
+    assert any(body == [] for body in bodies)
+    assert any(body and body[0]["status"] == "success" for body in bodies)
+
+    # Only one dispatch attempt should reach outbound webhook layer.
+    assert mock_post.call_count == 1
 
 
 # ===========================================================================

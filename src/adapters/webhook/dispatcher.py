@@ -15,6 +15,7 @@ import sentry_sdk
 
 from src.core.mapper import apply_symbol_mapping, build_webhook_payload
 from src.core.models import DispatchResult, ParsedSignal, RoutingRule
+from src.core.security import validate_outbound_webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,40 @@ class WebhookDispatcher:
         if rule.risk_overrides:
             payload.update(rule.risk_overrides)
 
-        # 4. POST with retry logic
+        # 4. POST with retry logic — validate DNS twice to mitigate rebinding
+        allowed, reason, _ips = validate_outbound_webhook_url(
+            rule.destination_webhook_url
+        )
+        if not allowed:
+            msg = f"Unsafe destination webhook URL rejected: {reason}"
+            logger.warning("Rule %s blocked by webhook URL policy: %s", rule.id, reason)
+            return DispatchResult(
+                routing_rule_id=rule.id,
+                status="failed",
+                error_message=msg,
+                webhook_payload=payload,
+                attempt_count=1,
+            )
+
         last_error: str = ""
         for attempt in range(MAX_RETRIES):
             try:
+                # Re-validate DNS on each attempt to catch rebinding between
+                # rule creation and dispatch (defense-in-depth).
+                recheck_ok, recheck_reason, _recheck_ips = validate_outbound_webhook_url(
+                    rule.destination_webhook_url
+                )
+                if not recheck_ok:
+                    msg = f"Webhook URL failed pre-dispatch re-validation: {recheck_reason}"
+                    logger.warning("Rule %s DNS re-check failed: %s", rule.id, recheck_reason)
+                    return DispatchResult(
+                        routing_rule_id=rule.id,
+                        status="failed",
+                        error_message=msg,
+                        webhook_payload=payload,
+                        attempt_count=attempt + 1,
+                    )
+
                 response = await self._client.post(
                     rule.destination_webhook_url,
                     json=payload,

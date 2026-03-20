@@ -35,6 +35,7 @@ class QStashPublisher:
     """
 
     DEFAULT_QSTASH_URL = "https://qstash.upstash.io"
+    QSTASH_PUBLISH_URL = f"{DEFAULT_QSTASH_URL}/v2/publish/"
 
     def __init__(self, qstash_token: str, workflow_url: str, qstash_url: str = "") -> None:
         self._token = qstash_token
