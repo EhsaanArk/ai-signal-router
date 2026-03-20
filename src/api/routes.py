@@ -106,6 +106,7 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserMeResponse
+    email_sent: bool = True
 
 
 def _user_me_from_row(row: UserModel) -> UserMeResponse:
@@ -443,6 +444,7 @@ async def register(
     await db.flush()
 
     verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_verify_token}"
+    email_sent = False
     if settings.RESEND_API_KEY:
         try:
             import resend
@@ -455,6 +457,7 @@ async def register(
                     verify_link, "Welcome to Sage Radar AI!"
                 ),
             })
+            email_sent = True
         except Exception as exc:
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
@@ -467,6 +470,7 @@ async def register(
     return LoginResponse(
         access_token=token,
         user=_user_me_from_row(new_user),
+        email_sent=email_sent,
     )
 
 
@@ -635,8 +639,16 @@ async def resend_verification(
         except Exception as exc:
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to send verification email. Please try again later.",
+            )
     else:
         logger.warning("RESEND_API_KEY not set — verification email not sent")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email service is not configured. Please contact support.",
+        )
 
     return MessageResponse(message="Verification email sent.")
 
@@ -962,7 +974,7 @@ async def telegram_status(
     cache=Depends(get_cache),
 ) -> TelegramStatusResponse:
     """Check whether the current user has an active Telegram session."""
-    # Check cache first (30s TTL — matches frontend refetch interval)
+    # Check cache first (10s TTL — matches frontend refetch interval)
     cache_key = f"tg_status:{current_user.id}"
     cached = await cache.get(cache_key)
     if cached:
@@ -1007,8 +1019,8 @@ async def telegram_status(
         else:
             response = TelegramStatusResponse(connected=False)
 
-    # Cache for 30s (matches frontend refetch interval)
-    await cache.set(cache_key, response.model_dump_json(), ttl_seconds=30)
+    # Cache for 10s (matches frontend refetch interval)
+    await cache.set(cache_key, response.model_dump_json(), ttl_seconds=10)
     return response
 
 
