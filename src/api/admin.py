@@ -999,8 +999,6 @@ async def test_parse_signal(
 
 def _validate_parsed_signal(parsed: Any) -> list[ValidationCheck]:
     """Run validation checks on a parsed signal."""
-    from src.core.models import SignalAction
-
     checks: list[ValidationCheck] = []
 
     # Check is_valid_signal
@@ -1020,8 +1018,12 @@ def _validate_parsed_signal(parsed: Any) -> list[ValidationCheck]:
         message=f"Symbol: {parsed.symbol}" if parsed.symbol != "UNKNOWN" else "Symbol is UNKNOWN",
     ))
 
-    # Check action is valid enum
-    valid_actions = {a.value for a in SignalAction}
+    # Check action is valid parser action (not webhook action enum)
+    valid_actions = {
+        "entry", "partial_close", "breakeven", "close_position",
+        "close_all", "close_all_stop", "start_assist", "stop_assist",
+        "modify_sl", "modify_tp", "trailing_sl", "extra_order",
+    }
     action_valid = parsed.action in valid_actions
     checks.append(ValidationCheck(
         name="Valid Action",
