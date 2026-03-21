@@ -60,11 +60,16 @@ class SignalAction(str, Enum):
     extra_order = "open_extra_order"  # crypto only
 
 
-# Crypto action type strings — differ from forex per WEBHOOK_PAYLOADS.md
+# Crypto action type strings — differ from forex per SageMaster DCA UI.
+# Crypto uses "deals" and "ai_assist" instead of forex "orders" and "assist".
 # Crypto does not support lot-based partial close; both lot and pct map to percentage.
 CRYPTO_ACTION_TYPE: dict[str, str] = {
     "start_deal": "start_deal",  # crypto uses single type for long/short
     "close_position": "close_order_at_market_price",
+    "close_all": "close_all_deals_at_market_price",
+    "close_all_stop": "close_all_deals_at_market_price_and_stop_ai_assist",
+    "start_assist": "start_ai_assist_and_deal",
+    "stop_assist": "stop_ai_assist",
     "partial_close_lot": "partially_closed_by_percentage",  # no lot support
     "partial_close_pct": "partially_closed_by_percentage",
     "breakeven": "moved_sl_adjustment",
