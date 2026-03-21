@@ -9,7 +9,10 @@ Pure domain logic — no infrastructure imports.  Responsible for:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_timestamp() -> str:
@@ -75,7 +78,13 @@ def _signal_action(signal: ParsedSignal) -> SignalAction:
     """
     action = signal.action
     if action == "entry":
-        is_limit = signal.order_type == "limit"
+        is_limit = signal.order_type in ("limit", "stop")
+        # Safety: reject limit/stop orders without an entry price
+        if is_limit and signal.entry_price is None:
+            raise ValueError(
+                f"Limit/stop order requires an entry price but none was provided "
+                f"(order_type={signal.order_type}, symbol={signal.symbol})"
+            )
         if signal.direction == "long":
             return SignalAction.start_long_limit if is_limit else SignalAction.start_long
         elif signal.direction == "short":
@@ -160,8 +169,9 @@ def _inject_crypto_management_fields(
             payload["percentage"] = signal.percentage
         else:
             raise ValueError(
-                "Crypto does not support lot-based partial close and no "
-                "percentage was provided — cannot safely convert lots to %"
+                f"Crypto does not support lot-based partial close "
+                f"(lots={signal.lots}). Use a percentage instead "
+                f"(e.g. 'close 50%' instead of 'close 0.5 lots')."
             )
         payload["position_type"] = position_type
         payload.pop("lotSize", None)
@@ -336,6 +346,33 @@ def build_webhook_payload(
         k: v for k, v in payload.items()
         if k not in _OPTIONAL_FIELDS or (v != "" and v != [] and v is not None)
     }
+
+    # Safety: warn if TP/SL appear to be on the wrong side of entry price.
+    # Only for non-crypto forex (absolute prices). Crypto may use percentages.
+    if not is_crypto and signal.entry_price is not None:
+        _ep = signal.entry_price
+        if signal.stop_loss is not None:
+            if signal.direction == "long" and signal.stop_loss > _ep:
+                logger.warning(
+                    "SL (%s) is above entry (%s) for a LONG %s — possible error",
+                    signal.stop_loss, _ep, signal.symbol,
+                )
+            elif signal.direction == "short" and signal.stop_loss < _ep:
+                logger.warning(
+                    "SL (%s) is below entry (%s) for a SHORT %s — possible error",
+                    signal.stop_loss, _ep, signal.symbol,
+                )
+        for tp in signal.take_profits:
+            if signal.direction == "long" and tp < _ep:
+                logger.warning(
+                    "TP (%s) is below entry (%s) for a LONG %s — possible error",
+                    tp, _ep, signal.symbol,
+                )
+            elif signal.direction == "short" and tp > _ep:
+                logger.warning(
+                    "TP (%s) is above entry (%s) for a SHORT %s — possible error",
+                    tp, _ep, signal.symbol,
+                )
 
     return payload
 

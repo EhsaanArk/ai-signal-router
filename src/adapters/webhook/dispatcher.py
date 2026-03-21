@@ -56,9 +56,20 @@ class WebhookDispatcher:
         else:
             payload = payload_model.model_dump(exclude_none=True)
 
-        # 3. Apply per-destination risk overrides (e.g. lot size)
+        # 3. Apply per-destination risk overrides (e.g. lot size).
+        # Whitelist safe fields to prevent overriding critical payload fields
+        # like type, symbol, or assistId which would cause wrong trades.
+        _SAFE_OVERRIDE_FIELDS = {
+            "lots", "balance", "percentage", "lotSize",
+            "slAdjustment", "sl_adjustment",
+            "money_management_mode",
+        }
         if rule.risk_overrides:
-            payload.update(rule.risk_overrides)
+            safe_overrides = {
+                k: v for k, v in rule.risk_overrides.items()
+                if k in _SAFE_OVERRIDE_FIELDS
+            }
+            payload.update(safe_overrides)
 
         # 4. POST with retry logic — validate DNS twice to mitigate rebinding
         allowed, reason, _ips = validate_outbound_webhook_url(
