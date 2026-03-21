@@ -673,6 +673,76 @@ class TestWebhookUrlSecurity:
         assert "Invalid webhook URL" in resp.json()["detail"]
 
 
+class TestWebhookUrlUniqueness:
+    """Cross-account webhook URL uniqueness enforcement."""
+
+    async def test_create_rejects_webhook_url_used_by_another_account(
+        self, authed_client_with_session,
+    ):
+        ac, session_factory = authed_client_with_session
+        other_user_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+        webhook_url = "https://api.sagemaster.io/deals_idea/shared-assist-id"
+
+        # Insert a rule from another user with the same webhook URL
+        async with session_factory() as session:
+            session.add(UserModel(
+                id=other_user_id,
+                email="other@example.com",
+                password_hash="$2b$12$fakehashfakehashfakehashfakehashfakehashfakehashfake",
+            ))
+            session.add(RoutingRuleModel(
+                user_id=other_user_id,
+                source_channel_id="-100999",
+                destination_webhook_url=webhook_url,
+                payload_version="V1",
+                webhook_body_template={"type": "", "assistId": "test", "source": "", "symbol": "", "date": ""},
+                is_active=True,
+            ))
+            await session.commit()
+
+        # Try to create a rule with the same webhook URL from the test user
+        resp = await ac.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100888",
+                "destination_webhook_url": webhook_url,
+                "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test", "source": "", "symbol": "", "date": ""},
+            },
+        )
+        assert resp.status_code == 409
+        assert "already in use by another account" in resp.json()["detail"]
+
+    async def test_create_allows_same_webhook_url_for_same_user(
+        self, authed_client: AsyncClient,
+    ):
+        webhook_url = "https://api.sagemaster.io/deals_idea/my-own-assist"
+
+        # Create first rule
+        resp1 = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100111",
+                "destination_webhook_url": webhook_url,
+                "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test", "source": "", "symbol": "", "date": ""},
+            },
+        )
+        assert resp1.status_code == 201
+
+        # Same user, same webhook URL, different channel — should be allowed
+        resp2 = await authed_client.post(
+            "/api/v1/routing-rules",
+            json={
+                "source_channel_id": "-100222",
+                "destination_webhook_url": webhook_url,
+                "payload_version": "V1",
+                "webhook_body_template": {"type": "", "assistId": "test", "source": "", "symbol": "", "date": ""},
+            },
+        )
+        assert resp2.status_code == 201
+
+
 # ===========================================================================
 # Signal Logs Tests
 # ===========================================================================
