@@ -206,3 +206,88 @@ async def test_authenticated_logs(
     data = resp.json()
     assert "total" in data
     assert "items" in data
+
+
+# ---------------------------------------------------------------------------
+# Parser sandbox & pipeline dry-run (admin-only, read-only)
+# ---------------------------------------------------------------------------
+
+_SAMPLE_FOREX_SIGNAL = "BUY XAUUSD @ 2650.00 TP1: 2660 TP2: 2670 SL: 2640"
+_SAMPLE_CRYPTO_SIGNAL = "LONG BTC/USDT Entry: 95000 TP: 98000 SL: 93000"
+
+
+@pytest.mark.asyncio
+async def test_parser_sandbox_forex(
+    staging_api_url: str, auth_token: str,
+) -> None:
+    """Parser sandbox parses a forex signal correctly (dry-run, no dispatch)."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{staging_api_url}/api/v1/admin/parser/test",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"raw_message": _SAMPLE_FOREX_SIGNAL},
+        )
+    assert resp.status_code == 200, f"Parser test failed: {resp.status_code} {resp.text}"
+    data = resp.json()
+    parsed = data["parsed"]
+    assert parsed["is_valid_signal"] is True
+    assert parsed["action"] in ("entry", "buy", "sell", "buy_limit", "buy_stop", "sell_limit", "sell_stop")
+    assert "XAU" in parsed.get("symbol", "").upper() or "GOLD" in parsed.get("symbol", "").upper()
+
+
+@pytest.mark.asyncio
+async def test_parser_sandbox_crypto(
+    staging_api_url: str, auth_token: str,
+) -> None:
+    """Parser sandbox parses a crypto signal correctly."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{staging_api_url}/api/v1/admin/parser/test",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"raw_message": _SAMPLE_CRYPTO_SIGNAL},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    parsed = data["parsed"]
+    assert parsed["is_valid_signal"] is True
+    assert "BTC" in parsed.get("symbol", "").upper()
+
+
+@pytest.mark.asyncio
+async def test_parser_sandbox_nonsignal(
+    staging_api_url: str, auth_token: str,
+) -> None:
+    """Parser sandbox correctly identifies non-signal messages."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{staging_api_url}/api/v1/admin/parser/test",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"raw_message": "Good morning everyone! Have a great trading day 🚀"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["parsed"]["is_valid_signal"] is False
+
+
+@pytest.mark.asyncio
+async def test_pipeline_dryrun_with_mapping(
+    staging_api_url: str, auth_token: str,
+) -> None:
+    """Full pipeline dry-run: parse + map → webhook payload (no dispatch)."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{staging_api_url}/api/v1/admin/parser/test",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "raw_message": _SAMPLE_FOREX_SIGNAL,
+                "include_mapping": True,
+            },
+        )
+    assert resp.status_code == 200, f"Pipeline dry-run failed: {resp.status_code} {resp.text}"
+    data = resp.json()
+    # Parser should succeed
+    assert data["parsed"]["is_valid_signal"] is True
+    # Mapping should produce a webhook payload
+    assert data.get("webhook_payload") is not None, "Expected webhook_payload from dry-run"
+    payload = data["webhook_payload"]
+    assert "type" in payload or "action" in payload  # V1 or V2 format
