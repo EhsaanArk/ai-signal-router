@@ -171,7 +171,13 @@ def _inject_crypto_management_fields(
         payload["position_type"] = position_type
     elif action == SignalAction.breakeven:
         if signal.action == "modify_sl" and signal.new_sl is not None:
-            payload["sl_adjustment"] = int(signal.new_sl)
+            # Crypto sl_adjustment is a relative offset, not absolute price.
+            # Absolute SL modification is not supported by SageMaster crypto.
+            raise ValueError(
+                f"Crypto does not support absolute SL modification "
+                f"(new_sl={signal.new_sl}). Only breakeven with pip offset "
+                f"is supported via moved_sl_adjustment."
+            )
         elif signal.action == "trailing_sl" and signal.trailing_sl_pips is not None:
             payload["sl_adjustment"] = signal.trailing_sl_pips
         elif signal.breakeven_offset_pips is not None:
@@ -289,9 +295,18 @@ def build_webhook_payload(
             payload["stop_loss"] = signal.stop_loss
         if "stopLossPips" in payload and not payload["stopLossPips"]:
             payload["stopLossPips"] = signal.stop_loss_pips
+    # Crypto: inject TP/SL from signal even if template doesn't have the keys.
+    # Crypto templates often omit TP/SL fields, but SageMaster accepts them
+    # on start_deal payloads (take_profits as %, stopLoss as %).
+    if is_crypto:
+        if signal.take_profits and "take_profits" not in payload:
+            payload["take_profits"] = signal.take_profits
+        if signal.stop_loss is not None and "stopLoss" not in payload and "stop_loss" not in payload:
+            payload["stopLoss"] = signal.stop_loss
     # Crypto entry also needs position_type from signal direction
-    if is_crypto and "position_type" in payload and not payload["position_type"]:
-        payload["position_type"] = signal.direction or "long"
+    if is_crypto:
+        if "position_type" not in payload or not payload.get("position_type"):
+            payload["position_type"] = signal.direction or "long"
 
     # Ensure numeric fields are sent as numbers, not strings.
     # Template builder stores user input as strings; SageMaster rejects string lots.

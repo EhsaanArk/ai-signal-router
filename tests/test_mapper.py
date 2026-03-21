@@ -738,17 +738,42 @@ def test_crypto_breakeven_payload():
     assert "slAdjustment" not in payload
 
 
-def test_crypto_modify_sl_payload():
-    """Crypto modify_sl should use moved_sl_adjustment with sl_adjustment value."""
+def test_crypto_modify_sl_absolute_raises():
+    """Crypto does not support absolute SL modification — should raise ValueError."""
     rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
     signal = ParsedSignal(
         action="modify_sl", symbol="SOL/USDT", direction="long",
         new_sl=42.0, source_asset_class="crypto",
     )
+    with pytest.raises(ValueError, match="Crypto does not support absolute SL"):
+        build_webhook_payload(signal, rule)
+
+
+def test_crypto_entry_injects_tp_sl_from_signal():
+    """Crypto entry should include TP/SL from signal even if template lacks those keys."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        symbol="BTC/USDT", direction="long", order_type="limit",
+        entry_price=71000.0, stop_loss=70000.0, take_profits=[72000.0],
+        source_asset_class="crypto",
+    )
     payload = build_webhook_payload(signal, rule)
-    assert payload["type"] == "moved_sl_adjustment"
-    assert payload["sl_adjustment"] == 42
+    assert payload["type"] == "start_deal"
+    assert payload["take_profits"] == [72000.0]
+    assert payload["stopLoss"] == 70000.0
     assert payload["position_type"] == "long"
+
+
+def test_crypto_entry_no_tp_sl_when_signal_has_none():
+    """Crypto entry without TP/SL in signal should not add empty fields."""
+    rule = _rule_with_template(_CRYPTO_TEMPLATE, destination_type="sagemaster_crypto")
+    signal = ParsedSignal(
+        symbol="BTC/USDT", direction="long", order_type="limit",
+        entry_price=71000.0, source_asset_class="crypto",
+    )
+    payload = build_webhook_payload(signal, rule)
+    assert "take_profits" not in payload
+    assert "stopLoss" not in payload
 
 
 def test_crypto_close_position_payload():
