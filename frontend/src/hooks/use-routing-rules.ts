@@ -21,6 +21,7 @@ export function useCreateRule() {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    retry: 1,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["routing-rules"] });
     },

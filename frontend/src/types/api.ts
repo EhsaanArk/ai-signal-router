@@ -7,6 +7,7 @@ export interface LoginResponse {
   access_token: string;
   token_type: string;
   user: UserMe;
+  email_sent?: boolean;
 }
 
 export interface UserMe {

@@ -110,6 +110,7 @@ class ParsedSignal(BaseModel):
     action: Literal[
         "entry", "partial_close", "breakeven", "close_position",
         "modify_sl", "modify_tp", "trailing_sl", "extra_order",
+        "close_all", "close_all_stop", "start_assist", "stop_assist",
     ] = "entry"
     symbol: str
     direction: Literal["long", "short"] = "long"
@@ -125,6 +126,7 @@ class ParsedSignal(BaseModel):
     new_sl: float | None = None
     new_tp: float | None = None
     trailing_sl_pips: int | None = None
+    breakeven_offset_pips: int | None = None
     take_profit_pips: list[int] = Field(default_factory=list)
     stop_loss_pips: int | None = None
     is_market: bool | None = None

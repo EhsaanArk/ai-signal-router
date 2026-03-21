@@ -37,6 +37,7 @@ Respond ONLY with a JSON object — no markdown, no commentary.
   "new_sl": <number | null>,
   "new_tp": <number | null>,
   "trailing_sl_pips": <integer | null>,
+  "breakeven_offset_pips": <integer | null — pip offset from entry for breakeven, e.g. -10 means 10 pips before entry>,
   "take_profit_pips": [<integer>, ...],
   "stop_loss_pips": <integer | null>,
   "is_market": <true | false | null>,
@@ -56,6 +57,7 @@ Determine the **action** type from the message intent:
   If the message specifies a lot size (e.g. "close 0.3 lots"), set `lots` to the amount (e.g. "0.3").
   If ambiguous, prefer `percentage` over `lots`. Default to `percentage: 50` if neither is clear.
 - **breakeven**: Move stop loss to entry/breakeven. Keywords: "move SL to breakeven", "move SL to BE", "breakeven", "BE".
+  If a pip offset is specified (e.g. "move BE to -10 pips", "breakeven minus 10", "BE +5 pips"), set `breakeven_offset_pips` to the integer value. Negative = before entry price, positive = beyond entry. If no offset, leave `breakeven_offset_pips` as null.
 - **close_position**: Fully close an existing position for a specific symbol. Keywords: "close position", "exit", "close trade", "market has reversed". Must reference a specific symbol. If the message says "close all XAUUSD" — that's close_position for XAUUSD, NOT close_all.
 - **close_all**: Close ALL open positions across ALL symbols (no specific symbol). Keywords: "close all trades", "close everything", "flatten all", "liquidate all", "close all" (without a symbol). No symbol needed — set symbol to "ALL".
 - **close_all_stop**: Close all positions AND stop the trading bot/strategy. Keywords: "close all and stop", "shut down", "emergency stop". No symbol needed — set symbol to "ALL".
@@ -226,6 +228,7 @@ class OpenAISignalParser:
                 new_sl=data.get("new_sl"),
                 new_tp=data.get("new_tp"),
                 trailing_sl_pips=data.get("trailing_sl_pips"),
+                breakeven_offset_pips=data.get("breakeven_offset_pips"),
                 take_profit_pips=data.get("take_profit_pips") or [],
                 stop_loss_pips=data.get("stop_loss_pips"),
                 is_market=data.get("is_market"),

@@ -50,6 +50,24 @@ _BOT_LINK_PURPOSE = "telegram_bot_link"
 _BOT_LINK_EXP_MINUTES = 30
 _LEGACY_TOKEN_SCAN_LIMIT = 500
 
+
+def _build_verification_email_html(verify_link: str, welcome_line: str = "") -> str:
+    """Build styled HTML for email verification with a clickable button and fallback URL."""
+    intro = f"<p>{welcome_line}</p>" if welcome_line else ""
+    return (
+        '<!DOCTYPE html><html><body style="font-family:sans-serif;color:#333;'
+        'max-width:480px;margin:0 auto;padding:20px">'
+        f"{intro}"
+        "<p>Please verify your email address by clicking the button below:</p>"
+        f'<p style="text-align:center;margin:24px 0"><a href="{verify_link}" target="_blank" '
+        'style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;'
+        'border-radius:6px;text-decoration:none;font-weight:600">Verify Email</a></p>'
+        '<p style="font-size:13px;color:#666">Or copy and paste this link into your browser:</p>'
+        f'<p style="font-size:12px;word-break:break-all;color:#2563eb">{verify_link}</p>'
+        '<p style="font-size:13px;color:#666">This link expires in 24 hours.</p>'
+        "</body></html>"
+    )
+
 # ============================================================================
 # Request / Response schemas
 # ============================================================================
@@ -88,6 +106,7 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserMeResponse
+    email_sent: bool = True
 
 
 def _user_me_from_row(row: UserModel) -> UserMeResponse:
@@ -425,6 +444,7 @@ async def register(
     await db.flush()
 
     verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_verify_token}"
+    email_sent = False
     if settings.RESEND_API_KEY:
         try:
             import resend
@@ -433,13 +453,11 @@ async def register(
                 "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                 "to": [body.email],
                 "subject": "Verify your email",
-                "html": (
-                    "<p>Welcome to Sage Radar AI! Please verify your email address "
-                    "by clicking the link below.</p>"
-                    f'<p><a href="{verify_link}">Verify Email</a></p>'
-                    "<p>This link expires in 24 hours.</p>"
+                "html": _build_verification_email_html(
+                    verify_link, "Welcome to Sage Radar AI!"
                 ),
             })
+            email_sent = True
         except Exception as exc:
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
@@ -452,6 +470,7 @@ async def register(
     return LoginResponse(
         access_token=token,
         user=_user_me_from_row(new_user),
+        email_sent=email_sent,
     )
 
 
@@ -615,17 +634,21 @@ async def resend_verification(
                 "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
                 "to": [current_user.email],
                 "subject": "Verify your email",
-                "html": (
-                    "<p>Please verify your email address by clicking the link below.</p>"
-                    f'<p><a href="{verify_link}">Verify Email</a></p>'
-                    "<p>This link expires in 24 hours.</p>"
-                ),
+                "html": _build_verification_email_html(verify_link),
             })
         except Exception as exc:
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to send verification email. Please try again later.",
+            )
     else:
         logger.warning("RESEND_API_KEY not set — verification email not sent")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email service is not configured. Please contact support.",
+        )
 
     return MessageResponse(message="Verification email sent.")
 
@@ -951,7 +974,7 @@ async def telegram_status(
     cache=Depends(get_cache),
 ) -> TelegramStatusResponse:
     """Check whether the current user has an active Telegram session."""
-    # Check cache first (30s TTL — matches frontend refetch interval)
+    # Check cache first (10s TTL — matches frontend refetch interval)
     cache_key = f"tg_status:{current_user.id}"
     cached = await cache.get(cache_key)
     if cached:
@@ -996,8 +1019,8 @@ async def telegram_status(
         else:
             response = TelegramStatusResponse(connected=False)
 
-    # Cache for 30s (matches frontend refetch interval)
-    await cache.set(cache_key, response.model_dump_json(), ttl_seconds=30)
+    # Cache for 10s (matches frontend refetch interval)
+    await cache.set(cache_key, response.model_dump_json(), ttl_seconds=10)
     return response
 
 

@@ -14,7 +14,8 @@ export function TierGate({ children }: TierGateProps) {
 
   const tier = user?.subscription_tier || "free";
   const limit = getTierLimit(tier);
-  const count = rules?.length ?? 0;
+  // Count only active rules to match backend tier enforcement
+  const count = rules?.filter((r) => r.is_active).length ?? 0;
 
   if (count >= limit) {
     return (
@@ -48,7 +49,8 @@ export function TierLimitBanner() {
 
   const tier = user?.subscription_tier || "free";
   const limit = getTierLimit(tier);
-  const count = rules?.length ?? 0;
+  // Count only active rules to match backend tier enforcement
+  const count = rules?.filter((r) => r.is_active).length ?? 0;
 
   if (count < limit) return null;
 

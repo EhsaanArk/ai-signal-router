@@ -68,6 +68,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(res.access_token);
     setUser(res.user);
     setTokenState(res.access_token);
+    if (res.email_sent === false) {
+      toast.warning(
+        "We couldn't send the verification email. Please try resending from your account settings.",
+        { duration: 10_000 },
+      );
+    }
   }, []);
 
   const logout = useCallback(() => {
