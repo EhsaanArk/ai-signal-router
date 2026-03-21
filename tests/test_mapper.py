@@ -515,13 +515,36 @@ def test_forex_template_empty_type_filled_from_direction():
 
 
 def test_mismatch_hardcoded_tradeSymbol_different_signal():
-    """Hardcoded tradeSymbol that differs from signal should return mismatch reason."""
+    """Hardcoded tradeSymbol that differs from signal should return mismatch for forex."""
     rule = _rule_with_template({"type": "start_deal", "tradeSymbol": "LUMIA/USDT"})
     signal = ParsedSignal(symbol="BTC/USDT", direction="long")
     reason = check_template_symbol_mismatch(signal, rule)
     assert reason is not None
     assert "BTC/USDT" in reason
     assert "LUMIA/USDT" in reason
+
+
+def test_crypto_tradeSymbol_mismatch_allowed():
+    """Crypto DCA assists have a fixed tradeSymbol — mismatch should be allowed."""
+    rule = _rule_with_template(
+        {"type": "start_deal", "tradeSymbol": "LUMIA/USDT", "eventSymbol": "{{ticker}}"},
+        destination_type="sagemaster_crypto",
+    )
+    signal = ParsedSignal(symbol="BTC/USDT", direction="long", source_asset_class="crypto")
+    reason = check_template_symbol_mismatch(signal, rule)
+    assert reason is None  # should NOT block
+
+
+def test_crypto_eventSymbol_mismatch_still_blocks():
+    """Crypto eventSymbol hardcoded mismatch should still block dispatch."""
+    rule = _rule_with_template(
+        {"type": "start_deal", "tradeSymbol": "LUMIA/USDT", "eventSymbol": "LUMIA/USDT"},
+        destination_type="sagemaster_crypto",
+    )
+    signal = ParsedSignal(symbol="BTC/USDT", direction="long", source_asset_class="crypto")
+    reason = check_template_symbol_mismatch(signal, rule)
+    assert reason is not None
+    assert "eventSymbol" in reason
 
 
 def test_mismatch_hardcoded_tradeSymbol_matching_signal():
