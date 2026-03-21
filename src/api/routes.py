@@ -1261,6 +1261,23 @@ async def create_routing_rule(
 
     _check_tier_limit(current_user.subscription_tier, current_count)
 
+    # Prevent duplicate webhook URLs across accounts (same user can reuse)
+    dup_result = await db.execute(
+        select(RoutingRuleModel.id)
+        .where(
+            RoutingRuleModel.destination_webhook_url == body.destination_webhook_url,
+            RoutingRuleModel.user_id != current_user.id,
+            RoutingRuleModel.is_active.is_(True),
+        )
+        .limit(1)
+    )
+    if dup_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This webhook URL is already in use by another account. "
+            "Each SageMaster Assist can only be connected to one Sage Radar account.",
+        )
+
     # Template is required for SageMaster destinations (contains assistId)
     if body.destination_type in ("sagemaster_forex", "sagemaster_crypto") and not body.webhook_body_template:
         raise HTTPException(
@@ -1347,6 +1364,24 @@ async def update_routing_rule(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid destination webhook URL: {reason}",
         )
+
+    # Prevent duplicate webhook URLs across accounts when URL changes
+    if "destination_webhook_url" in update_data and update_data["destination_webhook_url"] != row.destination_webhook_url:
+        dup_result = await db.execute(
+            select(RoutingRuleModel.id)
+            .where(
+                RoutingRuleModel.destination_webhook_url == update_data["destination_webhook_url"],
+                RoutingRuleModel.user_id != current_user.id,
+                RoutingRuleModel.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        if dup_result.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This webhook URL is already in use by another account. "
+                "Each SageMaster Assist can only be connected to one Sage Radar account.",
+            )
 
     # Determine the effective destination_type and template after update
     effective_type = update_data.get("destination_type", row.destination_type)
