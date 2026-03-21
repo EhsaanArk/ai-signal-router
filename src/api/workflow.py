@@ -42,8 +42,16 @@ def _message_lock_key(raw_signal: RawSignal) -> int:
 
 
 async def _acquire_message_lock(db: AsyncSession, raw_signal: RawSignal) -> bool:
-    """Acquire a transaction-scoped advisory lock for this message if possible."""
+    """Acquire a transaction-scoped advisory lock for this message if possible.
+
+    When message_id is missing, we still attempt a lock using channel_id + timestamp
+    to provide best-effort deduplication even for backfill signals.
+    """
     if not raw_signal.message_id:
+        logger.warning(
+            "Signal from channel %s has no message_id — dedup is best-effort only",
+            raw_signal.channel_id,
+        )
         return True
 
     bind = None

@@ -215,10 +215,30 @@ class OpenAISignalParser:
             content = response.choices[0].message.content or "{}"
             data = json.loads(content)
 
+            parsed_action = data.get("action") or "entry"
+            parsed_direction = data.get("direction")
+            parsed_symbol = data.get("symbol")
+
+            # Safety: entry signals MUST have an explicit direction from GPT.
+            # Defaulting to "long" on missing direction could invert trades.
+            _ENTRY_ACTIONS = {"entry", "extra_order"}
+            if parsed_action in _ENTRY_ACTIONS and not parsed_direction:
+                logger.warning(
+                    "GPT returned entry action without direction — marking invalid"
+                )
+                return ParsedSignal(
+                    symbol=parsed_symbol or "UNKNOWN",
+                    direction="long",
+                    order_type="market",
+                    source_asset_class=data.get("source_asset_class") or "forex",
+                    is_valid_signal=False,
+                    ignore_reason="AI parser returned entry signal without a direction (buy/sell)",
+                )
+
             return ParsedSignal(
-                action=data.get("action") or "entry",
-                symbol=data.get("symbol") or "UNKNOWN",
-                direction=data.get("direction") or "long",
+                action=parsed_action,
+                symbol=parsed_symbol or "UNKNOWN",
+                direction=parsed_direction or "long",
                 order_type=data.get("order_type") or "market",
                 entry_price=data.get("entry_price"),
                 stop_loss=data.get("stop_loss"),
