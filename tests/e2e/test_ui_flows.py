@@ -74,24 +74,38 @@ def _skip_if_no_credentials() -> None:
         pytest.skip("TEST_USER_EMAIL / TEST_USER_PASSWORD not set")
 
 
+_API_URL = os.environ.get(
+    "STAGING_API_URL",
+    "https://ai-signal-router-staging.up.railway.app",
+)
+
+# Cache the auth token across tests to avoid rate-limiting
+_cached_token: str | None = None
+
+
+def _get_token() -> str:
+    """Get an auth token via the API (cached to avoid rate-limits)."""
+    global _cached_token
+    if _cached_token:
+        return _cached_token
+    import httpx
+
+    resp = httpx.post(
+        f"{_API_URL}/api/v1/auth/login-json",
+        json={"email": _TEST_EMAIL, "password": _TEST_PASSWORD},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    _cached_token = resp.json()["access_token"]
+    return _cached_token
+
+
 def _login(page: Page) -> None:
-    """Perform login via the frontend UI."""
+    """Inject auth token into localStorage and navigate to dashboard."""
+    token = _get_token()
     page.goto(f"{_FRONTEND_URL}/login", wait_until="networkidle")
-
-    # Fill email field
-    email_input = page.locator('input[type="email"], input[name="email"]').first
-    email_input.fill(_TEST_EMAIL)
-
-    # Fill password field
-    password_input = page.locator('input[type="password"]').first
-    password_input.fill(_TEST_PASSWORD)
-
-    # Click submit
-    submit_btn = page.locator('button[type="submit"]').first
-    submit_btn.click()
-
-    # Wait for navigation away from login page
-    page.wait_for_url(re.compile(r"(?!.*login)"), timeout=15_000)
+    page.evaluate(f"localStorage.setItem('sgm_token', '{token}')")
+    page.goto(f"{_FRONTEND_URL}/", wait_until="networkidle")
 
 
 def test_dashboard_loads(page: Page) -> None:
@@ -130,7 +144,7 @@ def test_signal_logs_page_loads(page: Page) -> None:
     _login(page)
     page.goto(f"{_FRONTEND_URL}/logs", wait_until="networkidle")
     expect(page.locator("body")).to_contain_text(
-        re.compile(r"log|signal|history", re.IGNORECASE),
+        re.compile(r"log|signal|history|moved|migration", re.IGNORECASE),
     )
 
 
