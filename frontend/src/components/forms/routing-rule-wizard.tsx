@@ -98,30 +98,39 @@ export function RoutingRuleWizard({ onComplete }: Props) {
     }
   }
 
-  // Called when Actions step is the final step (SageMaster path)
+  // Called when Actions step is the final step (SageMaster path).
+  // Uses setData callback to read the latest state (avoids stale closure).
   async function handleActionsFinish(enabledActions: string[], riskOverrides: Record<string, unknown>, keywordBlacklist: string[]) {
     // Merge MM mode into risk_overrides if set
     const finalRiskOverrides = { ...riskOverrides };
-    if (data.money_management_mode && data.money_management_mode !== "unsure") {
-      finalRiskOverrides.money_management_mode = data.money_management_mode;
-    }
-    setData((prev) => ({ ...prev, enabled_actions: enabledActions, risk_overrides: finalRiskOverrides, keyword_blacklist: keywordBlacklist }));
-    // Submit directly with empty mappings
-    const merged = { ...data, enabled_actions: enabledActions, risk_overrides: finalRiskOverrides, keyword_blacklist: keywordBlacklist };
-    const payload: RoutingRuleCreate = {
-      source_channel_id: merged.source_channel_id!,
-      source_channel_name: merged.source_channel_name,
-      destination_webhook_url: merged.destination_webhook_url!,
-      payload_version: merged.payload_version || "V1",
-      symbol_mappings: {},
-      risk_overrides: finalRiskOverrides,
-      webhook_body_template: merged.webhook_body_template ?? null,
-      rule_name: merged.rule_name || null,
-      destination_label: merged.destination_label || null,
-      destination_type: merged.destination_type || "sagemaster_forex",
-      enabled_actions: enabledActions,
-      keyword_blacklist: keywordBlacklist,
-    };
+
+    // Read latest wizard data via ref-stable callback to avoid stale closure
+    let payload: RoutingRuleCreate | null = null;
+    setData((prev) => {
+      if (prev.money_management_mode && prev.money_management_mode !== "unsure") {
+        finalRiskOverrides.money_management_mode = prev.money_management_mode;
+      }
+      payload = {
+        source_channel_id: prev.source_channel_id!,
+        source_channel_name: prev.source_channel_name,
+        destination_webhook_url: prev.destination_webhook_url!,
+        payload_version: prev.payload_version || "V1",
+        symbol_mappings: {},
+        risk_overrides: finalRiskOverrides,
+        webhook_body_template: prev.webhook_body_template ?? null,
+        rule_name: prev.rule_name || null,
+        destination_label: prev.destination_label || null,
+        destination_type: prev.destination_type || "sagemaster_forex",
+        enabled_actions: enabledActions,
+        keyword_blacklist: keywordBlacklist,
+      };
+      return { ...prev, enabled_actions: enabledActions, risk_overrides: finalRiskOverrides, keyword_blacklist: keywordBlacklist };
+    });
+
+    // Wait one tick for setData callback to execute
+    await new Promise((r) => setTimeout(r, 0));
+
+    if (!payload) return;
 
     try {
       await createRule.mutateAsync(payload);
