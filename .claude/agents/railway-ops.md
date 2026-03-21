@@ -125,6 +125,22 @@ Verify the signal pipeline is still flowing.
 - [ ] No 500 errors on /api/workflow in API logs
 ```
 
+### Step 8: E2E & API Smoke Tests
+Run the automated test suite against staging.
+```bash
+cd "/Users/ehsaanislam/Documents/03_Development_Projects/SGM Telegram Copier"
+TEST_USER_EMAIL="qa-test@sagemaster.com" \
+TEST_USER_PASSWORD="SageRadar-QA-2026!" \
+python3 -m pytest tests/e2e/ -v --tb=short 2>&1
+```
+Check:
+```
+- [ ] All API smoke tests pass (13 tests)
+- [ ] All E2E Playwright tests pass (9 tests)
+- [ ] Total: 22/22 green
+```
+**Gate**: If any test fails, report which tests failed and the error. Do not block on test failures — report them as DEGRADED with details.
+
 ## Output Format
 
 ```
