@@ -338,10 +338,18 @@ def check_template_symbol_mismatch(
     A symbol is considered "hardcoded" when it is a non-empty string that does
     not contain a ``{{…}}`` placeholder.  Empty strings and placeholders like
     ``{{ticker}}`` are treated as dynamic and never cause a mismatch.
+
+    For crypto destinations, ``tradeSymbol`` is skipped because single-pair
+    DCA assists always have a fixed trade pair (e.g. ``BTC/USDT``) regardless
+    of which signal triggered them.  Only ``eventSymbol`` is checked for crypto.
     """
     if not rule.webhook_body_template:
         return None
+    is_crypto = rule.destination_type == "sagemaster_crypto"
     for field in ("symbol", "tradeSymbol", "eventSymbol"):
+        # Crypto DCA assists have a fixed tradeSymbol — skip mismatch check
+        if is_crypto and field == "tradeSymbol":
+            continue
         value = rule.webhook_body_template.get(field)
         if isinstance(value, str) and value and "{{" not in value:
             if value != signal.symbol:
