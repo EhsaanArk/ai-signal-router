@@ -1365,12 +1365,17 @@ async def update_routing_rule(
             detail=f"Invalid destination webhook URL: {reason}",
         )
 
-    # Prevent duplicate webhook URLs across accounts when URL changes
-    if "destination_webhook_url" in update_data and update_data["destination_webhook_url"] != row.destination_webhook_url:
+    # Prevent duplicate webhook URLs across accounts:
+    # - when URL is changed to one already used by another account
+    # - when reactivating a rule whose URL is now used by another account
+    url_changed = "destination_webhook_url" in update_data and update_data["destination_webhook_url"] != row.destination_webhook_url
+    reactivating = update_data.get("is_active") is True and not row.is_active
+    if url_changed or reactivating:
+        check_url = update_data.get("destination_webhook_url", row.destination_webhook_url)
         dup_result = await db.execute(
             select(RoutingRuleModel.id)
             .where(
-                RoutingRuleModel.destination_webhook_url == update_data["destination_webhook_url"],
+                RoutingRuleModel.destination_webhook_url == check_url,
                 RoutingRuleModel.user_id != current_user.id,
                 RoutingRuleModel.is_active.is_(True),
             )
