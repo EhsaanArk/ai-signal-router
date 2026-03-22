@@ -332,7 +332,7 @@ async def login(
     )
     user_row = result.scalar_one_or_none()
 
-    if user_row is None or not pwd_context.verify(
+    if user_row is None or not user_row.password_hash or user_row.password_hash == "!" or not pwd_context.verify(
         form_data.password, user_row.password_hash
     ):
         raise HTTPException(
@@ -367,7 +367,7 @@ async def login_json(
     )
     user_row = result.scalar_one_or_none()
 
-    if user_row is None or not pwd_context.verify(
+    if user_row is None or not user_row.password_hash or user_row.password_hash == "!" or not pwd_context.verify(
         body.password, user_row.password_hash
     ):
         raise HTTPException(
