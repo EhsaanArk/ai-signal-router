@@ -38,18 +38,25 @@ export function PrivacyPage() {
             <h3 className="text-lg font-medium mt-4 mb-2">2.1 Account Data</h3>
             <ul className="list-disc pl-6 space-y-1 text-muted-foreground">
               <li><strong>Email address</strong> — used for authentication, account recovery, and service communications.</li>
-              <li><strong>Hashed password</strong> — stored using bcrypt; we never store plain-text passwords.</li>
+              <li><strong>Password</strong> — managed by our authentication provider (Supabase). We do not store passwords directly in our database.</li>
               <li><strong>Account creation timestamp</strong> — for account management.</li>
             </ul>
 
-            <h3 className="text-lg font-medium mt-4 mb-2">2.2 Telegram Data</h3>
+            <h3 className="text-lg font-medium mt-4 mb-2">2.2 OAuth Data (Google Sign-In)</h3>
+            <ul className="list-disc pl-6 space-y-1 text-muted-foreground">
+              <li><strong>Google email address</strong> — used to create or link your account when signing in with Google.</li>
+              <li><strong>Google profile name</strong> — may be stored in your authentication profile. Not displayed publicly.</li>
+              <li>We do not access your Google contacts, calendar, or any other Google data beyond basic profile information.</li>
+            </ul>
+
+            <h3 className="text-lg font-medium mt-4 mb-2">2.3 Telegram Data</h3>
             <ul className="list-disc pl-6 space-y-1 text-muted-foreground">
               <li><strong>Telegram session string</strong> — encrypted at rest using AES-256-GCM encryption. Used to maintain your Telegram connection for signal monitoring.</li>
               <li><strong>Telegram phone number</strong> — used only during the authentication handshake. Not stored after connection.</li>
               <li><strong>Channel messages</strong> — from channels you configure for monitoring. Messages are processed in real-time for signal extraction and are not permanently stored in raw form.</li>
             </ul>
 
-            <h3 className="text-lg font-medium mt-4 mb-2">2.3 Signal & Routing Data</h3>
+            <h3 className="text-lg font-medium mt-4 mb-2">2.4 Signal & Routing Data</h3>
             <ul className="list-disc pl-6 space-y-1 text-muted-foreground">
               <li><strong>Parsed signal data</strong> — extracted trading parameters (symbol, direction, entry, SL, TP).</li>
               <li><strong>Routing configurations</strong> — your webhook URLs, symbol mappings, and risk settings.</li>
@@ -57,7 +64,7 @@ export function PrivacyPage() {
               <li><strong>SageMaster webhook URLs</strong> — stored to route signals to your SageMaster accounts.</li>
             </ul>
 
-            <h3 className="text-lg font-medium mt-4 mb-2">2.4 Technical Data</h3>
+            <h3 className="text-lg font-medium mt-4 mb-2">2.5 Technical Data</h3>
             <ul className="list-disc pl-6 space-y-1 text-muted-foreground">
               <li><strong>IP address</strong> — for rate limiting and security.</li>
               <li><strong>Error logs</strong> — sent to Sentry for monitoring and debugging (no personal data included).</li>
@@ -104,8 +111,10 @@ export function PrivacyPage() {
               We do not sell, trade, or rent your personal data. We may share data with:
             </p>
             <ul className="list-disc pl-6 mt-2 space-y-1 text-muted-foreground">
+              <li><strong>Supabase</strong> — authentication provider. Manages user accounts, passwords, sessions, and OAuth sign-in (e.g., Google). Supabase's privacy policy applies.</li>
               <li><strong>SageMaster</strong> — trading signals are routed to your SageMaster webhook URLs as configured by you.</li>
               <li><strong>OpenAI</strong> — signal text is sent to OpenAI's API for AI parsing. OpenAI's data usage policy applies.</li>
+              <li><strong>Google</strong> — if you sign in with Google, authentication is handled via Google OAuth. Google's privacy policy applies.</li>
               <li><strong>Sentry</strong> — error data (no personal information) for monitoring.</li>
               <li><strong>Resend</strong> — email addresses for transactional email delivery.</li>
               <li><strong>Law enforcement</strong> — only when required by law or valid legal process.</li>
