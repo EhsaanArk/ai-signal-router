@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  AlertTriangle, ArrowRight, Check, ChevronDown, ChevronRight,
-  Copy, Info, Loader2, Send, Shield, ShieldAlert, ShieldCheck, ShieldX, X, Zap,
+  ArrowRight, Check, ChevronDown, ChevronRight,
+  Copy, Info, Loader2, Send, ShieldAlert, ShieldCheck, ShieldX, X, Zap,
 } from "lucide-react";
 import {
   Sheet,
@@ -17,9 +17,9 @@ import {
   getActionsForDestination,
   getExamplesForDestination,
   getUnsupportedForDestination,
-  RISK_CONFIG,
+  IMPACT_CONFIG,
   type ActionDefinition,
-  type RiskLevel,
+  type ImpactLevel,
 } from "@/lib/action-definitions";
 import { useUpdateRule } from "@/hooks/use-routing-rules";
 import { useParsePreview, type ParsePreviewResult } from "@/hooks/use-parse-preview";
@@ -51,12 +51,10 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function RiskBadge({ risk }: { risk: RiskLevel }) {
-  const cfg = RISK_CONFIG[risk];
-  const Icon = risk === "destructive" ? ShieldAlert : risk === "caution" ? AlertTriangle : Shield;
+function ImpactBadge({ impact }: { impact: ImpactLevel }) {
+  const cfg = IMPACT_CONFIG[impact];
   return (
     <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border", cfg.bg, cfg.color, cfg.border)}>
-      <Icon className="h-3 w-3" />
       {cfg.label}
     </span>
   );
@@ -79,7 +77,7 @@ function ActionCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const examples = getExamplesForDestination(action, destinationType);
-  const riskCfg = RISK_CONFIG[action.risk];
+  const impactCfg = IMPACT_CONFIG[action.impact];
 
   // V1 forex entry actions use simplified descriptions
   const isV1Entry = payloadVersion === "V1" && action.isEntry && action.v1;
@@ -91,8 +89,8 @@ function ActionCard({
     <div className={cn(
       "rounded-lg border transition-all",
       !isEnabled && "opacity-40",
-      action.risk === "destructive" && isEnabled && "border-red-500/20",
-      action.risk === "caution" && isEnabled && "border-amber-500/15",
+      action.impact === "high-impact" && isEnabled && "border-red-500/20",
+      action.impact === "increases-exposure" && isEnabled && "border-amber-500/15",
     )}>
       {/* Header row */}
       <div className="flex items-center gap-3 px-4 py-3">
@@ -111,7 +109,7 @@ function ActionCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold">{action.label}</span>
-            <RiskBadge risk={action.risk} />
+            <ImpactBadge impact={action.impact} />
             {isV1Entry && (
               <span className="text-[9px] font-medium text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded">V1 — SL/TP from strategy</span>
             )}
@@ -138,10 +136,10 @@ function ActionCard({
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-1">
-              <Zap className={cn("h-3 w-3", riskCfg.color)} />
+              <Zap className={cn("h-3 w-3", impactCfg.color)} />
               <span className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">What gets dispatched</span>
             </div>
-            <p className={cn("text-xs leading-relaxed", action.risk === "destructive" ? "text-red-400" : "text-foreground/80")}>
+            <p className={cn("text-xs leading-relaxed", action.impact === "high-impact" ? "text-red-400" : "text-foreground/80")}>
               {effect}
             </p>
           </div>
@@ -334,7 +332,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
               <div>
                 <p className="text-xs font-semibold text-red-500">About high-impact webhooks</p>
                 <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-                  Actions marked <span className="text-red-500 font-medium">Destructive</span> dispatch webhooks that instruct your connected platform to close positions.
+                  Actions marked <span className="text-red-500 font-medium">High Impact</span> dispatch webhooks that instruct your connected platform to close positions.
                   Sage Radar only forwards the webhook — <span className="font-medium text-foreground">you are in full control</span> of
                   your trading platform and any actions it takes. If you&apos;re unsure whether your signal provider sends these commands,
                   consider disabling them until you&apos;ve verified their signal format using the simulator below.
