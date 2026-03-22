@@ -257,8 +257,8 @@ export function TermsPage() {
             <h2 className="text-xl font-semibold mb-3">18. Contact</h2>
             <p className="text-muted-foreground leading-relaxed">
               For questions about these Terms, contact us at{" "}
-              <a href="mailto:support@sageintelligence.io" className="text-primary hover:underline">
-                support@sageintelligence.io
+              <a href="mailto:support@sageradar.io" className="text-primary hover:underline">
+                support@sageradar.io
               </a>
               .
             </p>
