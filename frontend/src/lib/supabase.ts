@@ -14,7 +14,7 @@ export const supabase = createClient(
   supabaseKey || "",
   {
     auth: {
-      flowType: "pkce",
+      flowType: "implicit",
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: true,
