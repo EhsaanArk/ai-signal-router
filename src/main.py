@@ -185,6 +185,81 @@ def create_app() -> FastAPI:
                 if promoted:
                     logger.info("Admin bootstrap: %s → is_admin=True, tier=%s", promoted, admin_tier)
 
+        # ------------------------------------------------------------------
+        # ONE-TIME: Send beta update email to all verified users
+        # Remove this block after deploy confirms emails sent.
+        # ------------------------------------------------------------------
+        if settings_local.RESEND_API_KEY and not local_mode:
+            try:
+                import resend
+                from sqlalchemy import text as sa_text
+                from sqlalchemy.ext.asyncio import AsyncSession as SASession
+                from src.adapters.db.session import get_engine
+
+                resend.api_key = settings_local.RESEND_API_KEY
+                engine = get_engine()
+                async with SASession(engine, expire_on_commit=False) as db:
+                    result = await db.execute(
+                        sa_text("SELECT email FROM users WHERE email_verified = true AND is_disabled = false")
+                    )
+                    emails = [row[0] for row in result.fetchall()]
+
+                logger.info("ONE-TIME EMAIL: Sending beta update to %d users", len(emails))
+
+                _EMAIL_HTML = (
+                    '<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;color:#e4e4e7;background:#09090b;max-width:560px;margin:0 auto;padding:32px 20px;">'
+                    '<div style="text-align:center;margin-bottom:24px;">'
+                    '<img src="https://app.radar.sagemaster.com/logo.svg" width="40" height="40" alt="Sage Radar AI" style="margin-bottom:8px;" />'
+                    '<h1 style="font-size:18px;font-weight:600;color:#fafafa;margin:0;">Sage Radar AI <span style="font-size:11px;color:#f59e0b;background:rgba(245,158,11,0.15);padding:2px 6px;border-radius:999px;">Beta</span></h1>'
+                    '</div>'
+                    '<p style="font-size:14px;line-height:1.6;color:#a1a1aa;">Hi there,</p>'
+                    '<p style="font-size:14px;line-height:1.6;color:#a1a1aa;">We\'ve made some important updates to Sage Radar AI Beta that require a quick action on your end.</p>'
+                    '<h2 style="font-size:15px;color:#fafafa;margin-top:28px;">1. Updated Login URL</h2>'
+                    '<p style="font-size:14px;line-height:1.6;color:#a1a1aa;">Please use this link to sign in:</p>'
+                    '<div style="text-align:center;margin:16px 0;">'
+                    '<a href="https://app.radar.sagemaster.com" style="display:inline-block;background:#10b981;color:#fff;font-weight:600;font-size:14px;padding:12px 28px;border-radius:8px;text-decoration:none;">Sign In to Sage Radar AI</a>'
+                    '</div>'
+                    '<p style="font-size:13px;color:#71717a;">If you\'ve been using any other link, please switch to the one above.</p>'
+                    '<h2 style="font-size:15px;color:#fafafa;margin-top:28px;">2. Updated Authentication</h2>'
+                    '<p style="font-size:14px;line-height:1.6;color:#a1a1aa;">We\'ve upgraded our authentication system for better security and reliability. As a result:</p>'
+                    '<ul style="font-size:14px;line-height:1.8;color:#a1a1aa;padding-left:20px;">'
+                    '<li><strong style="color:#fafafa;">You may need to reset your password.</strong> Use the "Forgot Password" link on the login page \u2014 you\'ll receive a reset email within seconds.</li>'
+                    '<li><strong style="color:#fafafa;">Or use Magic Link</strong> \u2014 enter your email on the login page and we\'ll send you a one-click login link. No password needed.</li>'
+                    '</ul>'
+                    '<h2 style="font-size:15px;color:#fafafa;margin-top:28px;">What\'s New</h2>'
+                    '<p style="font-size:14px;line-height:1.6;color:#a1a1aa;">While we were at it, we also shipped:</p>'
+                    '<ul style="font-size:14px;line-height:1.8;color:#a1a1aa;padding-left:20px;">'
+                    '<li>Full-screen Signal Command Reference with trading context and real examples</li>'
+                    '<li>Smarter action filtering with forwarding verdicts in the signal simulator</li>'
+                    '<li>Pipeline health indicator on the dashboard</li>'
+                    '</ul>'
+                    '<p style="font-size:14px;line-height:1.6;color:#a1a1aa;margin-top:24px;">As a reminder, Sage Radar AI is currently in <strong style="color:#f59e0b;">closed beta</strong>. We appreciate your patience as we refine the experience and your feedback continues to shape the product.</p>'
+                    '<p style="font-size:14px;line-height:1.6;color:#a1a1aa;margin-top:24px;">\u2014 The Sage Radar Team</p>'
+                    '<hr style="border:none;border-top:1px solid #27272a;margin:32px 0 16px;" />'
+                    '<p style="font-size:11px;color:#52525b;text-align:center;">Sage Radar AI Beta \u2014 Signal Intelligence Platform</p>'
+                    '</body></html>'
+                )
+
+                sent, failed = 0, 0
+                for email in emails:
+                    try:
+                        resend.Emails.send({
+                            "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
+                            "to": [email],
+                            "subject": "Action Required: New Login URL + Auth Update \u2014 Sage Radar AI Beta",
+                            "html": _EMAIL_HTML,
+                        })
+                        sent += 1
+                    except Exception as exc:
+                        failed += 1
+                        logger.warning("ONE-TIME EMAIL failed for %s: %s", email, exc)
+
+                logger.info("ONE-TIME EMAIL: Done — %d sent, %d failed", sent, failed)
+            except Exception as exc:
+                logger.error("ONE-TIME EMAIL: Failed to run — %s", exc)
+        # END ONE-TIME EMAIL BLOCK
+        # ------------------------------------------------------------------
+
         yield
 
         # Shutdown
