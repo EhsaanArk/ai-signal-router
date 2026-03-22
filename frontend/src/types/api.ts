@@ -25,6 +25,7 @@ export interface TelegramStatusResponse {
   connected_at: string | null;
   disconnected_at: string | null;
   disconnected_reason: string | null;
+  last_signal_at: string | null;
 }
 
 export interface SendCodeResponse {
