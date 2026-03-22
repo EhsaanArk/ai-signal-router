@@ -79,6 +79,7 @@ class RegisterRequest(BaseModel):
     """User registration payload."""
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
+    terms_accepted: bool = Field(False, description="User must accept ToS and Privacy Policy")
 
 
 class LoginRequest(BaseModel):
@@ -416,6 +417,13 @@ async def register(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> LoginResponse:
     """Register a new user and return a JWT."""
+    # Require terms acceptance
+    if not body.terms_accepted:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="You must accept the Terms of Service and Privacy Policy",
+        )
+
     # Check email uniqueness (case-insensitive)
     normalised_email = str(body.email).lower()
     result = await db.execute(
@@ -428,7 +436,11 @@ async def register(
         )
 
     hashed = pwd_context.hash(body.password)
-    new_user = UserModel(email=normalised_email, password_hash=hashed)
+    new_user = UserModel(
+        email=normalised_email,
+        password_hash=hashed,
+        terms_accepted_at=datetime.now(timezone.utc),
+    )
     db.add(new_user)
     await db.flush()
 
