@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Copy, FileJson, ListChecks, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -134,19 +135,25 @@ export function RoutingRulesTable({ rules }: Props) {
                     <TooltipContent>Custom template</TooltipContent>
                   </Tooltip>
                 )}
-                <button
-                  onClick={() => handleToggle(rule)}
-                  disabled={togglingId === rule.id}
-                  className="flex items-center gap-1.5"
-                >
+                <div className="flex items-center gap-1.5">
+                  <Switch
+                    size="sm"
+                    checked={rule.is_active}
+                    disabled={togglingId === rule.id}
+                    onCheckedChange={() => handleToggle(rule)}
+                    className={cn(
+                      rule.is_active
+                        ? "data-[state=checked]:bg-emerald-500"
+                        : ""
+                    )}
+                  />
                   <span className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    rule.is_active ? "bg-emerald-500" : "bg-zinc-400"
-                  )} />
-                  <span className="text-[10px] text-muted-foreground">
+                    "text-[10px]",
+                    rule.is_active ? "text-emerald-500" : "text-muted-foreground"
+                  )}>
                     {rule.is_active ? "Active" : "Paused"}
                   </span>
-                </button>
+                </div>
               </div>
             </div>
             <div className="text-[10px] truncate">
@@ -255,18 +262,16 @@ export function RoutingRulesTable({ rules }: Props) {
                       {rule.payload_version}
                     </span>
                     {isSageMaster(rule.destination_type) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={() => setCommandsRuleId(rule.id)}
-                            className="inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-                          >
-                            <ListChecks className="h-3 w-3" />
-                            {getActionBadge(rule.enabled_actions, rule.destination_type)}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>View signal commands</TooltipContent>
-                      </Tooltip>
+                      <button
+                        onClick={() => setCommandsRuleId(rule.id)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted hover:border-border transition-colors"
+                      >
+                        <ListChecks className="h-3.5 w-3.5" />
+                        Commands
+                        <span className="text-[10px] font-mono opacity-60">
+                          {getActionBadge(rule.enabled_actions, rule.destination_type)}
+                        </span>
+                      </button>
                     )}
                   </div>
                 </TableCell>
@@ -292,19 +297,25 @@ export function RoutingRulesTable({ rules }: Props) {
                   </span>
                 </TableCell>
                 <TableCell className="py-2">
-                  <button
-                    onClick={() => handleToggle(rule)}
-                    disabled={togglingId === rule.id}
-                    className="flex items-center gap-1.5 group"
-                  >
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      size="sm"
+                      checked={rule.is_active}
+                      disabled={togglingId === rule.id}
+                      onCheckedChange={() => handleToggle(rule)}
+                      className={cn(
+                        rule.is_active
+                          ? "data-[state=checked]:bg-emerald-500"
+                          : ""
+                      )}
+                    />
                     <span className={cn(
-                      "h-1.5 w-1.5 rounded-full transition-colors",
-                      rule.is_active ? "bg-emerald-500" : "bg-zinc-400"
-                    )} />
-                    <span className="text-[11px] text-muted-foreground group-hover:text-foreground transition-colors">
+                      "text-[11px]",
+                      rule.is_active ? "text-emerald-500" : "text-muted-foreground"
+                    )}>
                       {rule.is_active ? "Active" : "Paused"}
                     </span>
-                  </button>
+                  </div>
                 </TableCell>
                 <TableCell className="py-2">
                   <DropdownMenu>
