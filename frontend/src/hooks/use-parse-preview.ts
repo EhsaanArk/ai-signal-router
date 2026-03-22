@@ -12,11 +12,15 @@ export interface ParsePreviewResult {
   take_profits: number[];
   percentage: number | null;
   ignore_reason: string | null;
+  display_action_label: string | null;
+  route_would_forward: boolean | null;
+  blocked_reason: string | null;
 }
 
 interface ParsePreviewRequest {
   message: string;
   destination_type: string;
+  enabled_actions?: string[] | null;
 }
 
 export function useParsePreview() {

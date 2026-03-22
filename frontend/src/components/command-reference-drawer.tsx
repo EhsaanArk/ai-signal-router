@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Check, Copy, Loader2, Send, X } from "lucide-react";
+import { ArrowRight, Check, Copy, Loader2, Send, ShieldCheck, ShieldX, X } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -11,12 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
-  getActionsForDestination,
+  getActionExamples,
   getUnsupportedForDestination,
   type ActionDefinition,
 } from "@/lib/action-definitions";
 import { useUpdateRule } from "@/hooks/use-routing-rules";
 import { useParsePreview, type ParsePreviewResult } from "@/hooks/use-parse-preview";
+import { useCopyToClipboard } from "@/hooks/use-clipboard";
 import { cn } from "@/lib/utils";
 import type { RoutingRuleResponse } from "@/types/api";
 
@@ -98,7 +99,7 @@ function CommandTableRow({
 }
 
 export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
-  const actions = getActionsForDestination(rule.destination_type);
+  const actions = getActionExamples(rule.destination_type);
   const unsupported = getUnsupportedForDestination(rule.destination_type);
   const entryActions = actions.filter((a) => a.isEntry);
   const optionalActions = actions.filter((a) => !a.isEntry);
@@ -114,6 +115,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
 
   const updateRule = useUpdateRule();
   const parsePreview = useParsePreview();
+  const [copyText] = useCopyToClipboard();
   const [testMessage, setTestMessage] = useState("");
   const [previewResult, setPreviewResult] = useState<ParsePreviewResult | null>(null);
 
@@ -144,7 +146,11 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
     if (!testMessage.trim()) return;
     setPreviewResult(null);
     parsePreview.mutate(
-      { message: testMessage.trim(), destination_type: rule.destination_type },
+      {
+        message: testMessage.trim(),
+        destination_type: rule.destination_type,
+        enabled_actions: rule.enabled_actions ?? null,
+      },
       {
         onSuccess: (result) => setPreviewResult(result),
         onError: (err) => {
@@ -343,6 +349,29 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
                       {getActionLabel(previewResult.action)}
                     </span>
                   </div>
+
+                  {/* Forwarding verdict */}
+                  {previewResult.route_would_forward != null && (
+                    <div className={cn(
+                      "flex items-center gap-1.5 text-[10px] font-medium rounded px-2 py-1",
+                      previewResult.route_would_forward
+                        ? "bg-emerald-500/10 text-emerald-600"
+                        : "bg-red-500/10 text-red-500",
+                    )}>
+                      {previewResult.route_would_forward ? (
+                        <>
+                          <ShieldCheck className="h-3 w-3 shrink-0" />
+                          Would be forwarded to webhook
+                        </>
+                      ) : (
+                        <>
+                          <ShieldX className="h-3 w-3 shrink-0" />
+                          {previewResult.blocked_reason || "Blocked by action filter"}
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {/* Parsed details */}
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                     {previewResult.symbol && (
@@ -382,6 +411,15 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
                       </div>
                     )}
                   </div>
+
+                  {/* Copy parsed JSON */}
+                  <button
+                    type="button"
+                    onClick={() => copyText(JSON.stringify(previewResult, null, 2), "Parsed result copied")}
+                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                  >
+                    <Copy className="h-2.5 w-2.5" /> Copy parsed result
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-1">

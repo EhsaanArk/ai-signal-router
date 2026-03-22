@@ -237,7 +237,7 @@ function ReplayComparison({ replay }: { replay: ReplayResponse }) {
 }
 
 export function SignalDetailPanel({ log, open, onOpenChange }: Props) {
-  const copy = useCopyToClipboard();
+  const [copy] = useCopyToClipboard();
   const { data: rules } = useRoutingRules();
   const { user } = useAuth();
   const replayMutation = useReplaySignal();
