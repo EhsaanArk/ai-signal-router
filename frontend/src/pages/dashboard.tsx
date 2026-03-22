@@ -82,15 +82,31 @@ export function DashboardPage() {
       {/* Stats Strip */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-6">
-          {/* Telegram */}
-          <Link to="/telegram" className="flex items-center gap-2 group">
+          {/* Telegram Pipeline Heartbeat */}
+          <Link to="/telegram" className="flex items-center gap-2 group" title={
+            tgLoading ? "Loading..." :
+            isConnected
+              ? `Connected${telegramStatus?.last_signal_at ? ` · Last signal: ${formatRelativeTime(telegramStatus.last_signal_at)}` : ""}`
+              : `Disconnected${telegramStatus?.disconnected_reason ? ` (${telegramStatus.disconnected_reason})` : ""}`
+          }>
             <span className={cn(
               "h-2 w-2 rounded-full",
-              isConnected ? "bg-emerald-500" : "bg-rose-500 animate-pulse"
+              isConnected ? "bg-emerald-500" :
+              telegramStatus?.disconnected_reason === "flood_wait_exhausted"
+                ? "bg-amber-500 animate-pulse"
+                : "bg-rose-500 animate-pulse"
             )} />
             <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors">
-              {tgLoading ? "..." : isConnected ? "Connected" : "Disconnected"}
+              {tgLoading ? "..." :
+               isConnected ? "Connected" :
+               telegramStatus?.disconnected_reason === "flood_wait_exhausted" ? "Reconnecting" :
+               "Disconnected"}
             </span>
+            {isConnected && telegramStatus?.last_signal_at && (
+              <span className="hidden sm:inline text-[10px] text-muted-foreground/60">
+                · {formatRelativeTime(telegramStatus.last_signal_at)}
+              </span>
+            )}
           </Link>
 
           {/* Rules */}

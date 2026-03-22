@@ -210,6 +210,7 @@ class TelegramStatusResponse(BaseModel):
     connected_at: str | None = None
     disconnected_at: str | None = None
     disconnected_reason: str | None = None
+    last_signal_at: str | None = None
 
 
 # --- Channels ---------------------------------------------------------------
@@ -1050,6 +1051,18 @@ async def telegram_status(
             )
         else:
             response = TelegramStatusResponse(connected=False)
+
+    # Attach last signal timestamp for pipeline health visibility
+    last_signal = (
+        await db.execute(
+            select(SignalLogModel.created_at)
+            .where(SignalLogModel.user_id == current_user.id)
+            .order_by(SignalLogModel.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last_signal:
+        response.last_signal_at = last_signal.isoformat()
 
     # Cache for 10s (matches frontend refetch interval)
     await cache.set(cache_key, response.model_dump_json(), ttl_seconds=10)
