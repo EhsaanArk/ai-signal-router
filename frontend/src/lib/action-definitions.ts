@@ -173,7 +173,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     key: "start_assist",
     label: "Start Assist",
     description: "Dispatch a webhook to resume the Assist",
-    example: '"Start the bot", "Resume trading"',
+    example: '"Start the Assist", "Resume trading"',
     examples: {
       forex: ["Start the bot", "Resume trading", "Turn on the assist", "Start copying signals again"],
       crypto: ["Start AI assist", "Resume the bot", "Turn on trading", "Reactivate assist"],
@@ -186,7 +186,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     key: "stop_assist",
     label: "Stop Assist",
     description: "Dispatch a webhook to pause the Assist",
-    example: '"Stop the bot", "Pause trading"',
+    example: '"Stop the Assist", "Pause trading"',
     examples: {
       forex: ["Stop the bot", "Pause trading", "Turn off assist", "Stop copying", "Hold off on new trades"],
       crypto: ["Stop AI assist", "Pause the bot", "Turn off trading", "No new trades"],
