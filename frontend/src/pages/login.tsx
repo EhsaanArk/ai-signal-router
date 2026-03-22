@@ -40,7 +40,7 @@ function GoogleIcon() {
 
 export function LoginPage() {
   usePageTitle("Sign In");
-  const { login, token } = useAuth();
+  const { login, token, user, authError, clearAuthError } = useAuth();
   const [loading, setLoading] = useState(false);
   const [magicLinkLoading, setMagicLinkLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -52,11 +52,12 @@ export function LoginPage() {
     defaultValues: { email: "", password: "" },
   });
 
-  if (token) return <Navigate to="/" replace />;
+  if (token && user) return <Navigate to="/" replace />;
 
   async function onSubmit(values: FormValues) {
     setLoading(true);
     setFormError(null);
+    clearAuthError();
     try {
       await login(values.email, values.password);
       toast.success("Logged in successfully");
@@ -70,6 +71,7 @@ export function LoginPage() {
   async function handleGoogle() {
     setGoogleLoading(true);
     setFormError(null);
+    clearAuthError();
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
@@ -90,6 +92,7 @@ export function LoginPage() {
     }
     setMagicLinkLoading(true);
     setFormError(null);
+    clearAuthError();
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
@@ -139,9 +142,9 @@ export function LoginPage() {
 
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              {formError && (
+              {(formError || authError) && (
                 <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {formError}
+                  {formError || authError}
                 </div>
               )}
               <FormField

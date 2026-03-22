@@ -50,7 +50,7 @@ function GoogleIcon() {
 
 export function RegisterPage() {
   usePageTitle("Create Account");
-  const { register: registerUser, token } = useAuth();
+  const { register: registerUser, token, user, authError, clearAuthError } = useAuth();
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -60,11 +60,12 @@ export function RegisterPage() {
     defaultValues: { email: "", password: "", confirmPassword: "", termsAccepted: false },
   });
 
-  if (token) return <Navigate to="/" replace />;
+  if (token && user) return <Navigate to="/" replace />;
 
   async function onSubmit(values: FormValues) {
     setLoading(true);
     setFormError(null);
+    clearAuthError();
     try {
       await registerUser(values.email, values.password);
       toast.success("Account created successfully");
@@ -78,6 +79,7 @@ export function RegisterPage() {
   async function handleGoogle() {
     setGoogleLoading(true);
     setFormError(null);
+    clearAuthError();
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
@@ -113,9 +115,9 @@ export function RegisterPage() {
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          {formError && (
+          {(formError || authError) && (
             <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {formError}
+              {formError || authError}
             </div>
           )}
           <FormField
