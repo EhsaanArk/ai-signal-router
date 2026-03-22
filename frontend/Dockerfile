@@ -7,6 +7,13 @@ COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 
 COPY . .
+
+# Vite embeds VITE_* env vars at build time — Railway passes them as build args
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY
+ARG VITE_API_BASE_URL
+ARG VITE_SENTRY_DSN
+
 RUN npm run build
 
 # Stage 2: Serve with nginx
