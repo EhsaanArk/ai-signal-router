@@ -145,3 +145,124 @@ class ResendNotifier:
         except Exception as exc:
             logger.error("Failed to send disconnect alert email: %s", exc)
             sentry_sdk.capture_exception(exc)
+
+    # ------------------------------------------------------------------
+    # Milestone emails (welcome sequence)
+    # ------------------------------------------------------------------
+
+    async def send_welcome(self, user_email: str, frontend_url: str) -> None:
+        """Send welcome email after registration with quick-start guide."""
+        if not self._api_key:
+            return
+
+        html = (
+            '<!DOCTYPE html><html><body style="font-family:sans-serif;color:#333;'
+            'max-width:480px;margin:0 auto;padding:20px">'
+            "<h2>Welcome to Sage Radar AI!</h2>"
+            "<p>You're in. Here's how to get started in 3 steps:</p>"
+            "<ol>"
+            "<li><strong>Connect your Telegram</strong> — Link your Telegram account "
+            "so we can monitor your signal channels.</li>"
+            "<li><strong>Create a routing rule</strong> — Pick a channel, map symbols, "
+            "and enter your SageMaster webhook URL.</li>"
+            "<li><strong>Go live</strong> — Signals will be parsed and routed automatically.</li>"
+            "</ol>"
+            f'<p style="text-align:center;margin:24px 0">'
+            f'<a href="{frontend_url}/setup" target="_blank" '
+            'style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;'
+            'border-radius:6px;text-decoration:none;font-weight:600">Get Started →</a></p>'
+            '<p style="font-size:13px;color:#666">If you have questions, reply to this email '
+            "or reach out at support@sagemaster.com.</p>"
+            "</body></html>"
+        )
+
+        try:
+            resend.api_key = self._api_key
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": self._from_address,
+                "to": [user_email],
+                "subject": "Welcome to Sage Radar AI — Get started in 3 steps",
+                "html": html,
+            })
+            logger.info("Welcome email sent to %s", user_email)
+        except Exception as exc:
+            logger.error("Failed to send welcome email: %s", exc)
+            sentry_sdk.capture_exception(exc)
+
+    async def send_telegram_connected(
+        self, user_email: str, frontend_url: str,
+    ) -> None:
+        """Send milestone email when user connects their Telegram account."""
+        if not self._api_key:
+            return
+
+        html = (
+            '<!DOCTYPE html><html><body style="font-family:sans-serif;color:#333;'
+            'max-width:480px;margin:0 auto;padding:20px">'
+            "<h2>Telegram Connected!</h2>"
+            "<p>Your Telegram account is now linked to Sage Radar AI. "
+            "We're ready to monitor your signal channels.</p>"
+            "<p><strong>Next step:</strong> Create your first routing rule to start "
+            "forwarding signals to SageMaster.</p>"
+            f'<p style="text-align:center;margin:24px 0">'
+            f'<a href="{frontend_url}/routing-rules/new" target="_blank" '
+            'style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;'
+            'border-radius:6px;text-decoration:none;font-weight:600">Create Routing Rule →</a></p>'
+            '<p style="font-size:13px;color:#666">Your Telegram session is encrypted '
+            "with AES-256-GCM and stored securely.</p>"
+            "</body></html>"
+        )
+
+        try:
+            resend.api_key = self._api_key
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": self._from_address,
+                "to": [user_email],
+                "subject": "Telegram connected — Create your first route",
+                "html": html,
+            })
+            logger.info("Telegram connected email sent to %s", user_email)
+        except Exception as exc:
+            logger.error("Failed to send Telegram connected email: %s", exc)
+            sentry_sdk.capture_exception(exc)
+
+    async def send_first_signal_routed(
+        self, user_email: str, symbol: str, frontend_url: str,
+    ) -> None:
+        """Send celebration email when user's first signal is successfully routed."""
+        if not self._api_key:
+            return
+
+        html = (
+            '<!DOCTYPE html><html><body style="font-family:sans-serif;color:#333;'
+            'max-width:480px;margin:0 auto;padding:20px">'
+            f"<h2>Your first signal was routed!</h2>"
+            f"<p>A <strong>{symbol}</strong> signal was just parsed and sent to "
+            "SageMaster. Your pipeline is live and working.</p>"
+            "<p>From here, you can:</p>"
+            "<ul>"
+            "<li>Add more routing rules to cover additional channels</li>"
+            "<li>Customize symbol mappings and risk settings</li>"
+            "<li>Check your signal logs for processing details</li>"
+            "</ul>"
+            f'<p style="text-align:center;margin:24px 0">'
+            f'<a href="{frontend_url}/logs" target="_blank" '
+            'style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;'
+            'border-radius:6px;text-decoration:none;font-weight:600">View Signal Logs →</a></p>'
+            '<p style="font-size:13px;color:#666">Signals are being routed automatically. '
+            "You don't need to do anything — just let it run.</p>"
+            "</body></html>"
+        )
+
+        try:
+            resend.api_key = self._api_key
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": self._from_address,
+                "to": [user_email],
+                "subject": f"Your first signal was routed — {symbol}",
+                "html": html,
+            })
+            logger.info("First signal routed email sent to %s", user_email)
+        except Exception as exc:
+            logger.error("Failed to send first signal routed email: %s", exc)
+            sentry_sdk.capture_exception(exc)
