@@ -35,6 +35,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     label: "Entry Short (Limit)",
     description: "Open a new short/sell limit order",
     example: '"Sell limit GBPUSD @ 1.2500"',
+    // Keep isEntry flags in sync with backend: src/core/models.py (ENTRY_ACTION_VALUES).
     isEntry: true,
   },
   {
@@ -163,6 +164,14 @@ export function generateActionPreview(
   return JSON.stringify(payload, null, 2);
 }
 
+/** Crypto-specific example overrides for actions whose examples reference forex symbols. */
+const CRYPTO_EXAMPLES: Partial<Record<string, string>> = {
+  start_long_market_deal: '"Buy BTC/USDT at market"',
+  start_short_market_deal: '"Sell ETH/USDT at market"',
+  start_long_limit_deal: '"Buy limit BTC/USDT @ 60000"',
+  start_short_limit_deal: '"Sell limit ETH/USDT @ 3200"',
+};
+
 /** Return the action definitions filtered for a destination type. */
 export function getActionsForDestination(
   destinationType: string,
@@ -174,9 +183,39 @@ export function getActionsForDestination(
   });
 }
 
+/**
+ * Return action definitions with destination-aware examples.
+ * Crypto destinations get crypto-style example text.
+ */
+export function getActionExamples(
+  destinationType: string,
+): ActionDefinition[] {
+  const actions = getActionsForDestination(destinationType);
+  if (destinationType !== "sagemaster_crypto") return actions;
+  return actions.map((a) => {
+    const override = CRYPTO_EXAMPLES[a.key];
+    return override ? { ...a, example: override } : a;
+  });
+}
+
 /** Return all action keys (for initializing enabled_actions). */
 export function getAllActionKeys(destinationType: string): string[] {
   return getActionsForDestination(destinationType).map((a) => a.key);
+}
+
+/**
+ * Return the normalised enabled_actions for a destination.
+ * If null/undefined (= all enabled), returns every key for the destination.
+ * Filters out keys that don't apply to the destination type.
+ */
+export function getNormalizedEnabledActions(
+  enabledActions: string[] | null | undefined,
+  destinationType: string,
+): string[] {
+  const allKeys = getAllActionKeys(destinationType);
+  if (!enabledActions) return allKeys;
+  const validSet = new Set(allKeys);
+  return enabledActions.filter((k) => validSet.has(k));
 }
 
 /** Actions not supported by SageMaster, shown in the Command Reference for clarity. */
