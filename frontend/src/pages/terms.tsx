@@ -249,7 +249,7 @@ export function TermsPage() {
             <h2 className="text-xl font-semibold mb-3">17. Governing Law</h2>
             <p className="text-muted-foreground leading-relaxed">
               These Terms shall be governed by and construed in accordance with the laws of
-              England and Wales, without regard to conflict of law principles.
+              the British Virgin Islands, without regard to conflict of law principles.
             </p>
           </section>
 
@@ -257,8 +257,8 @@ export function TermsPage() {
             <h2 className="text-xl font-semibold mb-3">18. Contact</h2>
             <p className="text-muted-foreground leading-relaxed">
               For questions about these Terms, contact us at{" "}
-              <a href="mailto:support@sagemaster.com" className="text-primary hover:underline">
-                support@sagemaster.com
+              <a href="mailto:support@sageintelligence.io" className="text-primary hover:underline">
+                support@sageintelligence.io
               </a>
               .
             </p>

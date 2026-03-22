@@ -26,7 +26,7 @@ export function PrivacyPage() {
           <section>
             <h2 className="text-xl font-semibold mb-3">1. Introduction</h2>
             <p className="text-muted-foreground leading-relaxed">
-              {APP_NAME} ("the Service"), operated by SageMaster ("we", "us", "our"), is committed
+              {APP_NAME} ("the Service"), operated by Sage Intelligence ("we", "us", "our"), is committed
               to protecting your privacy. This Privacy Policy explains how we collect, use, store,
               and protect your personal data when you use our Service.
             </p>
@@ -61,7 +61,7 @@ export function PrivacyPage() {
               <li><strong>Parsed signal data</strong> — extracted trading parameters (symbol, direction, entry, SL, TP).</li>
               <li><strong>Routing configurations</strong> — your webhook URLs, symbol mappings, and risk settings.</li>
               <li><strong>Signal logs</strong> — records of signals processed, including status (success, failed, ignored) and timestamps.</li>
-              <li><strong>SageMaster webhook URLs</strong> — stored to route signals to your SageMaster accounts.</li>
+              <li><strong>Webhook destination URLs</strong> — stored to route parsed data to your configured third-party platforms.</li>
             </ul>
 
             <h3 className="text-lg font-medium mt-4 mb-2">2.5 Technical Data</h3>
@@ -112,7 +112,7 @@ export function PrivacyPage() {
             </p>
             <ul className="list-disc pl-6 mt-2 space-y-1 text-muted-foreground">
               <li><strong>Supabase</strong> — authentication provider. Manages user accounts, passwords, sessions, and OAuth sign-in (e.g., Google). Supabase's privacy policy applies.</li>
-              <li><strong>SageMaster</strong> — trading signals are routed to your SageMaster webhook URLs as configured by you.</li>
+              <li><strong>Third-party platforms</strong> — parsed data is dispatched to webhook URLs you configure. We do not control these platforms.</li>
               <li><strong>OpenAI</strong> — signal text is sent to OpenAI's API for AI parsing. OpenAI's data usage policy applies.</li>
               <li><strong>Google</strong> — if you sign in with Google, authentication is handled via Google OAuth. Google's privacy policy applies.</li>
               <li><strong>Sentry</strong> — error data (no personal information) for monitoring.</li>
@@ -135,8 +135,8 @@ export function PrivacyPage() {
             </ul>
             <p className="text-muted-foreground leading-relaxed mt-2">
               To exercise any of these rights, use the in-app features in Settings or contact us at{" "}
-              <a href="mailto:support@sagemaster.com" className="text-primary hover:underline">
-                support@sagemaster.com
+              <a href="mailto:support@sageintelligence.io" className="text-primary hover:underline">
+                support@sageintelligence.io
               </a>
               .
             </p>
@@ -182,8 +182,8 @@ export function PrivacyPage() {
             <h2 className="text-xl font-semibold mb-3">12. Contact</h2>
             <p className="text-muted-foreground leading-relaxed">
               For questions about this Privacy Policy or your personal data, contact us at{" "}
-              <a href="mailto:support@sagemaster.com" className="text-primary hover:underline">
-                support@sagemaster.com
+              <a href="mailto:support@sageintelligence.io" className="text-primary hover:underline">
+                support@sageintelligence.io
               </a>
               .
             </p>
