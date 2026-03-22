@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle, ArrowRight, Check, ChevronDown, ChevronRight,
-  Copy, Info, Loader2, Send, Shield, ShieldAlert, X, Zap,
+  Copy, Info, Loader2, Send, Shield, ShieldAlert, ShieldCheck, ShieldX, X, Zap,
 } from "lucide-react";
 import {
   Sheet,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/action-definitions";
 import { useUpdateRule } from "@/hooks/use-routing-rules";
 import { useParsePreview, type ParsePreviewResult } from "@/hooks/use-parse-preview";
+import { useCopyToClipboard } from "@/hooks/use-clipboard";
 import { cn } from "@/lib/utils";
 import type { RoutingRuleResponse } from "@/types/api";
 
@@ -87,7 +88,6 @@ function ActionCard({
     )}>
       {/* Header row */}
       <div className="flex items-center gap-3 px-4 py-3">
-        {/* Toggle */}
         <div className="shrink-0 w-10">
           {readOnly ? (
             <span className="text-[10px] text-emerald-500 font-semibold">ALWAYS</span>
@@ -100,8 +100,6 @@ function ActionCard({
             />
           )}
         </div>
-
-        {/* Action info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold">{action.label}</span>
@@ -109,8 +107,6 @@ function ActionCard({
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">{action.description}</p>
         </div>
-
-        {/* Expand */}
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
@@ -120,10 +116,8 @@ function ActionCard({
         </button>
       </div>
 
-      {/* Expanded details */}
       {expanded && (
         <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
-          {/* Scenario */}
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <Info className="h-3 w-3 text-muted-foreground" />
@@ -131,8 +125,6 @@ function ActionCard({
             </div>
             <p className="text-xs text-foreground/80 leading-relaxed">{action.scenario}</p>
           </div>
-
-          {/* Effect */}
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <Zap className={cn("h-3 w-3", riskCfg.color)} />
@@ -142,8 +134,6 @@ function ActionCard({
               {action.effect}
             </p>
           </div>
-
-          {/* Example messages */}
           <div>
             <span className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">
               Example Telegram messages
@@ -182,6 +172,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
 
   const updateRule = useUpdateRule();
   const parsePreview = useParsePreview();
+  const [copyText] = useCopyToClipboard();
   const [testMessage, setTestMessage] = useState("");
   const [previewResult, setPreviewResult] = useState<ParsePreviewResult | null>(null);
 
@@ -255,7 +246,6 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
         className="w-full sm:max-w-full md:max-w-[85vw] lg:max-w-[75vw] xl:max-w-[65vw] flex flex-col p-0"
         aria-label={`Signal Commands for ${rule.rule_name || rule.source_channel_name || "route"}`}
       >
-        {/* Fixed header */}
         <div className="shrink-0 border-b px-6 py-4">
           <SheetHeader className="space-y-1">
             <SheetTitle className="text-base">Signal Command Reference</SheetTitle>
@@ -265,8 +255,6 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
               {isCrypto ? "SageMaster Crypto" : "SageMaster Forex"}
             </p>
           </SheetHeader>
-
-          {/* How it works — visual flow */}
           <div className="rounded-md bg-muted/30 border border-border/50 px-4 py-2.5 mt-3">
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <span className="font-medium text-foreground/70">How it works:</span>
@@ -285,10 +273,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
           </div>
         </div>
 
-        {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
-
-          {/* Entry Signals */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -301,18 +286,11 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
             </div>
             <div className="grid gap-2">
               {entryActions.map((action) => (
-                <ActionCard
-                  key={action.key}
-                  action={action}
-                  isEnabled={true}
-                  readOnly
-                  destinationType={rule.destination_type}
-                />
+                <ActionCard key={action.key} action={action} isEnabled={true} readOnly destinationType={rule.destination_type} />
               ))}
             </div>
           </div>
 
-          {/* Management Signals */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -338,7 +316,6 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
             </div>
           </div>
 
-          {/* Destructive warning */}
           <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
             <div className="flex items-start gap-2">
               <ShieldAlert className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
@@ -354,7 +331,6 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
             </div>
           </div>
 
-          {/* Not Supported */}
           {unsupported.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-muted-foreground mb-2">Not Supported by SageMaster</h3>
@@ -373,7 +349,6 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
           )}
         </div>
 
-        {/* Test Sandbox — sticky footer */}
         <div className="shrink-0 border-t px-6 py-4 space-y-3 bg-background">
           <div className="flex items-center gap-2">
             <Send className="h-4 w-4 text-primary shrink-0" />
@@ -397,18 +372,8 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
               className="h-10 text-sm flex-1 font-mono"
               disabled={parsePreview.isPending}
             />
-            <Button
-              type="button"
-              size="sm"
-              className="h-10 px-5"
-              onClick={handleTestCommand}
-              disabled={!testMessage.trim() || parsePreview.isPending}
-            >
-              {parsePreview.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                "Parse"
-              )}
+            <Button type="button" size="sm" className="h-10 px-5" onClick={handleTestCommand} disabled={!testMessage.trim() || parsePreview.isPending}>
+              {parsePreview.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Parse"}
             </Button>
           </div>
 
@@ -422,70 +387,48 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
           {previewResult && (
             <div className={cn(
               "rounded-lg border px-4 py-3",
-              previewResult.is_valid_signal
-                ? "border-emerald-500/30 bg-emerald-500/5"
-                : "border-amber-500/30 bg-amber-500/5",
+              previewResult.is_valid_signal ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5",
             )}>
               {previewResult.is_valid_signal ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <code className="text-xs font-mono bg-muted px-2 py-1 rounded max-w-[200px] truncate">
-                      {testMessage}
-                    </code>
+                    <code className="text-xs font-mono bg-muted px-2 py-1 rounded max-w-[200px] truncate">{testMessage}</code>
                     <ArrowRight className="h-3 w-3 text-emerald-500 shrink-0" />
-                    <span className="text-sm font-semibold text-emerald-500">
-                      {getActionLabel(previewResult.action)}
-                    </span>
+                    <span className="text-sm font-semibold text-emerald-500">{getActionLabel(previewResult.action)}</span>
                   </div>
+
+                  {previewResult.route_would_forward != null && (
+                    <div className={cn(
+                      "flex items-center gap-1.5 text-[10px] font-medium rounded px-2 py-1",
+                      previewResult.route_would_forward ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-500",
+                    )}>
+                      {previewResult.route_would_forward ? (
+                        <><ShieldCheck className="h-3 w-3 shrink-0" /> Would be forwarded to webhook</>
+                      ) : (
+                        <><ShieldX className="h-3 w-3 shrink-0" /> {previewResult.blocked_reason || "Blocked by action filter"}</>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-3 gap-x-4 gap-y-1">
-                    {previewResult.symbol && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Symbol</span>
-                        <p className="text-xs font-medium">{previewResult.symbol}</p>
-                      </div>
-                    )}
-                    {previewResult.direction && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Direction</span>
-                        <p className="text-xs font-medium capitalize">{previewResult.direction}</p>
-                      </div>
-                    )}
-                    {previewResult.entry_price != null && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Entry Price</span>
-                        <p className="text-xs font-medium">{previewResult.entry_price}</p>
-                      </div>
-                    )}
-                    {previewResult.stop_loss != null && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Stop Loss</span>
-                        <p className="text-xs font-medium">{previewResult.stop_loss}</p>
-                      </div>
-                    )}
-                    {previewResult.take_profits.length > 0 && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Take Profit</span>
-                        <p className="text-xs font-medium">{previewResult.take_profits.join(", ")}</p>
-                      </div>
-                    )}
-                    {previewResult.percentage != null && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Percentage</span>
-                        <p className="text-xs font-medium">{previewResult.percentage}%</p>
-                      </div>
-                    )}
+                    {previewResult.symbol && (<div><span className="text-[9px] uppercase text-muted-foreground">Symbol</span><p className="text-xs font-medium">{previewResult.symbol}</p></div>)}
+                    {previewResult.direction && (<div><span className="text-[9px] uppercase text-muted-foreground">Direction</span><p className="text-xs font-medium capitalize">{previewResult.direction}</p></div>)}
+                    {previewResult.entry_price != null && (<div><span className="text-[9px] uppercase text-muted-foreground">Entry Price</span><p className="text-xs font-medium">{previewResult.entry_price}</p></div>)}
+                    {previewResult.stop_loss != null && (<div><span className="text-[9px] uppercase text-muted-foreground">Stop Loss</span><p className="text-xs font-medium">{previewResult.stop_loss}</p></div>)}
+                    {previewResult.take_profits.length > 0 && (<div><span className="text-[9px] uppercase text-muted-foreground">Take Profit</span><p className="text-xs font-medium">{previewResult.take_profits.join(", ")}</p></div>)}
+                    {previewResult.percentage != null && (<div><span className="text-[9px] uppercase text-muted-foreground">Percentage</span><p className="text-xs font-medium">{previewResult.percentage}%</p></div>)}
                   </div>
+
+                  <button type="button" onClick={() => copyText(JSON.stringify(previewResult, null, 2), "Parsed result copied")} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                    <Copy className="h-2.5 w-2.5" /> Copy parsed result
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-amber-500">Not recognized as a trading signal</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    {previewResult.ignore_reason || "The AI parser couldn't identify a trading action in this message."}
-                  </p>
+                  <p className="text-[11px] text-muted-foreground">{previewResult.ignore_reason || "The AI parser couldn't identify a trading action in this message."}</p>
                   <p className="text-[11px] text-muted-foreground/60">
-                    Try something like: <code className="bg-muted px-1.5 py-0.5 rounded font-mono">{
-                      isCrypto ? "Buy BTC/USDT" : "Buy XAUUSD SL 2300 TP 2350"
-                    }</code>
+                    Try something like: <code className="bg-muted px-1.5 py-0.5 rounded font-mono">{isCrypto ? "Buy BTC/USDT" : "Buy XAUUSD SL 2300 TP 2350"}</code>
                   </p>
                 </div>
               )}

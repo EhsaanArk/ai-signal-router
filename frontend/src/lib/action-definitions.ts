@@ -265,6 +265,14 @@ export function generateActionPreview(
   return JSON.stringify(payload, null, 2);
 }
 
+/** Crypto-specific example overrides for actions whose examples reference forex symbols. */
+const CRYPTO_EXAMPLES: Partial<Record<string, string>> = {
+  start_long_market_deal: '"Buy BTC/USDT at market"',
+  start_short_market_deal: '"Sell ETH/USDT at market"',
+  start_long_limit_deal: '"Buy limit BTC/USDT @ 60000"',
+  start_short_limit_deal: '"Sell limit ETH/USDT @ 3200"',
+};
+
 /** Return the action definitions filtered for a destination type. */
 export function getActionsForDestination(
   destinationType: string,
@@ -273,6 +281,21 @@ export function getActionsForDestination(
     if (a.forexOnly && destinationType !== "sagemaster_forex") return false;
     if (a.cryptoOnly && destinationType !== "sagemaster_crypto") return false;
     return true;
+  });
+}
+
+/**
+ * Return action definitions with destination-aware examples.
+ * Crypto destinations get crypto-style example text.
+ */
+export function getActionExamples(
+  destinationType: string,
+): ActionDefinition[] {
+  const actions = getActionsForDestination(destinationType);
+  if (destinationType !== "sagemaster_crypto") return actions;
+  return actions.map((a) => {
+    const override = CRYPTO_EXAMPLES[a.key];
+    return override ? { ...a, example: override } : a;
   });
 }
 
@@ -296,6 +319,21 @@ export const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: 
   caution: { label: "Caution", color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
   destructive: { label: "Destructive", color: "text-red-500", bg: "bg-red-500/10", border: "border-red-500/20" },
 };
+
+/**
+ * Return the normalised enabled_actions for a destination.
+ * If null/undefined (= all enabled), returns every key for the destination.
+ * Filters out keys that don't apply to the destination type.
+ */
+export function getNormalizedEnabledActions(
+  enabledActions: string[] | null | undefined,
+  destinationType: string,
+): string[] {
+  const allKeys = getAllActionKeys(destinationType);
+  if (!enabledActions) return allKeys;
+  const validSet = new Set(allKeys);
+  return enabledActions.filter((k) => validSet.has(k));
+}
 
 /** Actions not supported by SageMaster, shown in the Command Reference for clarity. */
 export interface UnsupportedAction {
