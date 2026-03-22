@@ -13,6 +13,7 @@ import { lazyRetry } from "@/lib/lazy-retry";
 
 const TermsPage = lazyRetry(() => import("./pages/terms"));
 const PrivacyPage = lazyRetry(() => import("./pages/privacy"));
+const OAuthCallbackPage = lazyRetry(() => import("./pages/oauth-callback"));
 const DashboardPage = lazyRetry(() => import("./pages/dashboard"));
 const TelegramPage = lazyRetry(() => import("./pages/telegram"));
 const RoutingRulesPage = lazyRetry(() => import("./pages/routing-rules"));
@@ -43,6 +44,7 @@ const router = createBrowserRouter([
   { path: "/verify-email", element: <VerifyEmailPage /> },
   { path: "/terms", element: <TermsPage /> },
   { path: "/privacy", element: <PrivacyPage /> },
+  { path: "/auth/callback", element: <OAuthCallbackPage /> },
   {
     element: <ProtectedRoute />,
     children: [
