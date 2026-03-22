@@ -100,6 +100,8 @@ class UserMeResponse(BaseModel):
     is_admin: bool = False
     email_verified: bool = False
     created_at: str
+    accepted_tos_version: str | None = None
+    accepted_risk_waiver: bool = False
 
 
 class LoginResponse(BaseModel):
@@ -108,6 +110,9 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     user: UserMeResponse
     email_sent: bool = True
+
+
+CURRENT_TOS_VERSION = "2026-03-22"  # Update when ToS/Privacy changes
 
 
 def _user_me_from_row(row: UserModel) -> UserMeResponse:
@@ -119,6 +124,8 @@ def _user_me_from_row(row: UserModel) -> UserMeResponse:
         is_admin=getattr(row, "is_admin", False),
         email_verified=getattr(row, "email_verified", False),
         created_at=row.created_at.isoformat() if row.created_at else "",
+        accepted_tos_version=getattr(row, "accepted_tos_version", None),
+        accepted_risk_waiver=getattr(row, "accepted_risk_waiver", False),
     )
 
 
@@ -402,7 +409,66 @@ async def get_me(
         is_admin=current_user.is_admin,
         email_verified=current_user.email_verified,
         created_at=current_user.created_at.isoformat() if current_user.created_at else "",
+        accepted_tos_version=getattr(current_user, "accepted_tos_version", None),
+        accepted_risk_waiver=getattr(current_user, "accepted_risk_waiver", False),
     )
+
+
+class AcceptTermsRequest(BaseModel):
+    tos_accepted: bool = False
+    privacy_accepted: bool = False
+    risk_waiver_accepted: bool = False
+
+
+@router.post("/auth/accept-terms", response_model=MessageResponse)
+async def accept_terms(
+    request: Request,
+    body: AcceptTermsRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    """Record terms/privacy/risk waiver acceptance with full audit trail."""
+    from src.adapters.db.models import TermsAcceptanceLogModel
+
+    if not body.tos_accepted or not body.privacy_accepted or not body.risk_waiver_accepted:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="You must accept the Terms of Service, Privacy Policy, and Risk Waiver",
+        )
+
+    # Extract audit data
+    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    user_agent = request.headers.get("User-Agent", "unknown")
+
+    # Log each document acceptance
+    for doc_type in ["tos", "privacy", "risk_waiver"]:
+        db.add(TermsAcceptanceLogModel(
+            user_id=current_user.id,
+            document_type=doc_type,
+            document_version=CURRENT_TOS_VERSION,
+            ip_address=ip,
+            user_agent=user_agent,
+        ))
+
+    # Update user record
+    result = await db.execute(
+        select(UserModel).where(UserModel.id == current_user.id)
+    )
+    user_row = result.scalar_one()
+    user_row.accepted_tos_version = CURRENT_TOS_VERSION
+    user_row.accepted_risk_waiver = True
+    user_row.terms_accepted_at = datetime.now(timezone.utc)
+
+    await db.flush()
+
+    # Bust user cache
+    cache = request.app.state.cache
+    await cache.delete(f"user:{current_user.id}")
+
+    logger.info("Terms accepted by user %s (v%s, IP: %s)", current_user.id, CURRENT_TOS_VERSION, ip)
+    return MessageResponse(message="Terms accepted successfully")
 
 
 @router.post(
