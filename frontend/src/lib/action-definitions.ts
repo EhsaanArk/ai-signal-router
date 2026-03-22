@@ -118,7 +118,10 @@ export function generateActionPreview(
   }
 
   // For non-entry actions, strip entry-only fields and inject action-specific fields
-  const isEntry = actionKey.startsWith("start_");
+  // Use the ACTION_DEFINITIONS isEntry flag — not string prefix matching
+  // (start_assist starts with "start_" but is NOT an entry action)
+  const entryKeys = new Set(ACTION_DEFINITIONS.filter((a) => a.isEntry).map((a) => a.key));
+  const isEntry = entryKeys.has(actionKey);
   if (!isEntry) {
     for (const field of ENTRY_ONLY_FIELDS) {
       delete payload[field];
@@ -174,4 +177,43 @@ export function getActionsForDestination(
 /** Return all action keys (for initializing enabled_actions). */
 export function getAllActionKeys(destinationType: string): string[] {
   return getActionsForDestination(destinationType).map((a) => a.key);
+}
+
+/** Actions not supported by SageMaster, shown in the Command Reference for clarity. */
+export interface UnsupportedAction {
+  label: string;
+  reason: string;
+  /** Only shown for specific destination types. Omit = shown for all SageMaster. */
+  destinationType?: string;
+}
+
+export const UNSUPPORTED_ACTIONS: UnsupportedAction[] = [
+  {
+    label: "Modify TP on existing trade",
+    reason: "SageMaster doesn't support this via webhook",
+  },
+  {
+    label: "Set SL to absolute price (crypto)",
+    reason: "SageMaster crypto only supports relative SL offsets",
+    destinationType: "sagemaster_crypto",
+  },
+];
+
+/** Get unsupported actions filtered for a destination type. */
+export function getUnsupportedForDestination(
+  destinationType: string,
+): UnsupportedAction[] {
+  return UNSUPPORTED_ACTIONS.filter(
+    (a) => !a.destinationType || a.destinationType === destinationType,
+  );
+}
+
+/** Compute badge label: "8/12" for enabled vs total actions. */
+export function getActionBadge(
+  enabledActions: string[] | null,
+  destinationType: string,
+): string {
+  const total = getActionsForDestination(destinationType).length;
+  const enabled = enabledActions ? enabledActions.length : total;
+  return `${enabled}/${total}`;
 }
