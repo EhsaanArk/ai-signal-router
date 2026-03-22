@@ -31,15 +31,16 @@ logger = logging.getLogger(__name__)
 
 
 class IPRoyalProxyProvider:
-    """Generate per-user HTTP proxy configs via IPRoyal's residential gateway.
+    """Generate per-user SOCKS5 proxy configs via IPRoyal's residential gateway.
 
     IPRoyal embeds session parameters in the password field.  Same
     session ID = same sticky residential IP for ``lifetime`` duration.
+    SOCKS5 is required for Telethon (raw TCP to Telegram servers).
 
     ::
 
-        http://user:pass_country-de_session-{sid}_lifetime-7d_streaming-1
-             @geo.iproyal.com:12321
+        socks5://user:pass_country-de_session-{sid}_lifetime-7d_streaming-1
+               @geo.iproyal.com:12321
 
         User A → session-slot0001 → IP 92.208.104.15  (sticky 7 days)
         User B → session-slot0002 → IP 84.59.143.74   (sticky 7 days)
@@ -79,7 +80,7 @@ class IPRoyalProxyProvider:
         return f"slot{slot:04d}"
 
     def get_proxy_for_user(self, user_id: UUID) -> dict:
-        """Return an HTTP proxy dict with a sticky session for this user."""
+        """Return a SOCKS5 proxy dict with a sticky session for this user."""
         session_id = self._session_id_for_user(user_id)
         parts = [self._base_password]
         if self._country:
@@ -90,7 +91,7 @@ class IPRoyalProxyProvider:
         password = "_".join(parts)
 
         return {
-            "proxy_type": "http",
+            "proxy_type": "socks5",
             "addr": self._gateway_host,
             "port": self._gateway_port,
             "username": self._username,
