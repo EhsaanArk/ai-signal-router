@@ -1,3 +1,9 @@
+/**
+ * Signal action definitions — source of truth for the Command Reference UI.
+ * Must stay aligned with: docs/WEBHOOK_PAYLOADS.md (SageMaster webhook spec).
+ * Backend action keys: src/core/models.py (SignalAction enum).
+ */
+
 export type ImpactLevel = "entry" | "risk-management" | "increases-exposure" | "high-impact" | "operational";
 
 export interface ActionDefinition {
@@ -140,16 +146,16 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
   },
   {
     key: "move_sl_to_breakeven",
-    label: "Breakeven / Move SL",
-    description: "Dispatch a webhook to move stop loss — breakeven, trailing SL, or custom SL level",
+    label: "Breakeven",
+    description: "Dispatch a webhook to move stop loss to entry price (breakeven) with optional pip offset",
     example: '"Move SL to BE", "Breakeven"',
     examples: {
-      forex: ["Move SL to BE", "Breakeven XAUUSD", "Move SL to 2350", "Trail SL 20 pips", "Secure entry on gold", "BE on EURUSD"],
-      crypto: ["Breakeven BTC", "Move SL to entry", "Move SL to 61000", "Trail stop 3%", "Secure BTC position"],
+      forex: ["Move SL to BE", "Breakeven XAUUSD", "Secure entry on gold", "BE on EURUSD", "Move SL to breakeven"],
+      crypto: ["Breakeven BTC", "Move SL to entry", "Secure BTC position", "BE on ETH"],
     },
     impact: "risk-management",
-    scenario: "Trade is in profit. Provider adjusts the stop loss — either to breakeven (entry price), a specific price level, or a trailing offset. All SL modifications route through this action.",
-    effect: "Dispatches a webhook instructing your connected platform to adjust the stop loss. Supports breakeven, custom SL price, and trailing SL offsets.",
+    scenario: "Trade is in profit. Provider moves the stop loss to the entry price (breakeven) to eliminate risk. An optional pip offset can lock in a small profit or provide a buffer.",
+    effect: "Dispatches a webhook instructing your connected platform to move the stop loss to the entry price. A pip offset can be applied (e.g., +5 pips to lock in profit, or -5 pips for a buffer). This does not support setting SL to an arbitrary price — only breakeven adjustments.",
   },
   {
     key: "open_extra_order",
@@ -181,15 +187,15 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
   {
     key: "close_all_orders_at_market_price_and_stop_assist",
     label: "Close All & Stop",
-    description: "Dispatch a webhook to close all positions and stop the Assist",
+    description: "Dispatch a webhook to close all positions and stop the Assist — emergency kill switch",
     example: '"Close all and stop", "Emergency stop"',
     examples: {
       forex: ["Close all and stop", "Emergency stop", "Shut everything down", "Kill all and stop bot"],
       crypto: ["Close all and stop AI", "Emergency shutdown", "Stop everything now"],
     },
     impact: "high-impact",
-    scenario: "Critical situation — provider wants to exit all positions AND prevent the Assist from accepting new signals.",
-    effect: "Dispatches a webhook to close all positions and stop the Assist. Your connected platform handles both actions.",
+    scenario: "Critical situation — provider wants to exit all positions AND prevent the Assist from accepting new signals. This is the emergency kill switch.",
+    effect: "Dispatches a two-step webhook: (1) close every open position across all symbols at market price, then (2) stop the Assist so it won't process any new incoming signals. Your connected platform handles both actions.",
   },
   {
     key: "start_assist",
@@ -202,12 +208,12 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     },
     impact: "operational",
     scenario: "After a pause (weekend, news event, or manual stop), the provider resumes signal copying.",
-    effect: "Dispatches a webhook to resume the Assist on your connected platform. New incoming signals will be forwarded again.",
+    effect: "Dispatches a webhook to resume the Assist on your connected platform. The Assist will start processing new signals again. Sage Radar continues forwarding regardless — this controls your platform's Assist.",
   },
   {
     key: "stop_assist",
     label: "Stop Assist",
-    description: "Dispatch a webhook to pause the Assist",
+    description: "Dispatch a webhook to pause the Assist on your connected platform",
     example: '"Stop the Assist", "Pause trading"',
     examples: {
       forex: ["Stop the bot", "Pause trading", "Turn off assist", "Stop copying", "Hold off on new trades"],
@@ -215,7 +221,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     },
     impact: "operational",
     scenario: "Upcoming high-impact news, weekend, or uncertainty. Provider pauses to prevent new entries while keeping existing positions.",
-    effect: "Dispatches a webhook to pause the Assist on your connected platform. No new webhooks will be forwarded until resumed.",
+    effect: "Dispatches a webhook to pause the Assist on your connected platform. The Assist will stop processing new signals until started again. Sage Radar continues forwarding — this controls your platform's Assist, not Sage Radar.",
   },
 ];
 
@@ -373,9 +379,13 @@ export const UNSUPPORTED_ACTIONS: UnsupportedAction[] = [
     reason: "Not supported via webhook — TP can only be set at entry time",
   },
   {
-    label: "Set SL to absolute price (crypto)",
-    reason: "Crypto destinations only support relative SL offsets, not absolute price levels",
-    destinationType: "sagemaster_crypto",
+    label: "Modify SL to arbitrary price",
+    reason: "SL can only be moved to breakeven (entry price ± pip offset) — not to an arbitrary price level",
+  },
+  {
+    label: "Add to position / DCA",
+    reason: "Not supported for forex destinations — crypto uses the 'Add Funds / Extra Order' action instead",
+    destinationType: "sagemaster_forex",
   },
 ];
 
