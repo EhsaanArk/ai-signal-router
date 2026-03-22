@@ -40,7 +40,7 @@ export function AcceptTermsPage() {
     <AuthLayout>
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground text-center">
-          Welcome{user?.email ? `, ${user.email}` : ""}. Please accept our terms to continue.
+          Welcome! Please accept our terms to continue.
         </p>
 
         {error && (
