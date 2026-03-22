@@ -193,7 +193,7 @@ class UserRepository(Protocol):
 # ---------------------------------------------------------------------------
 
 class ProxyProvider(Protocol):
-    """Provides per-user SOCKS5 proxy configuration for Telegram clients.
+    """Provides per-user proxy configuration for Telegram clients.
 
     Implementations generate a Telethon-compatible proxy dict for each
     user, enabling per-user IP isolation at scale.  When the provider

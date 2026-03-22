@@ -1191,12 +1191,48 @@ async def telegram_disconnect(
 # ============================================================================
 
 
+async def _deactivate_stale_session(
+    db: AsyncSession,
+    session_store,
+    cache,
+    user_id,
+) -> None:
+    """Mark a user's Telegram session as inactive when Telegram rejects it.
+
+    This keeps the DB in sync with reality so ``/telegram/status`` stops
+    reporting *connected* for a session that no longer works.
+    """
+    result = await db.execute(
+        select(TelegramSessionModel).where(
+            TelegramSessionModel.user_id == user_id,
+            TelegramSessionModel.is_active.is_(True),
+        )
+    )
+    for session in result.scalars().all():
+        session.is_active = False
+        session.disconnected_reason = "session_expired"
+        session.disconnected_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    # Clear caches so status endpoint reflects the change immediately
+    try:
+        await session_store.delete_session(user_id)
+    except Exception:
+        pass
+    try:
+        await cache.delete(f"tg_status:{user_id}")
+    except Exception:
+        pass
+    logger.info("Auto-deactivated stale Telegram session for user %s", user_id)
+
+
 @router.get("/channels", response_model=list[ChannelInfo])
 async def list_channels(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     session_store=Depends(get_session_store),
+    cache=Depends(get_cache),
 ) -> list[ChannelInfo]:
     """List Telegram channels the user is subscribed to."""
     # Retrieve session string: try session store first, fall back to DB
@@ -1237,9 +1273,10 @@ async def list_channels(
         session_string = decrypt_session_auto(session_encrypted, settings.ENCRYPTION_KEY.encode())
     except Exception:
         logger.exception("Failed to decrypt Telegram session for user %s", current_user.id)
+        await _deactivate_stale_session(db, session_store, cache, current_user.id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram session is corrupted or invalid. Please disconnect and reconnect.",
+            detail="Telegram session is corrupted. Please reconnect your Telegram account.",
         )
 
     # Fetch channels via adapter
@@ -1247,12 +1284,20 @@ async def list_channels(
     from src.adapters.telegram import get_user_channels, parse_proxy_url
     from telethon.errors import FloodWaitError
 
+    proxy_url = os.environ.get("TELEGRAM_PROXY_URL")
+    proxy = parse_proxy_url(proxy_url)
+    logger.info(
+        "Fetching channels for user %s (proxy=%s)",
+        current_user.id,
+        "configured" if proxy else "none",
+    )
+
     try:
         raw_channels = await get_user_channels(
             session_string=session_string,
             api_id=settings.TELEGRAM_API_ID,
             api_hash=settings.TELEGRAM_API_HASH,
-            proxy=parse_proxy_url(os.environ.get("TELEGRAM_PROXY_URL")),
+            proxy=proxy,
         )
     except FloodWaitError as exc:
         raise HTTPException(
@@ -1260,10 +1305,15 @@ async def list_channels(
             detail=f"Rate limited by Telegram. Retry after {exc.seconds} seconds.",
             headers={"Retry-After": str(exc.seconds)},
         )
-    except RuntimeError:
+    except RuntimeError as exc:
+        logger.warning(
+            "Telegram session expired for user %s: %s", current_user.id, exc
+        )
+        # Auto-deactivate the stale session so the frontend reflects reality
+        await _deactivate_stale_session(db, session_store, cache, current_user.id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Telegram session has expired. Please reconnect.",
+            detail="Telegram session has expired. Please reconnect your Telegram account.",
         )
     except Exception:
         logger.exception("Failed to fetch Telegram channels for user %s", current_user.id)
@@ -1271,6 +1321,10 @@ async def list_channels(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to fetch channels from Telegram. Please try again.",
         )
+
+    logger.info(
+        "Fetched %d channels for user %s", len(raw_channels), current_user.id
+    )
     return [
         ChannelInfo(id=ch["channel_id"], title=ch["channel_name"], username=ch.get("username"))
         for ch in raw_channels
