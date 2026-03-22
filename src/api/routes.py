@@ -1487,7 +1487,7 @@ class ParsePreviewRequest(BaseModel):
     """Request body for the parse-preview sandbox."""
     message: str = Field(..., min_length=1, max_length=2000)
     destination_type: str = "sagemaster_forex"
-    enabled_actions: list[str] | None = None
+    enabled_actions: list[str] | None = Field(default=None, max_length=20)
 
 
 class ParsePreviewResponse(BaseModel):

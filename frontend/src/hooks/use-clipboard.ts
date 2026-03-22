@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 /**
@@ -15,12 +15,16 @@ export function useCopyToClipboard(): [
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
+  useEffect(() => () => clearTimeout(timer.current), []);
+
   const copy = useCallback((text: string, label = "Copied") => {
     navigator.clipboard.writeText(text).then(() => {
       toast.success(label);
       setCopied(true);
       clearTimeout(timer.current);
       timer.current = setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {
+      toast.error("Failed to copy");
     });
   }, []);
 
