@@ -5,7 +5,7 @@ import { APP_NAME } from "@/lib/constants";
 
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="dark flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="dark flex flex-col min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardContent className="pt-6">
           <div className="mb-6 flex flex-col items-center gap-1.5 group cursor-pointer">
