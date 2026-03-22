@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { getToken } from "./auth";
 import { API_BASE_URL } from "./constants";
 
 export class TierLimitError extends Error {
@@ -12,17 +12,14 @@ export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
 
-  // Use Supabase session token if no explicit Authorization header
-  if (!headers["Authorization"]) {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
-      headers["Authorization"] = `Bearer ${session.access_token}`;
-    }
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   let response: Response;

@@ -29,12 +29,6 @@ def _validate_production_settings(settings) -> None:
     if not settings.ENCRYPTION_KEY:
         errors.append("ENCRYPTION_KEY is empty — Telegram sessions cannot be decrypted")
 
-    if not settings.SUPABASE_JWT_SECRET:
-        logger.warning(
-            "SUPABASE_JWT_SECRET not set — Supabase tokens will not validate. "
-            "Set it from Supabase Dashboard → Settings → API → JWT Secret."
-        )
-
     if not settings.OPENAI_API_KEY:
         errors.append("OPENAI_API_KEY is empty — signal parsing will fail")
 
