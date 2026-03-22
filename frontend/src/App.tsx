@@ -11,6 +11,8 @@ import { NotFound } from "@/components/shared/not-found";
 import { useAuth } from "@/contexts/auth-context";
 import { lazyRetry } from "@/lib/lazy-retry";
 
+const TermsPage = lazyRetry(() => import("./pages/terms"));
+const PrivacyPage = lazyRetry(() => import("./pages/privacy"));
 const DashboardPage = lazyRetry(() => import("./pages/dashboard"));
 const TelegramPage = lazyRetry(() => import("./pages/telegram"));
 const RoutingRulesPage = lazyRetry(() => import("./pages/routing-rules"));
@@ -39,6 +41,8 @@ const router = createBrowserRouter([
   { path: "/forgot-password", element: <ForgotPasswordPage /> },
   { path: "/reset-password", element: <ResetPasswordPage /> },
   { path: "/verify-email", element: <VerifyEmailPage /> },
+  { path: "/terms", element: <TermsPage /> },
+  { path: "/privacy", element: <PrivacyPage /> },
   {
     element: <ProtectedRoute />,
     children: [

@@ -163,7 +163,9 @@ Currently users see `balance` and `lots` with no context about when they matter.
 
 ---
 
-## P2 — Add Missing SageMaster Forex Action Types to Pipeline
+## ~~P2 — Add Missing SageMaster Forex Action Types to Pipeline~~ DONE
+
+All 4 actions (close_all, close_all_stop, start_assist, stop_assist) implemented in models.py, parser.py, mapper.py, and frontend action-definitions.ts. Verified 2026-03-22.
 
 **What:** Add support for `close_all_orders_at_market_price`, `close_all_orders_at_market_price_and_stop_assist`, `start_assist`, and `stop_assist` actions.
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { APP_NAME } from "@/lib/constants";
 
@@ -20,6 +21,15 @@ export function AuthLayout({ children }: { children: ReactNode }) {
           {children}
         </CardContent>
       </Card>
+      <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-muted-foreground">
+        <Link to="/terms" className="hover:text-primary transition-colors">
+          Terms of Service
+        </Link>
+        <span>&middot;</span>
+        <Link to="/privacy" className="hover:text-primary transition-colors">
+          Privacy Policy
+        </Link>
+      </div>
     </div>
   );
 }
