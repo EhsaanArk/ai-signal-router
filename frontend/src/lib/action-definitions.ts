@@ -1,19 +1,37 @@
+export type RiskLevel = "safe" | "caution" | "destructive";
+
 export interface ActionDefinition {
   key: string;
   label: string;
   description: string;
   example: string;
+  /** Multiple example messages that signal providers commonly use. */
+  examples: { forex: string[]; crypto: string[] };
+  /** Risk level: safe (informational), caution (modifies positions), destructive (closes/stops). */
+  risk: RiskLevel;
+  /** When this action is typically sent in a trading context. */
+  scenario: string;
+  /** What happens on the SageMaster side when this fires. */
+  effect: string;
   isEntry?: boolean;
   forexOnly?: boolean;
   cryptoOnly?: boolean;
 }
 
+// Keep isEntry flags in sync with backend: src/core/models.py (ENTRY_ACTION_VALUES).
 export const ACTION_DEFINITIONS: ActionDefinition[] = [
   {
     key: "start_long_market_deal",
     label: "Entry Long",
     description: "Open a new long/buy position",
     example: '"Buy EURUSD at market"',
+    examples: {
+      forex: ["Buy EURUSD at market", "XAUUSD BUY 2340 SL 2320 TP 2380", "Long GBPUSD now", "GOLD BUY entry 2350"],
+      crypto: ["Buy BTC/USDT at market", "BTC LONG entry 62000", "Long ETH now", "Enter BTC buy 61500 SL 60000 TP 65000"],
+    },
+    risk: "safe",
+    scenario: "Signal provider identifies a buying opportunity and sends an entry call with optional SL/TP levels.",
+    effect: "Opens a new long position on your SageMaster account with the configured lot size and risk settings.",
     isEntry: true,
   },
   {
@@ -21,52 +39,108 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     label: "Entry Short",
     description: "Open a new short/sell position",
     example: '"Sell GBPUSD at market"',
+    examples: {
+      forex: ["Sell GBPUSD at market", "EURUSD SELL 1.0850 SL 1.0900 TP 1.0750", "Short XAUUSD", "GOLD SELL now"],
+      crypto: ["Sell ETH/USDT at market", "BTC SHORT entry 63000", "Short SOL here", "ETH sell 3200 SL 3300 TP 2900"],
+    },
+    risk: "safe",
+    scenario: "Signal provider spots a bearish setup and sends a sell/short entry signal.",
+    effect: "Opens a new short position on your SageMaster account with the configured lot size and risk settings.",
     isEntry: true,
   },
   {
     key: "start_long_limit_deal",
     label: "Entry Long (Limit)",
-    description: "Open a new long/buy limit order",
+    description: "Open a pending buy limit order",
     example: '"Buy limit EURUSD @ 1.0950"',
+    examples: {
+      forex: ["Buy limit EURUSD @ 1.0950", "XAUUSD buy limit 2300", "Place buy order GBPUSD at 1.2500"],
+      crypto: ["Buy limit BTC/USDT @ 60000", "BTC limit long 58000", "Set buy order ETH at 2800"],
+    },
+    risk: "safe",
+    scenario: "Provider wants to enter at a better price. The order waits until price reaches the limit level.",
+    effect: "Places a pending buy limit order. It only fills when the market reaches the specified price.",
     isEntry: true,
   },
   {
     key: "start_short_limit_deal",
     label: "Entry Short (Limit)",
-    description: "Open a new short/sell limit order",
+    description: "Open a pending sell limit order",
     example: '"Sell limit GBPUSD @ 1.2500"',
+    examples: {
+      forex: ["Sell limit GBPUSD @ 1.2500", "XAUUSD sell limit 2400", "Place sell order EURUSD at 1.1000"],
+      crypto: ["Sell limit ETH/USDT @ 3200", "BTC limit short 65000", "Set sell order SOL at 200"],
+    },
+    risk: "safe",
+    scenario: "Provider expects price to rise to a resistance level before selling. Order waits for the target price.",
+    effect: "Places a pending sell limit order. It only fills when the market reaches the specified price.",
     isEntry: true,
   },
   {
     key: "close_order_at_market_price",
     label: "Close Position",
-    description: "Fully close an open trade",
+    description: "Fully close an open trade on a specific symbol",
     example: '"Close all", "Exit trade"',
+    examples: {
+      forex: ["Close XAUUSD", "Exit EURUSD trade", "Close gold position", "Take profit on GBPUSD"],
+      crypto: ["Close BTC position", "Exit ETH trade", "Close BTC/USDT", "TP hit, closing SOL"],
+    },
+    risk: "destructive",
+    scenario: "Trade has hit its target, or the provider wants to exit before a news event. Closes the entire position immediately.",
+    effect: "Closes the open position for the specified symbol at the current market price. This action is irreversible.",
   },
   {
     key: "partially_close_by_percentage",
     label: "Partial Close (%)",
-    description: "Close a percentage of position",
+    description: "Close a percentage of an open position to lock in partial profit",
     example: '"Close 50%", "Take half off"',
+    examples: {
+      forex: ["Close 50%", "Take half off XAUUSD", "Secure 50% profit", "Partial close 75%", "Close 30% of position"],
+      crypto: ["Close 50% BTC", "Take 25% profit", "Partial close 50%", "Secure half off ETH"],
+    },
+    risk: "caution",
+    scenario: "Price is moving in your favor. Provider locks in partial profit while letting the rest run for a bigger target.",
+    effect: "Closes the specified percentage of your open position. The remaining portion stays open with its existing SL/TP.",
   },
   {
     key: "partially_close_by_lot",
     label: "Partial Close (Lots)",
-    description: "Close a specific lot amount",
+    description: "Close a specific lot amount from an open position",
     example: '"Close 0.5 lots"',
+    examples: {
+      forex: ["Close 0.5 lots", "Close 1 lot EURUSD", "Take 0.3 lots off XAUUSD", "Reduce by 0.5 lots"],
+      crypto: [],
+    },
+    risk: "caution",
+    scenario: "Provider wants precise control over how much to close, specifying exact lot size rather than a percentage.",
+    effect: "Closes the specified lot amount from your open position. Only available for forex destinations.",
     forexOnly: true,
   },
   {
     key: "move_sl_to_breakeven",
     label: "Breakeven",
-    description: "Move stop loss to entry price",
+    description: "Move stop loss to entry price — eliminates downside risk",
     example: '"Move SL to BE", "Breakeven"',
+    examples: {
+      forex: ["Move SL to BE", "Breakeven XAUUSD", "Secure entry on gold", "Move stop to entry", "BE on EURUSD"],
+      crypto: ["Breakeven BTC", "Move SL to entry", "Secure BTC position", "BE on ETH trade"],
+    },
+    risk: "safe",
+    scenario: "Trade is in profit. Provider moves the stop loss to the entry price so the trade is risk-free — worst case, you exit at breakeven.",
+    effect: "Moves your stop loss to your entry price. The trade can no longer lose money (excluding spread/fees).",
   },
   {
     key: "open_extra_order",
     label: "Add Funds / Extra Order",
-    description: "Add funds or place an additional order on an existing position",
+    description: "Add funds or place an additional order on an existing position (DCA)",
     example: '"Add funds", "DCA", "Average down"',
+    examples: {
+      forex: [],
+      crypto: ["Add funds BTC", "DCA into ETH", "Average down on SOL", "Add to BTC position", "Double down on ETH"],
+    },
+    risk: "caution",
+    scenario: "Price has moved against the position. Provider dollar-cost-averages (DCA) by adding more funds to lower the average entry.",
+    effect: "Adds additional funds or places a new order on your existing position. This increases your exposure and risk.",
     cryptoOnly: true,
   },
   {
@@ -74,24 +148,52 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     label: "Close All Positions",
     description: "Close every open trade across all symbols",
     example: '"Close all trades", "Flatten everything"',
+    examples: {
+      forex: ["Close all trades", "Flatten everything", "Close all positions now", "Exit all", "Liquidate everything"],
+      crypto: ["Close all deals", "Exit everything", "Flatten all", "Close all crypto positions"],
+    },
+    risk: "destructive",
+    scenario: "Major market event (NFP, CPI, black swan). Provider wants to exit ALL positions immediately regardless of P&L.",
+    effect: "Closes every open position across all symbols at current market prices. This is irreversible and affects all active trades.",
   },
   {
     key: "close_all_orders_at_market_price_and_stop_assist",
     label: "Close All & Stop",
-    description: "Close all positions and stop the Assist",
+    description: "Close all positions AND stop the Assist — full emergency shutdown",
     example: '"Close all and stop", "Emergency stop"',
+    examples: {
+      forex: ["Close all and stop", "Emergency stop", "Shut everything down", "Kill all and stop bot"],
+      crypto: ["Close all and stop AI", "Emergency shutdown", "Stop everything now"],
+    },
+    risk: "destructive",
+    scenario: "Critical situation — provider wants to exit all positions AND prevent the Assist from opening any new trades.",
+    effect: "Closes all open positions AND stops the Assist. No new trades will be opened until the Assist is manually restarted.",
   },
   {
     key: "start_assist",
     label: "Start Assist",
-    description: "Resume a paused Assist (allows new trades)",
+    description: "Resume the Assist — allows new trades to be opened",
     example: '"Start the bot", "Resume trading"',
+    examples: {
+      forex: ["Start the bot", "Resume trading", "Turn on the assist", "Start copying signals again"],
+      crypto: ["Start AI assist", "Resume the bot", "Turn on trading", "Reactivate assist"],
+    },
+    risk: "caution",
+    scenario: "After a pause (weekend, news event, or manual stop), the provider resumes signal copying.",
+    effect: "Resumes the Assist so it can open new trades from incoming signals. Existing positions are not affected.",
   },
   {
     key: "stop_assist",
     label: "Stop Assist",
-    description: "Pause the Assist (no new trades, existing positions untouched)",
+    description: "Pause the Assist — no new trades, existing positions stay open",
     example: '"Stop the bot", "Pause trading"',
+    examples: {
+      forex: ["Stop the bot", "Pause trading", "Turn off assist", "Stop copying", "Hold off on new trades"],
+      crypto: ["Stop AI assist", "Pause the bot", "Turn off trading", "No new trades"],
+    },
+    risk: "caution",
+    scenario: "Upcoming high-impact news, weekend, or uncertainty. Provider pauses to prevent new entries while keeping existing positions.",
+    effect: "Stops the Assist from opening new trades. Existing open positions remain active with their SL/TP levels.",
   },
 ];
 
@@ -178,6 +280,22 @@ export function getActionsForDestination(
 export function getAllActionKeys(destinationType: string): string[] {
   return getActionsForDestination(destinationType).map((a) => a.key);
 }
+
+/** Get the example messages appropriate for a destination type. */
+export function getExamplesForDestination(
+  action: ActionDefinition,
+  destinationType: string,
+): string[] {
+  const list = destinationType === "sagemaster_crypto" ? action.examples.crypto : action.examples.forex;
+  return list.length > 0 ? list : (destinationType === "sagemaster_crypto" ? action.examples.forex : action.examples.crypto);
+}
+
+/** Risk level display config. */
+export const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: string; border: string }> = {
+  safe: { label: "Safe", color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+  caution: { label: "Caution", color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+  destructive: { label: "Destructive", color: "text-red-500", bg: "bg-red-500/10", border: "border-red-500/20" },
+};
 
 /** Actions not supported by SageMaster, shown in the Command Reference for clarity. */
 export interface UnsupportedAction {

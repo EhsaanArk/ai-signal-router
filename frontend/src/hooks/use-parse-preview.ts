@@ -17,6 +17,7 @@ export interface ParsePreviewResult {
 interface ParsePreviewRequest {
   message: string;
   destination_type: string;
+  enabled_actions?: string[] | null;
 }
 
 export function useParsePreview() {
