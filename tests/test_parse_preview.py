@@ -124,17 +124,22 @@ class TestParsePreviewResponse:
         resp = ParsePreviewResponse(
             is_valid_signal=True,
             action="entry",
+            normalized_action_key="start_long_market_deal",
+            display_action_label="Entry Long",
             symbol="XAUUSD",
             direction="long",
             order_type="market",
+            route_would_forward=True,
             take_profits=[2350.0],
         )
         assert resp.is_valid_signal is True
         assert resp.action == "entry"
+        assert resp.route_would_forward is True
 
     def test_invalid_signal_response(self):
         resp = ParsePreviewResponse(
             is_valid_signal=False,
+            route_would_forward=False,
             ignore_reason="Not a trading signal",
         )
         assert resp.is_valid_signal is False
@@ -177,10 +182,15 @@ class TestParsePreviewEndpoint:
 
         assert result.is_valid_signal is True
         assert result.action == "entry"
+        assert result.normalized_action_key == "start_long_market_deal"
+        assert result.display_action_label == "Entry Long"
         assert result.symbol == "XAUUSD"
         assert result.direction == "long"
         assert result.stop_loss == 2300.0
         assert result.take_profits == [2350.0]
+        assert result.route_would_forward is True
+        assert result.destination_supported is True
+        assert result.blocked_reason is None
 
     async def test_invalid_signal_returns_reason(self):
         """Parser returns is_valid_signal=False with ignore_reason."""
@@ -198,6 +208,8 @@ class TestParsePreviewEndpoint:
         assert result.action is None
         assert result.symbol is None
         assert result.ignore_reason == "Not a trading signal"
+        assert result.route_would_forward is False
+        assert result.blocked_reason == "Not a trading signal"
 
     async def test_unknown_symbol_stripped(self):
         """When parser returns 'UNKNOWN' symbol, response shows None."""
@@ -213,6 +225,70 @@ class TestParsePreviewEndpoint:
 
         assert result.is_valid_signal is True
         assert result.symbol is None  # "UNKNOWN" stripped
+
+    async def test_required_entry_actions_are_treated_as_enabled(self):
+        """Entry previews should still pass even if the request omits required actions."""
+        mock_parser = AsyncMock()
+        mock_parser.parse.return_value = _valid_parsed_signal()
+
+        with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
+            result = await parse_preview(
+                request=_mock_request(),
+                body=ParsePreviewRequest(
+                    message="Buy XAUUSD",
+                    enabled_actions=["close_order_at_market_price"],
+                ),
+                current_user=_mock_user(),
+            )
+
+        assert result.is_valid_signal is True
+        assert result.normalized_action_key == "start_long_market_deal"
+        assert result.route_would_forward is True
+        assert result.blocked_reason is None
+
+    async def test_disabled_action_is_reported(self):
+        """Preview should explain when a recognized command is disabled for the route."""
+        mock_parser = AsyncMock()
+        mock_parser.parse.return_value = _valid_parsed_signal(action="close_all")
+
+        with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
+            result = await parse_preview(
+                request=_mock_request(),
+                body=ParsePreviewRequest(
+                    message="Close all trades",
+                    enabled_actions=["move_sl_to_breakeven"],
+                ),
+                current_user=_mock_user(),
+            )
+
+        assert result.is_valid_signal is True
+        assert result.normalized_action_key == "close_all_orders_at_market_price"
+        assert result.route_would_forward is False
+        assert result.destination_supported is True
+        assert "disabled" in (result.blocked_reason or "").lower()
+
+    async def test_destination_mismatch_is_reported(self):
+        """Preview should explain when the destination cannot accept the signal asset class."""
+        mock_parser = AsyncMock()
+        mock_parser.parse.return_value = _valid_parsed_signal(
+            symbol="XAUUSD",
+            source_asset_class="commodities",
+        )
+
+        with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
+            result = await parse_preview(
+                request=_mock_request(),
+                body=ParsePreviewRequest(
+                    message="Buy XAUUSD",
+                    destination_type="sagemaster_crypto",
+                ),
+                current_user=_mock_user(),
+            )
+
+        assert result.is_valid_signal is True
+        assert result.route_would_forward is False
+        assert result.destination_supported is False
+        assert "not supported" in (result.blocked_reason or "").lower()
 
     async def test_timeout_returns_504(self):
         """When parser takes >10s, endpoint returns 504."""

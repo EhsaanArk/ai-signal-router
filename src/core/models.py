@@ -60,6 +60,34 @@ class SignalAction(str, Enum):
     extra_order = "open_extra_order"  # crypto only
 
 
+REQUIRED_ENTRY_ACTION_VALUES: tuple[str, ...] = (
+    SignalAction.start_long.value,
+    SignalAction.start_short.value,
+    SignalAction.start_long_limit.value,
+    SignalAction.start_short_limit.value,
+)
+
+
+def normalize_enabled_actions(enabled_actions: list[str] | None) -> list[str] | None:
+    """Ensure required entry actions are always present while preserving order."""
+    if enabled_actions is None:
+        return None
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for action in enabled_actions:
+        if action not in seen:
+            normalized.append(action)
+            seen.add(action)
+
+    for required in REQUIRED_ENTRY_ACTION_VALUES:
+        if required not in seen:
+            normalized.append(required)
+            seen.add(required)
+
+    return normalized
+
+
 # Crypto action type strings — differ from forex per SageMaster DCA UI.
 # Crypto uses "deals" and "ai_assist" instead of forex "orders" and "assist".
 # Crypto does not support lot-based partial close; both lot and pct map to percentage.

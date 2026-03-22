@@ -38,7 +38,7 @@ from src.api.deps import (
 )
 import sentry_sdk
 
-from src.core.models import RoutingRule, SubscriptionTier, User
+from src.core.models import RoutingRule, SubscriptionTier, User, normalize_enabled_actions
 from src.core.security import sha256_hex, validate_outbound_webhook_url
 
 logger = logging.getLogger(__name__)
@@ -1172,7 +1172,7 @@ def _rule_to_response(r: RoutingRuleModel) -> "RoutingRuleResponse":
         destination_label=r.destination_label,
         destination_type=r.destination_type,
         custom_ai_instructions=r.custom_ai_instructions,
-        enabled_actions=r.enabled_actions,
+        enabled_actions=normalize_enabled_actions(r.enabled_actions),
         keyword_blacklist=r.keyword_blacklist or [],
         is_active=r.is_active,
         created_at=r.created_at.isoformat() if r.created_at else None,
@@ -1302,7 +1302,7 @@ async def create_routing_rule(
         destination_label=body.destination_label,
         destination_type=body.destination_type,
         custom_ai_instructions=body.custom_ai_instructions,
-        enabled_actions=body.enabled_actions,
+        enabled_actions=normalize_enabled_actions(body.enabled_actions),
         keyword_blacklist=body.keyword_blacklist,
         is_active=True,
     )
@@ -1353,6 +1353,8 @@ async def update_routing_rule(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routing rule not found")
 
     update_data = body.model_dump(exclude_unset=True)
+    if "enabled_actions" in update_data:
+        update_data["enabled_actions"] = normalize_enabled_actions(update_data["enabled_actions"])
 
     effective_url = update_data.get("destination_webhook_url", row.destination_webhook_url)
     allowed_url, reason, _ips = validate_outbound_webhook_url(
@@ -1439,12 +1441,15 @@ class ParsePreviewRequest(BaseModel):
     """Request body for the parse-preview sandbox."""
     message: str = Field(..., min_length=1, max_length=2000)
     destination_type: str = "sagemaster_forex"
+    enabled_actions: list[str] | None = None
 
 
 class ParsePreviewResponse(BaseModel):
     """Stripped parser result — never exposes system prompt or internals."""
     is_valid_signal: bool
     action: str | None = None
+    normalized_action_key: str | None = None
+    display_action_label: str | None = None
     symbol: str | None = None
     direction: str | None = None
     order_type: str | None = None
@@ -1452,7 +1457,32 @@ class ParsePreviewResponse(BaseModel):
     stop_loss: float | None = None
     take_profits: list[float] = Field(default_factory=list)
     percentage: int | None = None
+    route_would_forward: bool = False
+    destination_supported: bool | None = None
+    blocked_reason: str | None = None
     ignore_reason: str | None = None
+
+
+def _preview_action_label(action_key: str | None) -> str | None:
+    if not action_key:
+        return None
+
+    labels = {
+        "start_long_market_deal": "Entry Long",
+        "start_short_market_deal": "Entry Short",
+        "start_long_limit_deal": "Entry Long (Limit)",
+        "start_short_limit_deal": "Entry Short (Limit)",
+        "close_order_at_market_price": "Close Position",
+        "partially_close_by_percentage": "Partial Close (%)",
+        "partially_close_by_lot": "Partial Close (Lots)",
+        "move_sl_to_breakeven": "Breakeven",
+        "open_extra_order": "Add Funds / Extra Order",
+        "close_all_orders_at_market_price": "Close All Positions",
+        "close_all_orders_at_market_price_and_stop_assist": "Close All & Stop",
+        "start_assist": "Start Assist",
+        "stop_assist": "Stop Assist",
+    }
+    return labels.get(action_key, action_key)
 
 
 @router.post("/parse-preview", response_model=ParsePreviewResponse)
@@ -1470,6 +1500,7 @@ async def parse_preview(
     """
     import asyncio
     from src.adapters.openai import OpenAISignalParser
+    from src.core.mapper import _signal_action, check_asset_class_mismatch
     from src.core.models import RawSignal
 
     settings = get_settings()
@@ -1506,9 +1537,50 @@ async def parse_preview(
             detail="Couldn't parse this message. Try different wording.",
         )
 
+    normalized_action_key: str | None = None
+    display_action_label: str | None = None
+    route_would_forward = False
+    destination_supported: bool | None = None
+    blocked_reason: str | None = None
+    normalized_enabled_actions = normalize_enabled_actions(body.enabled_actions)
+
+    if parsed.is_valid_signal:
+        preview_rule = RoutingRule(
+            user_id=current_user.id,
+            source_channel_id="preview",
+            destination_webhook_url="https://example.com/webhook",
+            destination_type=body.destination_type,
+            enabled_actions=normalized_enabled_actions,
+        )
+        try:
+            normalized_action_key = _signal_action(parsed).value
+            display_action_label = _preview_action_label(normalized_action_key)
+            destination_reason = check_asset_class_mismatch(parsed, preview_rule)
+            if destination_reason:
+                destination_supported = False
+                blocked_reason = destination_reason
+            elif (
+                normalized_enabled_actions is not None
+                and normalized_action_key not in normalized_enabled_actions
+            ):
+                destination_supported = True
+                blocked_reason = (
+                    f"Action '{normalized_action_key}' is disabled for this route"
+                )
+            else:
+                destination_supported = True
+                route_would_forward = True
+        except ValueError as exc:
+            blocked_reason = str(exc)
+            destination_supported = False
+    else:
+        blocked_reason = parsed.ignore_reason
+
     return ParsePreviewResponse(
         is_valid_signal=parsed.is_valid_signal,
         action=parsed.action if parsed.is_valid_signal else None,
+        normalized_action_key=normalized_action_key,
+        display_action_label=display_action_label,
         symbol=parsed.symbol if parsed.is_valid_signal and parsed.symbol != "UNKNOWN" else None,
         direction=parsed.direction if parsed.is_valid_signal else None,
         order_type=parsed.order_type if parsed.is_valid_signal else None,
@@ -1516,6 +1588,9 @@ async def parse_preview(
         stop_loss=parsed.stop_loss,
         take_profits=parsed.take_profits,
         percentage=parsed.percentage,
+        route_would_forward=route_would_forward,
+        destination_supported=destination_supported,
+        blocked_reason=blocked_reason,
         ignore_reason=parsed.ignore_reason if not parsed.is_valid_signal else None,
     )
 

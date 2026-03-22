@@ -24,7 +24,13 @@ from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
 from src.api.qstash_auth import verify_qstash_signature
-from src.core.models import DispatchResult, ParsedSignal, RawSignal, RoutingRule
+from src.core.models import (
+    DispatchResult,
+    ParsedSignal,
+    RawSignal,
+    RoutingRule,
+    normalize_enabled_actions,
+)
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer("signal.pipeline")
@@ -370,7 +376,11 @@ async def process_signal(
         # Pre-dispatch filtering: enabled_actions check
         try:
             computed_action = _signal_action(parsed)
-            if rule.enabled_actions is not None and computed_action.value not in rule.enabled_actions:
+            normalized_enabled_actions = normalize_enabled_actions(rule.enabled_actions)
+            if (
+                normalized_enabled_actions is not None
+                and computed_action.value not in normalized_enabled_actions
+            ):
                 logger.info(
                     "Action '%s' disabled for rule %s",
                     computed_action.value, rule.id,

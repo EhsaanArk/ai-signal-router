@@ -36,7 +36,6 @@ import { DESTINATION_TYPE_LABELS_FULL } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { getActionBadge } from "@/lib/action-definitions";
-import { CommandReferenceDrawer } from "@/components/command-reference-drawer";
 import type { RoutingRuleResponse } from "@/types/api";
 
 interface Props {
@@ -47,11 +46,13 @@ export function RoutingRulesTable({ rules }: Props) {
   const navigate = useNavigate();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
-  const [commandsRuleId, setCommandsRuleId] = useState<string | null>(null);
-  const commandsRule = rules.find((r) => r.id === commandsRuleId);
   const isSageMaster = (dt: string) => dt === "sagemaster_forex" || dt === "sagemaster_crypto";
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
+
+  function openCommandsWorkspace(ruleId: string) {
+    navigate(`/routing-rules/${ruleId}/edit#commands`);
+  }
 
   async function handleToggle(rule: RoutingRuleResponse) {
     setTogglingId(rule.id);
@@ -117,13 +118,13 @@ export function RoutingRulesTable({ rules }: Props) {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        onClick={() => setCommandsRuleId(rule.id)}
+                        onClick={() => openCommandsWorkspace(rule.id)}
                         className="rounded-sm border px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
                       >
                         {getActionBadge(rule.enabled_actions, rule.destination_type)}
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>View signal commands</TooltipContent>
+                    <TooltipContent>Open commands & testing</TooltipContent>
                   </Tooltip>
                 )}
                 {rule.webhook_body_template && (
@@ -163,10 +164,10 @@ export function RoutingRulesTable({ rules }: Props) {
                   variant="outline"
                   size="sm"
                   className="flex-1 h-7 text-xs"
-                  onClick={() => setCommandsRuleId(rule.id)}
+                  onClick={() => openCommandsWorkspace(rule.id)}
                 >
                   <ListChecks className="mr-1 h-3 w-3" />
-                  Commands
+                  Commands & Test
                 </Button>
               )}
               <Button
@@ -258,14 +259,14 @@ export function RoutingRulesTable({ rules }: Props) {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
-                            onClick={() => setCommandsRuleId(rule.id)}
+                            onClick={() => openCommandsWorkspace(rule.id)}
                             className="inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
                           >
                             <ListChecks className="h-3 w-3" />
                             {getActionBadge(rule.enabled_actions, rule.destination_type)}
                           </button>
                         </TooltipTrigger>
-                        <TooltipContent>View signal commands</TooltipContent>
+                        <TooltipContent>Open commands & testing</TooltipContent>
                       </Tooltip>
                     )}
                   </div>
@@ -316,10 +317,10 @@ export function RoutingRulesTable({ rules }: Props) {
                     <DropdownMenuContent align="end">
                       {isSageMaster(rule.destination_type) && (
                         <DropdownMenuItem
-                          onClick={() => setCommandsRuleId(rule.id)}
+                          onClick={() => openCommandsWorkspace(rule.id)}
                         >
                           <ListChecks className="mr-2 h-3.5 w-3.5" />
-                          View Commands
+                          Commands & Test
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem
@@ -379,14 +380,6 @@ export function RoutingRulesTable({ rules }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {commandsRule && (
-        <CommandReferenceDrawer
-          rule={commandsRule}
-          open={!!commandsRuleId}
-          onOpenChange={(open) => !open && setCommandsRuleId(null)}
-        />
-      )}
     </>
   );
 }

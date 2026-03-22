@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -22,16 +22,8 @@ import type { DestinationType, RoutingRuleResponse, TestWebhookResponse } from "
 import { toast } from "sonner";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { cn } from "@/lib/utils";
-import {
-  getActionsForDestination,
-  getAllActionKeys,
-} from "@/lib/action-definitions";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { getNormalizedEnabledActions } from "@/lib/action-definitions";
+import { RouteCommandsWorkspace } from "@/components/routes/route-commands-workspace";
 
 const DESTINATION_TYPES: { value: DestinationType; label: string; description: string }[] = [
   { value: "sagemaster_forex", label: "SageMaster Forex", description: "Forex, commodities & indices (sfx.sagemaster.io)" },
@@ -70,7 +62,7 @@ export function RoutingRulesEditPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4 max-w-xl">
+      <div className="space-y-4 max-w-5xl">
         <Skeleton className="h-6 w-48" />
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -95,7 +87,7 @@ export function RoutingRulesEditPage() {
   const breadcrumbName = rule.rule_name || rule.source_channel_name || rule.source_channel_id;
 
   return (
-    <div className="max-w-xl space-y-3">
+    <div className="max-w-5xl space-y-3">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1 text-xs text-muted-foreground">
         <Link to="/routing-rules" className="hover:text-foreground transition-colors">
@@ -204,14 +196,23 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
     !!rule.custom_ai_instructions || (rule.keyword_blacklist && rule.keyword_blacklist.length > 0),
   );
   const [enabledActions, setEnabledActions] = useState<Set<string>>(
-    () => new Set(rule.enabled_actions || getAllActionKeys(destinationType)),
-  );
-  const [showActions, setShowActions] = useState(
-    // Auto-expand if user has customized (not all enabled)
-    () => rule.enabled_actions !== null && rule.enabled_actions.length < getAllActionKeys(destinationType).length,
+    () => new Set(getNormalizedEnabledActions(rule.enabled_actions, destinationType)),
   );
   const [suggestionDismissed, setSuggestionDismissed] = useState(false);
+  const commandsSectionRef = useRef<HTMLDivElement | null>(null);
   const templateWarning = detectTemplateMismatch(destinationType, templateText);
+
+  useEffect(() => {
+    setEnabledActions((prev) => new Set(
+      getNormalizedEnabledActions(Array.from(prev), destinationType),
+    ));
+  }, [destinationType]);
+
+  useEffect(() => {
+    if (window.location.hash === "#commands") {
+      commandsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
 
   // Duplicate webhook URL detection — only when URL is changed from original
   const { data: existingRules } = useRoutingRules();
@@ -343,7 +344,7 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
       symbol_mappings: mappings,
       risk_overrides: riskOverrides,
       webhook_body_template: parsedTemplate,
-      enabled_actions: Array.from(enabledActions),
+      enabled_actions: getNormalizedEnabledActions(Array.from(enabledActions), destinationType),
       keyword_blacklist: keywords,
       is_active: isActive,
     });
@@ -709,69 +710,23 @@ function EditRuleForm({ rule, onSubmit, isSubmitting, onCancel }: EditRuleFormPr
         </Button>
       </div>
 
-      {/* Enabled Actions */}
-      <div>
-        <button
-          type="button"
-          onClick={() => setShowActions(!showActions)}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showActions && "rotate-180")} />
-          Enabled Actions
-        </button>
-        {showActions && (
-          <div className="mt-3 space-y-1.5">
-            <p className="text-[10px] text-muted-foreground mb-2">
-              Choose which signal types get forwarded to this destination.
-            </p>
-            {getActionsForDestination(destinationType).map((action) => {
-              const isEnabled = enabledActions.has(action.key);
-              return (
-                <div
-                  key={action.key}
-                  className={cn(
-                    "flex items-center justify-between rounded-md border px-3 py-2 transition-colors",
-                    isEnabled ? "border-border" : "border-border/50 bg-muted/30 opacity-60",
-                  )}
-                >
-                  <div>
-                    <p className="text-xs font-medium">{action.label}</p>
-                    <p className="text-[10px] text-muted-foreground">{action.description}</p>
-                  </div>
-                  {action.isEntry ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div>
-                            <Switch checked disabled className="opacity-50" />
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs">Entry actions are always enabled</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  ) : (
-                    <Switch
-                      checked={isEnabled}
-                      onCheckedChange={() => {
-                        setEnabledActions((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(action.key)) {
-                            next.delete(action.key);
-                          } else {
-                            next.add(action.key);
-                          }
-                          return next;
-                        });
-                      }}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+      <div id="commands" ref={commandsSectionRef}>
+        <RouteCommandsWorkspace
+          destinationType={destinationType}
+          enabledActions={enabledActions}
+          onToggleAction={(key) => {
+            setEnabledActions((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) {
+                next.delete(key);
+              } else {
+                next.add(key);
+              }
+              return next;
+            });
+          }}
+          mode="edit"
+        />
       </div>
 
       {/* Form Actions */}

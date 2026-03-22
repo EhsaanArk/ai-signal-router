@@ -13,7 +13,7 @@ export function RoutingRulesNewPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="max-w-xl">
+    <div className="max-w-5xl">
       <Card>
         <CardHeader className="pb-3 pt-4 px-4">
           <CardTitle className="text-sm font-medium">Create Route</CardTitle>

@@ -36,7 +36,7 @@ interface StepDef {
 const ALL_STEPS: StepDef[] = [
   { id: "channel", label: "Channel", description: "Signal channel" },
   { id: "destination", label: "Destination", description: "Webhook + template" },
-  { id: "actions", label: "Actions", description: "What gets forwarded" },
+  { id: "actions", label: "Commands", description: "Commands & testing" },
   { id: "mappings", label: "Mappings", description: "Symbol maps" },
 ];
 

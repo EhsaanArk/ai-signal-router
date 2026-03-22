@@ -1,15 +1,11 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
 import {
-  generateActionPreview,
-  getActionsForDestination,
-  getAllActionKeys,
+  getNormalizedEnabledActions,
 } from "@/lib/action-definitions";
-import { ActionRow } from "@/components/forms/action-row";
+import { RouteCommandsWorkspace } from "@/components/routes/route-commands-workspace";
 import type { DestinationType } from "@/types/api";
 
 interface Props {
@@ -32,13 +28,10 @@ interface Props {
 
 export function StepActions({ initialData, wizardData, onNext, onBack, isFinalStep, onFinish, isSubmitting }: Props) {
   const destinationType = wizardData.destination_type || "sagemaster_forex";
-  const actions = getActionsForDestination(destinationType);
-  const allKeys = getAllActionKeys(destinationType);
 
   const [enabledActions, setEnabledActions] = useState<Set<string>>(
-    () => new Set(initialData?.enabled_actions ?? allKeys),
+    () => new Set(getNormalizedEnabledActions(initialData?.enabled_actions, destinationType)),
   );
-  const [expandedPreview, setExpandedPreview] = useState<string | null>(null);
   const [lotSize, setLotSize] = useState(
     () => (initialData?.risk_overrides?.lots as string) ?? "",
   );
@@ -76,66 +69,22 @@ export function StepActions({ initialData, wizardData, onNext, onBack, isFinalSt
     if (lotSize.trim()) {
       riskOverrides.lots = lotSize.trim();
     }
+    const normalizedEnabled = getNormalizedEnabledActions(Array.from(enabledActions), destinationType);
     if (isFinalStep && onFinish) {
-      onFinish(Array.from(enabledActions), riskOverrides, keywords);
+      onFinish(normalizedEnabled, riskOverrides, keywords);
     } else {
-      onNext(Array.from(enabledActions), riskOverrides, keywords);
+      onNext(normalizedEnabled, riskOverrides, keywords);
     }
   }
 
   return (
     <div className="space-y-4">
-      <div>
-        <Label className="text-xs">Actions to Forward</Label>
-        <p className="text-[10px] text-muted-foreground mt-0.5">
-          Choose which signal types get forwarded to this destination.
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        {actions.map((action) => {
-          const isEnabled = enabledActions.has(action.key);
-          const isExpanded = expandedPreview === action.key;
-
-          return (
-            <div key={action.key}>
-              <ActionRow
-                action={action}
-                isEnabled={isEnabled}
-                onToggle={toggleAction}
-              />
-              {/* JSON Preview toggle — wizard-only feature */}
-              {wizardData.webhook_body_template && (
-                <div className="ml-10 mt-0.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedPreview(isExpanded ? null : action.key)
-                    }
-                    className="flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary transition-colors"
-                  >
-                    <ChevronDown
-                      className={cn(
-                        "h-3 w-3 transition-transform",
-                        isExpanded && "rotate-180",
-                      )}
-                    />
-                    {isExpanded ? "Hide" : "Preview"} JSON
-                  </button>
-                  {isExpanded && (
-                    <pre className="mt-2 rounded bg-muted/50 p-2 text-[10px] font-mono text-foreground/80 overflow-x-auto max-h-48">
-                      {generateActionPreview(
-                        action.key,
-                        wizardData.webhook_body_template,
-                      )}
-                    </pre>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <RouteCommandsWorkspace
+        destinationType={destinationType}
+        enabledActions={enabledActions}
+        onToggleAction={toggleAction}
+        mode="create"
+      />
 
       {/* Lot Size Override (V2 only) */}
       {wizardData.payload_version === "V2" && (
@@ -213,7 +162,7 @@ export function StepActions({ initialData, wizardData, onNext, onBack, isFinalSt
         <Button variant="outline" size="sm" onClick={() => {
           const riskOverrides: Record<string, unknown> = {};
           if (lotSize.trim()) riskOverrides.lots = lotSize.trim();
-          onBack(Array.from(enabledActions), riskOverrides, keywords);
+          onBack(getNormalizedEnabledActions(Array.from(enabledActions), destinationType), riskOverrides, keywords);
         }}>
           Back
         </Button>
