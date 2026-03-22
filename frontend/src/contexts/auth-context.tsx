@@ -7,10 +7,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { supabase } from "@/lib/supabase";
 import { apiFetch } from "@/lib/api";
-import { getToken, getTokenExpiry, removeToken, setToken } from "@/lib/auth";
-import { toast } from "sonner";
-import type { LoginResponse, UserMe } from "@/types/api";
+import type { UserMe } from "@/types/api";
+import type { Session } from "@supabase/supabase-js";
 
 interface AuthContextValue {
   user: UserMe | null;
@@ -18,112 +18,79 @@ interface AuthContextValue {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserMe | null>(null);
-  const [token, setTokenState] = useState<string | null>(getToken);
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchUser = useCallback(async () => {
+  const token = session?.access_token ?? null;
+
+  // Fetch app-specific user data from backend using Supabase token
+  const fetchUser = useCallback(async (accessToken: string) => {
     try {
-      const me = await apiFetch<UserMe>("/auth/me");
+      const me = await apiFetch<UserMe>("/auth/me", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       setUser(me);
     } catch {
-      removeToken();
-      setTokenState(null);
       setUser(null);
     }
   }, []);
 
+  // Listen for Supabase auth state changes
   useEffect(() => {
-    // Only fetch /auth/me on page refresh (token exists but user is null).
-    // After login/register, user is already set — skip the round-trip.
-    if (token && !user) {
-      fetchUser().finally(() => setIsLoading(false));
-    } else {
-      setIsLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, fetchUser]);
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      if (s?.access_token) {
+        fetchUser(s.access_token).finally(() => setIsLoading(false));
+      } else {
+        setIsLoading(false);
+      }
+    });
+
+    // Subscribe to auth changes (login, logout, token refresh)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+      if (s?.access_token) {
+        fetchUser(s.access_token);
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [fetchUser]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await apiFetch<LoginResponse>("/auth/login-json", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
-    setToken(res.access_token);
-    setUser(res.user);
-    setTokenState(res.access_token);
+    if (error) throw new Error(error.message);
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
-    const res = await apiFetch<LoginResponse>("/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email, password, terms_accepted: true }),
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
     });
-    setToken(res.access_token);
-    setUser(res.user);
-    setTokenState(res.access_token);
-    if (res.email_sent === false) {
-      toast.warning(
-        "We couldn't send the verification email. Please try resending from your account settings.",
-        { duration: 10_000 },
-      );
-    }
+    if (error) throw new Error(error.message);
   }, []);
 
-  const logout = useCallback(() => {
-    removeToken();
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
     localStorage.removeItem("sgm_setup_complete");
-    setTokenState(null);
+    setSession(null);
     setUser(null);
   }, []);
-
-  // Session expiry warning
-  useEffect(() => {
-    if (!token) return;
-    const expiry = getTokenExpiry();
-    if (!expiry) return;
-
-    const now = Date.now();
-    const WARNING_BEFORE = 5 * 60 * 1000; // 5 minutes
-    const timeUntilWarning = expiry - now - WARNING_BEFORE;
-    const timeUntilExpiry = expiry - now;
-
-    if (timeUntilExpiry <= 0) {
-      logout();
-      return;
-    }
-
-    const timers: ReturnType<typeof setTimeout>[] = [];
-
-    if (timeUntilWarning > 0) {
-      timers.push(
-        setTimeout(() => {
-          toast.warning(
-            "Your session expires soon. Please save your work and sign in again."
-          );
-        }, timeUntilWarning)
-      );
-    } else if (timeUntilExpiry > 0) {
-      toast.warning(
-        "Your session expires soon. Please save your work and sign in again."
-      );
-    }
-
-    timers.push(
-      setTimeout(() => {
-        logout();
-        toast.error("Your session has expired. Please sign in again.");
-      }, timeUntilExpiry)
-    );
-
-    return () => timers.forEach(clearTimeout);
-  }, [token, logout]);
 
   const value = useMemo(
     () => ({ user, token, isLoading, login, register, logout }),
