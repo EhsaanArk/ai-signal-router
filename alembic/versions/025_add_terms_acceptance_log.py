@@ -42,5 +42,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("users", "accepted_risk_waiver")
     op.drop_column("users", "accepted_tos_version")
-    op.drop_index("ix_terms_acceptance_user_doc")
+    op.drop_index("ix_terms_acceptance_user_doc", table_name="terms_acceptance_log")
     op.drop_table("terms_acceptance_log")

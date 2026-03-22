@@ -348,7 +348,6 @@ async def get_current_user(
                 subscription_tier=tier,
                 is_admin=is_admin,
                 email_verified=sb_user_data.user.email_confirmed_at is not None,
-                terms_accepted_at=datetime.now(timezone.utc),
             )
             db.add(user_row)
             await db.flush()

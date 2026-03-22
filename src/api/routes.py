@@ -422,6 +422,7 @@ class AcceptTermsRequest(BaseModel):
 
 
 @router.post("/auth/accept-terms", response_model=MessageResponse)
+@limiter.limit("5/minute")
 async def accept_terms(
     request: Request,
     body: AcceptTermsRequest,
@@ -462,9 +463,12 @@ async def accept_terms(
 
     await db.flush()
 
-    # Bust user cache
-    cache = request.app.state.cache
-    await cache.delete(f"user:{current_user.id}")
+    # Bust user cache (non-fatal — cache expires in 5min anyway)
+    try:
+        cache = request.app.state.cache
+        await cache.delete(f"user:{current_user.id}")
+    except Exception:
+        logger.debug("Cache bust failed for user %s after terms acceptance", current_user.id)
 
     logger.info("Terms accepted by user %s (v%s, IP: %s)", current_user.id, CURRENT_TOS_VERSION, ip)
     return MessageResponse(message="Terms accepted successfully")
