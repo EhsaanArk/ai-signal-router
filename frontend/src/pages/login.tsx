@@ -3,6 +3,7 @@ import { Link, Navigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { Mail } from "lucide-react";
 import { AuthLayout } from "@/components/layout/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,12 +41,13 @@ function GoogleIcon() {
 
 export function LoginPage() {
   usePageTitle("Sign In");
-  const { login, token, user, authError, clearAuthError } = useAuth();
+  const { login, token, user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [magicLinkLoading, setMagicLinkLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
+  const [magicEmail, setMagicEmail] = useState("");
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -57,7 +59,6 @@ export function LoginPage() {
   async function onSubmit(values: FormValues) {
     setLoading(true);
     setFormError(null);
-    clearAuthError();
     try {
       await login(values.email, values.password);
       toast.success("Logged in successfully");
@@ -71,7 +72,6 @@ export function LoginPage() {
   async function handleGoogle() {
     setGoogleLoading(true);
     setFormError(null);
-    clearAuthError();
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
@@ -85,18 +85,16 @@ export function LoginPage() {
   }
 
   async function handleMagicLink() {
-    const email = form.getValues("email");
-    if (!email || !email.includes("@")) {
-      setFormError("Enter your email above, then click Magic Link");
+    if (!magicEmail || !magicEmail.includes("@")) {
+      setFormError("Enter your email to receive a magic link");
       return;
     }
     setMagicLinkLoading(true);
     setFormError(null);
-    clearAuthError();
     try {
       const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: window.location.origin },
+        email: magicEmail,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
       });
       if (error) throw new Error(error.message);
       setMagicLinkSent(true);
@@ -110,103 +108,123 @@ export function LoginPage() {
 
   const anyLoading = loading || magicLinkLoading || googleLoading;
 
-  return (
-    <AuthLayout>
-      {magicLinkSent ? (
+  if (magicLinkSent) {
+    return (
+      <AuthLayout>
         <div className="space-y-4 text-center">
+          <Mail className="h-10 w-10 text-primary mx-auto" />
+          <p className="text-sm font-medium">Check your email</p>
           <p className="text-sm text-muted-foreground">
-            We sent a login link to your email. Click it to sign in — no password needed.
+            We sent a login link to <strong>{magicEmail}</strong>. Click it to sign in — no password needed.
           </p>
           <Button variant="outline" size="sm" onClick={() => setMagicLinkSent(false)}>
             Back to Sign In
           </Button>
         </div>
-      ) : (
-        <>
+      </AuthLayout>
+    );
+  }
+
+  return (
+    <AuthLayout>
+      {/* Quick sign-in options */}
+      <div className="space-y-3">
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={handleGoogle}
+          disabled={anyLoading}
+        >
+          <GoogleIcon />
+          <span className="ml-2">{googleLoading ? "Redirecting..." : "Continue with Google"}</span>
+        </Button>
+
+        <div className="flex gap-2">
+          <Input
+            type="email"
+            placeholder="you@example.com"
+            value={magicEmail}
+            onChange={(e) => setMagicEmail(e.target.value)}
+            disabled={anyLoading}
+            className="flex-1"
+            onKeyDown={(e) => e.key === "Enter" && handleMagicLink()}
+          />
           <Button
             variant="outline"
-            className="w-full"
-            onClick={handleGoogle}
+            onClick={handleMagicLink}
             disabled={anyLoading}
+            className="shrink-0"
           >
-            <GoogleIcon />
-            <span className="ml-2">{googleLoading ? "Redirecting..." : "Continue with Google"}</span>
+            <Mail className="h-4 w-4 mr-1.5" />
+            {magicLinkLoading ? "Sending..." : "Magic Link"}
           </Button>
+        </div>
+      </div>
 
-          <div className="relative my-4">
-            <Separator />
-            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-[10px] text-muted-foreground uppercase">
-              or
-            </span>
-          </div>
+      <div className="relative my-4">
+        <Separator />
+        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-[10px] text-muted-foreground uppercase">
+          or sign in with password
+        </span>
+      </div>
 
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              {(formError || authError) && (
-                <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {formError || authError}
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {formError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {formError}
+            </div>
+          )}
+          <FormField
+            control={form.control}
+            name="email"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Email</FormLabel>
+                <FormControl>
+                  <Input
+                    type="email"
+                    placeholder="you@example.com"
+                    disabled={anyLoading}
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="password"
+            render={({ field }) => (
+              <FormItem>
+                <div className="flex justify-between items-center">
+                  <FormLabel>Password</FormLabel>
+                  <Link
+                    to="/forgot-password"
+                    className="text-xs text-muted-foreground hover:text-primary hover:underline"
+                  >
+                    Forgot password?
+                  </Link>
                 </div>
-              )}
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="email"
-                        placeholder="you@example.com"
-                        disabled={anyLoading}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
-                    <FormControl>
-                      <Input type="password" placeholder="••••••••" disabled={anyLoading} {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex justify-between items-center">
-                <button
-                  type="button"
-                  onClick={handleMagicLink}
-                  disabled={anyLoading}
-                  className="text-sm text-muted-foreground hover:text-primary hover:underline disabled:opacity-50"
-                >
-                  {magicLinkLoading ? "Sending..." : "Send magic link instead"}
-                </button>
-                <Link
-                  to="/forgot-password"
-                  className="text-sm text-muted-foreground hover:text-primary hover:underline"
-                >
-                  Forgot password?
-                </Link>
-              </div>
-              <Button type="submit" className="w-full" disabled={anyLoading}>
-                {loading ? "Signing in..." : "Sign In"}
-              </Button>
-            </form>
-          </Form>
-          <p className="mt-4 text-center text-sm text-muted-foreground">
-            Don't have an account?{" "}
-            <Link to="/register" className="text-primary hover:underline">
-              Register
-            </Link>
-          </p>
-        </>
-      )}
+                <FormControl>
+                  <Input type="password" placeholder="••••••••" disabled={anyLoading} {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <Button type="submit" className="w-full" disabled={anyLoading}>
+            {loading ? "Signing in..." : "Sign In"}
+          </Button>
+        </form>
+      </Form>
+      <p className="mt-4 text-center text-sm text-muted-foreground">
+        Don't have an account?{" "}
+        <Link to="/register" className="text-primary hover:underline">
+          Register
+        </Link>
+      </p>
     </AuthLayout>
   );
 }
