@@ -293,3 +293,61 @@ Currently users see `balance` and `lots` with no context about when they matter.
 **Priority:** P2
 **Depends on:** PR #96 deployed to production for 48+ hours
 **Added:** 2026-03-20 (eng review of PR #96)
+
+---
+
+## P2 — E2E test pipeline with SageMaster staging verification
+
+**What:** A dedicated test route that sends a synthetic signal through the full pipeline to a SageMaster staging webhook, then headlessly logs into SageMaster and verifies the trade landed. Proves the entire pipeline works end-to-end (parser → mapper → webhook → SageMaster accepts it).
+
+**Why:** The admin test-dispatch endpoint was hardened to sandbox-only (2026-03-21) — it can no longer dispatch to real webhooks. This is correct for security, but means there's no way to verify that SageMaster actually accepts our payloads. A dedicated E2E test pipeline with a staging webhook fills this gap without risking real user trades.
+
+**Pros:**
+- Full pipeline verification: proves SageMaster accepts our payload format
+- Catches integration issues that sandbox previews can't (auth failures, payload rejection, API changes)
+- Can be triggered as a post-deploy smoke test by the railway-ops agent
+
+**Cons:**
+- Requires a dedicated SageMaster staging/test account and webhook URL
+- Headless browser verification adds infrastructure complexity (Playwright, SageMaster login)
+- Touches protected pipeline files (needs its own eng review)
+- SageMaster staging availability is outside our control
+
+**Context:**
+- The admin test-dispatch endpoint was converted to sandbox-only in the security hardening PR (2026-03-21). Previously it could dispatch to any user's webhook — a security gap for a trading platform.
+- This TODO is the "do it properly" follow-up: a dedicated test pipeline with a known staging webhook, not reusing user webhooks.
+- Related to the existing "Pipeline dry-run smoke test" TODO but goes further — that one skips dispatch, this one actually dispatches to a test webhook and verifies receipt.
+- Needs: SageMaster staging credentials, a test Assist configured in SageMaster, Playwright for headless verification.
+
+**Effort:** L (human) → M (CC)
+**Priority:** P2
+**Depends on:** SageMaster staging account setup (manual step)
+**Added:** 2026-03-21 (eng review of test-dispatch security hardening)
+
+---
+
+## P3 — Signal history stats in Command Reference drawer
+
+**What:** Add a small section at the bottom of the Command Reference drawer showing signal processing stats for the last 7 days: total signals processed, matched, ignored (with breakdown by reason: keyword blacklist, disabled action, parse failure).
+
+**Why:** Users want confidence that their route is working. Currently they have no visibility into signal processing without checking signal logs. A quick stats summary in the drawer they're already looking at builds trust and surfaces issues early.
+
+**Pros:**
+- Builds user confidence ("23 signals processed, 21 matched")
+- Surfaces issues proactively (high ignore rate = misconfiguration)
+- Natural fit in the Command Reference drawer (context-appropriate)
+
+**Cons:**
+- Requires a new API endpoint to aggregate `signal_logs` per routing rule
+- Signal log queries could be slow for high-volume routes without proper indexing
+- Adds backend scope to what is otherwise a frontend-only feature
+
+**Context:**
+- The Command Reference drawer (see `docs/designs/SIGNAL-COMMAND-REFERENCE-PANEL.md`) shows command definitions and toggles. This would add a data-driven section at the bottom.
+- Query: `SELECT status, COUNT(*) FROM signal_logs WHERE routing_rule_id = ? AND created_at > NOW() - INTERVAL '7 days' GROUP BY status`
+- Consider caching the result in Redis with a 5-minute TTL to avoid repeated DB queries
+
+**Effort:** M (human) → S (CC)
+**Priority:** P3
+**Depends on:** Command Reference drawer (Signal Command Reference Panel feature)
+**Added:** 2026-03-21 (CEO plan review)
