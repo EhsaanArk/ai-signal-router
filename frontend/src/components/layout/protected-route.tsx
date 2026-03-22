@@ -29,7 +29,7 @@ export function ProtectedRoute() {
   }
 
   // Redirect to terms acceptance if user hasn't accepted current version
-  if (user.accepted_tos_version !== CURRENT_TOS_VERSION || !user.accepted_risk_waiver) {
+  if (user.accepted_tos_version !== CURRENT_TOS_VERSION) {
     return <Navigate to="/accept-terms" replace />;
   }
 
