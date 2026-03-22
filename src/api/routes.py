@@ -1055,9 +1055,9 @@ async def telegram_status(
     # Attach last signal timestamp for pipeline health visibility
     last_signal = (
         await db.execute(
-            select(SignalLogModel.created_at)
+            select(SignalLogModel.processed_at)
             .where(SignalLogModel.user_id == current_user.id)
-            .order_by(SignalLogModel.created_at.desc())
+            .order_by(SignalLogModel.processed_at.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
