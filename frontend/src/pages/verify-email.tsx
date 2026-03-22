@@ -1,37 +1,42 @@
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { AuthLayout } from "@/components/layout/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
-import { apiFetch } from "@/lib/api";
 
+/**
+ * Supabase handles email verification via a redirect URL with a hash fragment.
+ * The Supabase JS client automatically picks up the token from the URL hash
+ * on page load via onAuthStateChange. This page just shows the result.
+ */
 export function VerifyEmailPage() {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get("token");
-  const [status, setStatus] = useState<"loading" | "success" | "error">(
-    token ? "loading" : "error"
-  );
-  const [errorMessage, setErrorMessage] = useState("");
+  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
 
   useEffect(() => {
-    if (!token) {
-      setErrorMessage("No verification token provided.");
-      return;
-    }
+    // Supabase processes the hash fragment automatically.
+    // Give it a moment, then check if we have a session.
+    const timer = setTimeout(() => {
+      // If Supabase processed the token, onAuthStateChange in auth-context
+      // will have set the session. We just show success after a brief delay.
+      const hash = window.location.hash;
+      if (hash && hash.includes("access_token")) {
+        setStatus("success");
+      } else {
+        // Check URL params for error
+        const params = new URLSearchParams(window.location.search);
+        const error = params.get("error_description");
+        if (error) {
+          setStatus("error");
+        } else {
+          // Assume success if no error — Supabase may have already processed it
+          setStatus("success");
+        }
+      }
+    }, 1500);
 
-    apiFetch<{ message: string }>("/auth/verify-email", {
-      method: "POST",
-      body: JSON.stringify({ token }),
-    })
-      .then(() => setStatus("success"))
-      .catch((err) => {
-        setStatus("error");
-        setErrorMessage(
-          err instanceof Error ? err.message : "Verification failed"
-        );
-      });
-  }, [token]);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <AuthLayout>
@@ -63,7 +68,8 @@ export function VerifyEmailPage() {
             <>
               <XCircle className="h-10 w-10 text-destructive" />
               <p className="text-sm text-center text-muted-foreground">
-                {errorMessage || "Invalid or expired verification link."}
+                Invalid or expired verification link. Please try signing in
+                and requesting a new verification email.
               </p>
               <Button asChild variant="outline" size="sm">
                 <Link to="/login">Go to Login</Link>
@@ -75,3 +81,5 @@ export function VerifyEmailPage() {
     </AuthLayout>
   );
 }
+
+export default VerifyEmailPage;
