@@ -260,14 +260,14 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
               <span className="font-medium text-foreground/70">How it works:</span>
               <span className="bg-muted px-2 py-0.5 rounded font-mono">Telegram message</span>
               <ArrowRight className="h-3 w-3 shrink-0" />
-              <span className="bg-muted px-2 py-0.5 rounded">AI Parser</span>
+              <span className="bg-muted px-2 py-0.5 rounded">Sage Intelligence</span>
               <ArrowRight className="h-3 w-3 shrink-0" />
               <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-medium">Webhook Action</span>
               <ArrowRight className="h-3 w-3 shrink-0" />
               <span className="bg-muted px-2 py-0.5 rounded">SageMaster</span>
             </div>
             <p className="text-[10px] text-muted-foreground/70 mt-1.5">
-              Your signal provider sends a message in Telegram. Sage Radar&apos;s AI parser identifies the action
+              Your signal provider sends a message in Telegram. Sage Intelligence identifies the action
               and routes it to your SageMaster account. Click any action below to see example messages and what happens.
             </p>
           </div>
@@ -373,14 +373,14 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
               disabled={parsePreview.isPending}
             />
             <Button type="button" size="sm" className="h-10 px-5" onClick={handleTestCommand} disabled={!testMessage.trim() || parsePreview.isPending}>
-              {parsePreview.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Parse"}
+              {parsePreview.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Simulate"}
             </Button>
           </div>
 
           {parsePreview.isPending && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Running through AI parser...
+              Running through Sage Intelligence...
             </div>
           )}
 
@@ -426,7 +426,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
               ) : (
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-amber-500">Not recognized as a trading signal</p>
-                  <p className="text-[11px] text-muted-foreground">{previewResult.ignore_reason || "The AI parser couldn't identify a trading action in this message."}</p>
+                  <p className="text-[11px] text-muted-foreground">{previewResult.ignore_reason || "The Sage Intelligence couldn't identify a trading action in this message."}</p>
                   <p className="text-[11px] text-muted-foreground/60">
                     Try something like: <code className="bg-muted px-1.5 py-0.5 rounded font-mono">{isCrypto ? "Buy BTC/USDT" : "Buy XAUUSD SL 2300 TP 2350"}</code>
                   </p>
