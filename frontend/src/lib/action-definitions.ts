@@ -1,4 +1,4 @@
-export type RiskLevel = "safe" | "caution" | "destructive";
+export type ImpactLevel = "entry" | "risk-management" | "increases-exposure" | "high-impact" | "operational";
 
 export interface ActionDefinition {
   key: string;
@@ -7,8 +7,8 @@ export interface ActionDefinition {
   example: string;
   /** Multiple example messages that signal providers commonly use. */
   examples: { forex: string[]; crypto: string[] };
-  /** Risk level: safe (informational), caution (modifies positions), destructive (closes/stops). */
-  risk: RiskLevel;
+  /** Impact level from a retail trader's perspective. */
+  impact: ImpactLevel;
   /** When this action is typically sent in a trading context. */
   scenario: string;
   /** What happens when this webhook is dispatched. */
@@ -31,7 +31,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Buy EURUSD at market", "XAUUSD BUY 2340 SL 2320 TP 2380", "Long GBPUSD SL 50 pips TP 100 pips", "GOLD BUY entry 2350"],
       crypto: ["Buy BTC/USDT at market", "BTC LONG 62000 SL 60000 TP 65000", "Long ETH SL 5% TP 10%", "Enter BTC buy 61500 SL 60000 TP 65000"],
     },
-    risk: "safe",
+    impact: "entry",
     scenario: "Signal provider identifies a buying opportunity and sends an entry call. SL and TP levels are included when the provider specifies them.",
     effect: "Dispatches a webhook with the entry details, including any SL/TP levels detected in the message. Your connected platform handles the order.",
     v1: {
@@ -50,7 +50,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Sell GBPUSD at market", "EURUSD SELL 1.0850 SL 1.0900 TP 1.0750", "Short XAUUSD SL 2400 TP 2280", "GOLD SELL now"],
       crypto: ["Sell ETH/USDT at market", "BTC SHORT 63000 SL 65000 TP 58000", "Short SOL SL 5% TP 15%", "ETH sell 3200 SL 3300 TP 2900"],
     },
-    risk: "safe",
+    impact: "entry",
     scenario: "Signal provider spots a bearish setup and sends a sell/short entry signal. SL and TP levels are included when the provider specifies them.",
     effect: "Dispatches a webhook with the entry details, including any SL/TP levels detected in the message. Your connected platform handles the order.",
     v1: {
@@ -69,7 +69,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Buy limit EURUSD @ 1.0950", "XAUUSD buy limit 2300 SL 2280 TP 2350", "Place buy order GBPUSD at 1.2500"],
       crypto: ["Buy limit BTC/USDT @ 60000", "BTC limit long 58000 SL 56000 TP 64000", "Set buy order ETH at 2800"],
     },
-    risk: "safe",
+    impact: "entry",
     scenario: "Provider wants to enter at a better price. The order waits until price reaches the limit level. SL and TP are included when specified.",
     effect: "Dispatches a webhook for a pending buy limit order with any SL/TP levels. Your connected platform places the order at the specified price.",
     v1: {
@@ -88,7 +88,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Sell limit GBPUSD @ 1.2500", "XAUUSD sell limit 2400 SL 2420 TP 2350", "Place sell order EURUSD at 1.1000"],
       crypto: ["Sell limit ETH/USDT @ 3200", "BTC limit short 65000 SL 67000 TP 60000", "Set sell order SOL at 200"],
     },
-    risk: "safe",
+    impact: "entry",
     scenario: "Provider expects price to rise to a resistance level before selling. SL and TP are included when specified.",
     effect: "Dispatches a webhook for a pending sell limit order with any SL/TP levels. Your connected platform places the order at the specified price.",
     v1: {
@@ -107,7 +107,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Close XAUUSD", "Exit EURUSD trade", "Close gold position", "Take profit on GBPUSD"],
       crypto: ["Close BTC position", "Exit ETH trade", "Close BTC/USDT", "TP hit, closing SOL"],
     },
-    risk: "destructive",
+    impact: "high-impact",
     scenario: "Trade has hit its target, or the provider wants to exit before a news event.",
     effect: "Dispatches a webhook instructing your connected platform to close the position for the specified symbol at market price.",
   },
@@ -120,7 +120,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Close 50%", "Take half off XAUUSD", "Secure 50% profit", "Partial close 75%", "Close 30% of position"],
       crypto: ["Close 50% BTC", "Take 25% profit", "Partial close 50%", "Secure half off ETH"],
     },
-    risk: "caution",
+    impact: "risk-management",
     scenario: "Price is moving in your favor. Provider locks in partial profit while letting the rest run for a bigger target.",
     effect: "Dispatches a webhook to close the specified percentage of the position. Your connected platform handles the partial close.",
   },
@@ -133,7 +133,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Close 0.5 lots", "Close 1 lot EURUSD", "Take 0.3 lots off XAUUSD", "Reduce by 0.5 lots"],
       crypto: [],
     },
-    risk: "caution",
+    impact: "risk-management",
     scenario: "Provider wants precise control over how much to close, specifying exact lot size rather than a percentage.",
     effect: "Dispatches a webhook to close the specified lot amount. Only available for forex-compatible destinations.",
     forexOnly: true,
@@ -147,7 +147,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Move SL to BE", "Breakeven XAUUSD", "Move SL to 2350", "Trail SL 20 pips", "Secure entry on gold", "BE on EURUSD"],
       crypto: ["Breakeven BTC", "Move SL to entry", "Move SL to 61000", "Trail stop 3%", "Secure BTC position"],
     },
-    risk: "safe",
+    impact: "risk-management",
     scenario: "Trade is in profit. Provider adjusts the stop loss — either to breakeven (entry price), a specific price level, or a trailing offset. All SL modifications route through this action.",
     effect: "Dispatches a webhook instructing your connected platform to adjust the stop loss. Supports breakeven, custom SL price, and trailing SL offsets.",
   },
@@ -160,7 +160,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: [],
       crypto: ["Add funds BTC", "DCA into ETH", "Average down on SOL", "Add to BTC position", "Double down on ETH"],
     },
-    risk: "caution",
+    impact: "increases-exposure",
     scenario: "Price has moved against the position. Provider dollar-cost-averages (DCA) by adding more funds to lower the average entry.",
     effect: "Dispatches a webhook to add funds or place an additional order. Your connected platform handles the execution.",
     cryptoOnly: true,
@@ -174,7 +174,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Close all trades", "Flatten everything", "Close all positions now", "Exit all", "Liquidate everything"],
       crypto: ["Close all deals", "Exit everything", "Flatten all", "Close all crypto positions"],
     },
-    risk: "destructive",
+    impact: "high-impact",
     scenario: "Major market event (NFP, CPI, black swan). Provider wants to exit ALL positions immediately regardless of P&L.",
     effect: "Dispatches a webhook instructing your connected platform to close all open positions across all symbols at market price.",
   },
@@ -187,7 +187,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Close all and stop", "Emergency stop", "Shut everything down", "Kill all and stop bot"],
       crypto: ["Close all and stop AI", "Emergency shutdown", "Stop everything now"],
     },
-    risk: "destructive",
+    impact: "high-impact",
     scenario: "Critical situation — provider wants to exit all positions AND prevent the Assist from accepting new signals.",
     effect: "Dispatches a webhook to close all positions and stop the Assist. Your connected platform handles both actions.",
   },
@@ -200,7 +200,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Start the bot", "Resume trading", "Turn on the assist", "Start copying signals again"],
       crypto: ["Start AI assist", "Resume the bot", "Turn on trading", "Reactivate assist"],
     },
-    risk: "caution",
+    impact: "operational",
     scenario: "After a pause (weekend, news event, or manual stop), the provider resumes signal copying.",
     effect: "Dispatches a webhook to resume the Assist on your connected platform. New incoming signals will be forwarded again.",
   },
@@ -213,7 +213,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
       forex: ["Stop the bot", "Pause trading", "Turn off assist", "Stop copying", "Hold off on new trades"],
       crypto: ["Stop AI assist", "Pause the bot", "Turn off trading", "No new trades"],
     },
-    risk: "caution",
+    impact: "operational",
     scenario: "Upcoming high-impact news, weekend, or uncertainty. Provider pauses to prevent new entries while keeping existing positions.",
     effect: "Dispatches a webhook to pause the Assist on your connected platform. No new webhooks will be forwarded until resumed.",
   },
@@ -335,11 +335,13 @@ export function getExamplesForDestination(
   return list.length > 0 ? list : (destinationType === "sagemaster_crypto" ? action.examples.forex : action.examples.crypto);
 }
 
-/** Risk level display config. */
-export const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: string; border: string }> = {
-  safe: { label: "Safe", color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-  caution: { label: "Caution", color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-  destructive: { label: "Destructive", color: "text-red-500", bg: "bg-red-500/10", border: "border-red-500/20" },
+/** Impact level display config. */
+export const IMPACT_CONFIG: Record<ImpactLevel, { label: string; color: string; bg: string; border: string }> = {
+  "entry": { label: "Entry", color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+  "risk-management": { label: "Risk Management", color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
+  "increases-exposure": { label: "Increases Exposure", color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+  "high-impact": { label: "High Impact", color: "text-red-500", bg: "bg-red-500/10", border: "border-red-500/20" },
+  "operational": { label: "Operational", color: "text-muted-foreground", bg: "bg-muted/50", border: "border-border" },
 };
 
 /**
