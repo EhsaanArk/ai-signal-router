@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePageTitle } from "@/hooks/use-page-title";
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 
 export function ForgotPasswordPage() {
   usePageTitle("Forgot Password");
@@ -19,11 +19,10 @@ export function ForgotPasswordPage() {
     setLoading(true);
     setError(null);
     try {
-      const { error: supaError } = await supabase.auth.resetPasswordForEmail(
-        email,
-        { redirectTo: `${window.location.origin}/reset-password` },
-      );
-      if (supaError) throw new Error(supaError.message);
+      await apiFetch("/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
       setSubmitted(true);
     } catch (err) {
       setError(

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/form";
 import { toast } from "sonner";
 import { usePageTitle } from "@/hooks/use-page-title";
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 
 const schema = z
   .object({
@@ -32,7 +32,9 @@ type FormValues = z.infer<typeof schema>;
 
 export function ResetPasswordPage() {
   usePageTitle("Reset Password");
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const token = searchParams.get("token");
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -41,14 +43,32 @@ export function ResetPasswordPage() {
     defaultValues: { new_password: "", confirm_password: "" },
   });
 
+  if (!token) {
+    return (
+      <AuthLayout>
+        <div className="space-y-4 text-center">
+          <p className="text-sm text-destructive">
+            Invalid reset link. No token provided.
+          </p>
+          <Link to="/login" className="text-sm text-primary hover:underline">
+            Back to Sign In
+          </Link>
+        </div>
+      </AuthLayout>
+    );
+  }
+
   async function onSubmit(values: FormValues) {
     setLoading(true);
     setFormError(null);
     try {
-      const { error } = await supabase.auth.updateUser({
-        password: values.new_password,
+      await apiFetch("/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({
+          token,
+          new_password: values.new_password,
+        }),
       });
-      if (error) throw new Error(error.message);
       toast.success("Password reset successfully. Please sign in.");
       navigate("/login");
     } catch (err) {

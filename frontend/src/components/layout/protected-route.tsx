@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/auth-context";
+import { removeToken } from "@/lib/auth";
 import { LoadingSpinner } from "@/components/shared/loading-spinner";
 import { StagingRedirect, isStagingEnvironment } from "@/components/shared/staging-redirect";
 
@@ -15,6 +16,7 @@ export function ProtectedRoute() {
   }, [isLoading]);
 
   if (timedOut) {
+    removeToken();
     return <Navigate to="/login" replace />;
   }
 
