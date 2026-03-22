@@ -15,7 +15,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
             </h1>
             <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
             <p className="text-xs text-muted-foreground text-center mt-1">
-              Automate your Telegram trading signals to SageMaster
+              AI-powered Telegram signal routing, automated
             </p>
           </div>
           {children}
