@@ -3,6 +3,8 @@ import {
   Activity,
   BookOpen,
   Brain,
+  ChevronLeft,
+  ChevronRight,
   LayoutDashboard,
   MessageSquare,
   Radio,
@@ -57,7 +59,68 @@ const tierColors: Record<string, string> = {
   elite: "text-amber-400",
 };
 
-export function Sidebar({ className, onNavClick }: { className?: string; onNavClick?: () => void }) {
+interface SidebarProps {
+  className?: string;
+  onNavClick?: () => void;
+  collapsed: boolean;
+  onToggle: () => void;
+}
+
+function NavLink({
+  item,
+  isActive,
+  collapsed,
+  onNavClick,
+  size = "md",
+}: {
+  item: { path: string; label: string; icon: React.ComponentType<{ className?: string }> };
+  isActive: boolean;
+  collapsed: boolean;
+  onNavClick?: () => void;
+  size?: "sm" | "md";
+}) {
+  const h = size === "sm" ? "h-9" : "h-10";
+  const iconSize = size === "sm" ? "h-4 w-4" : "h-[18px] w-[18px]";
+
+  const link = (
+    <Link
+      to={item.path}
+      onClick={onNavClick}
+      onMouseEnter={() => prefetchRoute(item.path)}
+      className={cn(
+        "relative flex items-center rounded-md transition-colors",
+        h,
+        collapsed ? "w-10 justify-center" : "w-full gap-3 px-3",
+        isActive
+          ? "bg-sidebar-accent text-primary"
+          : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+      )}
+    >
+      {isActive && (
+        <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-primary" />
+      )}
+      <item.icon className={cn(iconSize, "shrink-0")} />
+      {!collapsed && (
+        <span className="text-sm truncate">{item.label}</span>
+      )}
+    </Link>
+  );
+
+  if (collapsed) {
+    return (
+      <Tooltip delayDuration={0}>
+        <TooltipTrigger asChild>{link}</TooltipTrigger>
+        <TooltipContent side="right" sideOffset={8}>
+          {item.label}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return link;
+}
+
+export function Sidebar({ className, onNavClick, collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
   const { user } = useAuth();
   const { data: rules } = useRoutingRules();
@@ -71,55 +134,83 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
   return (
     <aside
       className={cn(
-        "flex h-full w-14 flex-col border-r bg-sidebar text-sidebar-foreground",
+        "flex h-full flex-col border-r bg-sidebar text-sidebar-foreground transition-[width] duration-200",
+        collapsed ? "w-14" : "w-52",
         className
       )}
     >
-      {/* Logo */}
-      <div className="flex h-14 flex-col items-center justify-center border-b border-sidebar-border gap-0.5 group cursor-pointer">
-        <img src="/logo.svg" alt="Sage Radar AI" className="h-7 w-7 transition-transform duration-200 group-hover:scale-110 group-hover:rotate-12" />
-        <span className="text-[7px] font-bold uppercase tracking-wider px-1 py-px rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20 transition-colors duration-200 group-hover:text-primary">Beta</span>
+      {/* Logo + collapse toggle */}
+      <div className={cn(
+        "flex h-14 items-center border-b border-sidebar-border",
+        collapsed ? "justify-center px-0" : "justify-between px-3"
+      )}>
+        <div className={cn("flex items-center gap-2", collapsed && "flex-col gap-0.5")}>
+          <img src="/logo.svg" alt="Sage Radar AI" className="h-7 w-7" />
+          {!collapsed && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-semibold tracking-tight">Sage Radar</span>
+              <span className="text-[7px] font-bold uppercase tracking-wider px-1 py-px rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
+            </div>
+          )}
+          {collapsed && (
+            <span className="text-[7px] font-bold uppercase tracking-wider px-1 py-px rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/20">Beta</span>
+          )}
+        </div>
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={onToggle}
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+            aria-label="Collapse sidebar"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
+      {/* Expand button when collapsed */}
+      {collapsed && (
+        <div className="flex justify-center py-2">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+            aria-label="Expand sidebar"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Nav */}
-      <nav className="flex-1 flex flex-col items-center gap-1 py-3">
+      <nav className={cn("flex-1 flex flex-col gap-1 py-3", collapsed ? "items-center" : "px-2")}>
         {navItems.map((item) => {
           const isActive =
             item.path === "/"
               ? location.pathname === "/"
               : location.pathname.startsWith(item.path);
           return (
-            <Tooltip key={item.path} delayDuration={0}>
-              <TooltipTrigger asChild>
-                <Link
-                  to={item.path}
-                  onClick={onNavClick}
-                  onMouseEnter={() => prefetchRoute(item.path)}
-                  className={cn(
-                    "relative flex h-10 w-10 items-center justify-center rounded-md transition-colors",
-                    isActive
-                      ? "bg-sidebar-accent text-primary"
-                      : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                  )}
-                >
-                  {isActive && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-primary" />
-                  )}
-                  <item.icon className="h-[18px] w-[18px]" />
-                </Link>
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>
-                {item.label}
-              </TooltipContent>
-            </Tooltip>
+            <NavLink
+              key={item.path}
+              item={item}
+              isActive={isActive}
+              collapsed={collapsed}
+              onNavClick={onNavClick}
+            />
           );
         })}
       </nav>
 
       {/* Admin Nav */}
       {user?.is_admin && (
-        <div className="flex flex-col items-center gap-1 border-t border-sidebar-border py-2 overflow-y-auto">
-          <span className="text-[8px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-0.5">
+        <div className={cn(
+          "flex flex-col gap-1 border-t border-sidebar-border py-2 overflow-y-auto",
+          collapsed ? "items-center" : "px-2"
+        )}>
+          <span className={cn(
+            "text-[8px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-0.5",
+            collapsed ? "text-center" : "px-3"
+          )}>
             Admin
           </span>
           {[
@@ -127,42 +218,36 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
             { path: "/admin/users", label: "Users", icon: Users },
             { path: "/admin/signals", label: "All Signals", icon: Radio },
             { path: "/admin/system-rules", label: "System Rules", icon: BookOpen },
-            { path: "/admin/parser", label: "AI Parser", icon: Brain },
+            { path: "/admin/parser", label: "Sage Intelligence", icon: Brain },
             { path: "/admin/settings", label: "Settings", icon: Settings },
           ].map((item) => {
             const isActive = location.pathname.startsWith(item.path);
             return (
-              <Tooltip key={item.path} delayDuration={0}>
-                <TooltipTrigger asChild>
-                  <Link
-                    to={item.path}
-                    onClick={onNavClick}
-                    onMouseEnter={() => prefetchRoute(item.path)}
-                    className={cn(
-                      "relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
-                      isActive
-                        ? "bg-sidebar-accent text-primary"
-                        : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                  </Link>
-                </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8}>
-                  {item.label}
-                </TooltipContent>
-              </Tooltip>
+              <NavLink
+                key={item.path}
+                item={item}
+                isActive={isActive}
+                collapsed={collapsed}
+                onNavClick={onNavClick}
+                size="sm"
+              />
             );
           })}
         </div>
       )}
 
       {/* Bottom: Tier + Connection */}
-      <div className="flex flex-col items-center gap-3 border-t border-sidebar-border py-3">
+      <div className={cn(
+        "flex items-center gap-3 border-t border-sidebar-border py-3",
+        collapsed ? "flex-col" : "px-3"
+      )}>
         <Tooltip delayDuration={0}>
           <TooltipTrigger asChild>
             <span className={cn("text-[10px] font-bold uppercase tracking-wider cursor-default", tierColors[tier] || "text-zinc-400")}>
-              {({ free: "FREE", starter: "STR", pro: "PRO", elite: "ELT" }[tier]) || tier.slice(0, 3).toUpperCase()}
+              {collapsed
+                ? ({ free: "FREE", starter: "STR", pro: "PRO", elite: "ELT" }[tier]) || tier.slice(0, 3).toUpperCase()
+                : getTierDisplayName(tier)
+              }
             </span>
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={8}>
@@ -181,6 +266,11 @@ export function Sidebar({ className, onNavClick }: { className?: string; onNavCl
             {connected ? "Telegram: Connected" : "Telegram disconnected \u2014 click to reconnect"}
           </TooltipContent>
         </Tooltip>
+        {!collapsed && (
+          <span className="text-[10px] text-muted-foreground">
+            {connected ? "Connected" : "Disconnected"}
+          </span>
+        )}
       </div>
     </aside>
   );
