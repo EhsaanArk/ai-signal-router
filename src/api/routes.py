@@ -1435,6 +1435,91 @@ async def delete_routing_rule(
     await cache.delete(f"rules:{current_user.id}")
 
 
+class ParsePreviewRequest(BaseModel):
+    """Request body for the parse-preview sandbox."""
+    message: str = Field(..., min_length=1, max_length=2000)
+    destination_type: str = "sagemaster_forex"
+
+
+class ParsePreviewResponse(BaseModel):
+    """Stripped parser result — never exposes system prompt or internals."""
+    is_valid_signal: bool
+    action: str | None = None
+    symbol: str | None = None
+    direction: str | None = None
+    order_type: str | None = None
+    entry_price: float | None = None
+    stop_loss: float | None = None
+    take_profits: list[float] = Field(default_factory=list)
+    percentage: int | None = None
+    ignore_reason: str | None = None
+
+
+@router.post("/parse-preview", response_model=ParsePreviewResponse)
+@limiter.limit("10/minute")
+async def parse_preview(
+    request: Request,
+    body: ParsePreviewRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Preview how the AI parser interprets a signal message.
+
+    This is a sandbox endpoint — it does NOT dispatch to any webhook,
+    does NOT log to signal_logs, and does NOT expose the system prompt.
+    Rate limited to 10 requests/minute per user.
+    """
+    import asyncio
+    from src.adapters.openai import OpenAISignalParser
+    from src.core.models import RawSignal
+
+    settings = get_settings()
+    if not settings.OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Parser not available — OpenAI API key not configured.",
+        )
+
+    parser = OpenAISignalParser(api_key=settings.OPENAI_API_KEY)
+
+    # Build a stub RawSignal for the parser
+    stub_signal = RawSignal(
+        user_id=current_user.id,
+        channel_id="preview",
+        raw_message=body.message,
+        message_id=0,
+    )
+
+    try:
+        parsed = await asyncio.wait_for(
+            parser.parse(stub_signal),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Parser timed out. Try again.",
+        )
+    except Exception as exc:
+        logger.warning("Parse preview failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Couldn't parse this message. Try different wording.",
+        )
+
+    return ParsePreviewResponse(
+        is_valid_signal=parsed.is_valid_signal,
+        action=parsed.action if parsed.is_valid_signal else None,
+        symbol=parsed.symbol if parsed.is_valid_signal and parsed.symbol != "UNKNOWN" else None,
+        direction=parsed.direction if parsed.is_valid_signal else None,
+        order_type=parsed.order_type if parsed.is_valid_signal else None,
+        entry_price=parsed.entry_price,
+        stop_loss=parsed.stop_loss,
+        take_profits=parsed.take_profits,
+        percentage=parsed.percentage,
+        ignore_reason=parsed.ignore_reason if not parsed.is_valid_signal else None,
+    )
+
+
 @router.post("/webhook/test", response_model=TestWebhookResponse)
 async def test_webhook(
     body: TestWebhookRequest,
