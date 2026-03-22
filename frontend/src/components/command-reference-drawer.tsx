@@ -131,14 +131,18 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
         className="w-full sm:max-w-[420px] flex flex-col"
         aria-label={`Signal Commands for ${rule.rule_name || rule.source_channel_name || "route"}`}
       >
-        <SheetHeader className="shrink-0">
+        <SheetHeader className="shrink-0 space-y-1.5">
           <SheetTitle className="text-sm">Signal Commands</SheetTitle>
-          <p className="text-[10px] text-muted-foreground -mt-1">
+          <p className="text-[11px] text-muted-foreground">
             {rule.rule_name || rule.source_channel_name || rule.source_channel_id}
             {" · "}
             {rule.destination_type === "sagemaster_forex"
               ? "SageMaster Forex"
               : "SageMaster Crypto"}
+          </p>
+          <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+            These are the Telegram messages this route understands.
+            Toggle optional commands on or off — changes save instantly.
           </p>
         </SheetHeader>
 
@@ -146,9 +150,14 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
         <div className="flex-1 overflow-y-auto space-y-4 pr-1">
           {/* Required Commands */}
           <div>
-            <Label className="text-[11px] text-muted-foreground uppercase tracking-wide">
-              Required (always active)
-            </Label>
+            <div className="mb-2">
+              <Label className="text-xs font-semibold block">
+                Entry Signals
+              </Label>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Always forwarded — these open new trades
+              </p>
+            </div>
             <div className="space-y-1.5 mt-2">
               {entryActions.map((action) => (
                 <ActionRow
@@ -164,9 +173,17 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
 
           {/* Optional Commands */}
           <div>
-            <Label className="text-[11px] text-muted-foreground uppercase tracking-wide">
-              Optional · {enabledOptionalCount}/{optionalActions.length} active
-            </Label>
+            <div className="mb-2">
+              <Label className="text-xs font-semibold block">
+                Management Signals
+                <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                  {enabledOptionalCount}/{optionalActions.length} active
+                </span>
+              </Label>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Close, modify, or control trades — toggle each on or off
+              </p>
+            </div>
             <div className="space-y-1.5 mt-2">
               {optionalActions.map((action) => (
                 <ActionRow
@@ -183,9 +200,14 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
           {/* Not Supported */}
           {unsupported.length > 0 && (
             <div>
-              <Label className="text-[11px] text-muted-foreground uppercase tracking-wide">
-                Not Supported
-              </Label>
+              <div className="mb-2">
+                <Label className="text-xs font-semibold block text-muted-foreground">
+                  Not Supported
+                </Label>
+                <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                  Platform limitations — these messages will be ignored
+                </p>
+              </div>
               <div className="space-y-1.5 mt-2">
                 {unsupported.map((item) => (
                   <div
@@ -210,9 +232,14 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
 
         {/* Test a Command — sticky footer */}
         <div className="shrink-0 border-t pt-3 mt-3 space-y-2">
-          <Label className="text-[11px] text-muted-foreground uppercase tracking-wide">
-            Test a Command
-          </Label>
+          <div>
+            <Label className="text-xs font-semibold block">
+              Test a Command
+            </Label>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Paste a Telegram message to see how the AI parser interprets it
+            </p>
+          </div>
           <div className="flex gap-2">
             <Input
               type="text"
