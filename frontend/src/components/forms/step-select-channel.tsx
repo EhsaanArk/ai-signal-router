@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, Info, MessageSquare, Search } from "lucide-react";
+import { AlertTriangle, Check, Info, MessageSquare, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useChannels } from "@/hooks/use-channels";
+import { useTelegramStatus } from "@/hooks/use-telegram";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -20,7 +21,8 @@ interface Props {
 }
 
 export function StepSelectChannel({ initialData, onNext }: Props) {
-  const { data: channels, isLoading, error } = useChannels();
+  const { data: channels, isLoading, error, refetch } = useChannels();
+  const { data: tgStatus } = useTelegramStatus();
   const [selected, setSelected] = useState(initialData?.source_channel_id ?? "");
   const [search, setSearch] = useState("");
   const [ruleName, setRuleName] = useState(initialData?.rule_name ?? "");
@@ -36,6 +38,43 @@ export function StepSelectChannel({ initialData, onNext }: Props) {
   }
 
   if (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    const isSessionExpired = /expired|reconnect/i.test(message);
+
+    // Session expired — prompt to reconnect
+    if (isSessionExpired) {
+      return (
+        <div className="space-y-3 text-center py-6">
+          <AlertTriangle className="mx-auto h-6 w-6 text-amber-500" />
+          <p className="text-xs font-medium">Telegram session expired</p>
+          <p className="text-xs text-muted-foreground max-w-[280px] mx-auto">
+            Your Telegram session is no longer active. Please reconnect to continue.
+          </p>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/telegram">Reconnect Telegram</Link>
+          </Button>
+        </div>
+      );
+    }
+
+    // Telegram connected but channel fetch failed — show actual error + retry
+    if (tgStatus?.connected) {
+      return (
+        <div className="space-y-3 text-center py-6">
+          <AlertTriangle className="mx-auto h-6 w-6 text-amber-500" />
+          <p className="text-xs font-medium">Failed to load channels</p>
+          <p className="text-xs text-muted-foreground max-w-[280px] mx-auto">
+            {message}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="h-3 w-3 mr-1.5" />
+            Retry
+          </Button>
+        </div>
+      );
+    }
+
+    // Telegram not connected — prompt to connect
     return (
       <div className="space-y-3 text-center py-6">
         <MessageSquare className="mx-auto h-6 w-6 text-muted-foreground" />
