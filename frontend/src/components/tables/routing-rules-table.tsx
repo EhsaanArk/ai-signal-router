@@ -158,6 +158,17 @@ export function RoutingRulesTable({ rules }: Props) {
               )}
             </div>
             <div className="flex gap-1.5">
+              {isSageMaster(rule.destination_type) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 h-7 text-xs"
+                  onClick={() => setCommandsRuleId(rule.id)}
+                >
+                  <ListChecks className="mr-1 h-3 w-3" />
+                  Commands
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -248,8 +259,9 @@ export function RoutingRulesTable({ rules }: Props) {
                         <TooltipTrigger asChild>
                           <button
                             onClick={() => setCommandsRuleId(rule.id)}
-                            className="rounded-sm border px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                            className="inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
                           >
+                            <ListChecks className="h-3 w-3" />
                             {getActionBadge(rule.enabled_actions, rule.destination_type)}
                           </button>
                         </TooltipTrigger>
