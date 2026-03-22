@@ -326,6 +326,24 @@ async def admin_update_user(
     if body.is_disabled is not None:
         user_row.is_disabled = body.is_disabled
 
+        # Sync disable/enable to Supabase Auth
+        from src.api.deps import _get_supabase_admin
+        sb = _get_supabase_admin()
+        if sb is not None:
+            try:
+                if body.is_disabled:
+                    sb.auth.admin.update_user_by_id(
+                        str(user_id), {"ban_duration": "876600h"},
+                    )
+                    logger.info("Supabase user %s banned", user_id)
+                else:
+                    sb.auth.admin.update_user_by_id(
+                        str(user_id), {"ban_duration": "none"},
+                    )
+                    logger.info("Supabase user %s unbanned", user_id)
+            except Exception as exc:
+                logger.error("Supabase ban sync failed for %s: %s", user_id, exc)
+
     await db.flush()
     await db.refresh(user_row)
 
