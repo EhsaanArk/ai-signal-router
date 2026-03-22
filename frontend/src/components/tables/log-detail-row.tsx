@@ -83,7 +83,7 @@ function getPipelineSteps(log: SignalLogResponse, channelName: string | null): P
 }
 
 export function LogDetailRow({ log, colSpan = 3 }: Props) {
-  const copy = useCopyToClipboard();
+  const [copy] = useCopyToClipboard();
   const { data: rules } = useRoutingRules();
 
   const matchedRule = log.routing_rule_id && rules

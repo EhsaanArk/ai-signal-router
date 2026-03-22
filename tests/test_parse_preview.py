@@ -279,3 +279,90 @@ class TestParsePreviewEndpoint:
         assert raw_signal.channel_id == "preview"
         assert raw_signal.message_id == 0
         assert raw_signal.raw_message == "Buy XAUUSD"
+
+
+# ---------------------------------------------------------------------------
+# Forwarding verdict tests (enhanced parse-preview fields)
+# ---------------------------------------------------------------------------
+
+
+class TestParsePreviewForwardingVerdict:
+    """Test the route_would_forward / blocked_reason / display_action_label fields."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_settings(self):
+        mock_settings = MagicMock()
+        mock_settings.OPENAI_API_KEY = "test-key"
+        with patch("src.api.routes.get_settings", return_value=mock_settings):
+            yield mock_settings
+
+    async def test_valid_signal_no_enabled_actions_forwards(self):
+        """When enabled_actions is None (all enabled), signal should forward."""
+        mock_parser = AsyncMock()
+        mock_parser.parse.return_value = _valid_parsed_signal()
+
+        with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
+            result = await parse_preview(
+                request=_mock_request(),
+                body=ParsePreviewRequest(message="Buy XAUUSD", enabled_actions=None),
+                current_user=_mock_user(),
+            )
+
+        assert result.route_would_forward is True
+        assert result.blocked_reason is None
+        assert result.display_action_label == "start_long_market_deal"
+
+    async def test_valid_signal_action_enabled_forwards(self):
+        """When the parsed action is in enabled_actions, signal should forward."""
+        mock_parser = AsyncMock()
+        mock_parser.parse.return_value = _valid_parsed_signal()
+
+        with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
+            result = await parse_preview(
+                request=_mock_request(),
+                body=ParsePreviewRequest(
+                    message="Buy XAUUSD",
+                    enabled_actions=["start_long_market_deal", "close_order_at_market_price"],
+                ),
+                current_user=_mock_user(),
+            )
+
+        assert result.route_would_forward is True
+        assert result.blocked_reason is None
+
+    async def test_valid_signal_action_disabled_blocked(self):
+        """When the parsed action is NOT in enabled_actions, signal should be blocked."""
+        mock_parser = AsyncMock()
+        mock_parser.parse.return_value = _valid_parsed_signal(
+            action="close_position", symbol="XAUUSD",
+        )
+
+        with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
+            result = await parse_preview(
+                request=_mock_request(),
+                body=ParsePreviewRequest(
+                    message="Close XAUUSD",
+                    enabled_actions=["start_long_market_deal"],
+                ),
+                current_user=_mock_user(),
+            )
+
+        assert result.route_would_forward is False
+        assert "disabled" in result.blocked_reason
+        assert result.display_action_label == "close_order_at_market_price"
+
+    async def test_invalid_signal_no_verdict(self):
+        """When signal is invalid, forwarding verdict should be null."""
+        mock_parser = AsyncMock()
+        mock_parser.parse.return_value = _invalid_parsed_signal()
+
+        with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
+            result = await parse_preview(
+                request=_mock_request(),
+                body=ParsePreviewRequest(message="Hello world"),
+                current_user=_mock_user(),
+            )
+
+        assert result.route_would_forward is None
+        assert result.blocked_reason is None
+        assert result.display_action_label is None

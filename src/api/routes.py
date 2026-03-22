@@ -1487,7 +1487,7 @@ class ParsePreviewRequest(BaseModel):
     """Request body for the parse-preview sandbox."""
     message: str = Field(..., min_length=1, max_length=2000)
     destination_type: str = "sagemaster_forex"
-    enabled_actions: list[str] | None = None
+    enabled_actions: list[str] | None = Field(default=None, max_length=20)
 
 
 class ParsePreviewResponse(BaseModel):
@@ -1566,7 +1566,6 @@ async def parse_preview(
 
     if parsed.is_valid_signal:
         from src.core.mapper import _signal_action
-        from src.core.models import SignalAction as SA
 
         try:
             computed = _signal_action(parsed)
