@@ -97,7 +97,7 @@ limiter = Limiter(key_func=_get_real_ip)
 # OAuth2 scheme
 # ---------------------------------------------------------------------------
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -133,7 +133,29 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_LINK_SECRET: str = ""
     TRUSTED_PROXY_IPS: str = ""
 
+    # Supabase settings
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+
+# Lazy singleton for Supabase admin client
+_supabase_admin_client = None
+
+
+def _get_supabase_admin():
+    """Return a cached Supabase admin client (service role)."""
+    global _supabase_admin_client
+    if _supabase_admin_client is None:
+        settings = get_settings()
+        if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+            return None
+        from supabase import create_client
+        _supabase_admin_client = create_client(
+            settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY,
+        )
+    return _supabase_admin_client
 
 
 @lru_cache
@@ -217,38 +239,60 @@ _USER_CACHE_TTL = 300  # 5 minutes
 
 async def get_current_user(
     request: Request,
-    token: Annotated[str, Depends(oauth2_scheme)],
+    token: Annotated[str | None, Depends(oauth2_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> User:
     """Decode the bearer token and return the corresponding :class:`User`.
 
-    Uses Redis cache (5-min TTL) to avoid a DB query on every protected request.
-    Falls back to DB on cache miss or Redis failure.
+    Supports both Supabase JWTs (via API verification) and legacy JWTs.
+    When a Supabase user hits the API for the first time, a UserModel row
+    is auto-created.
 
-    Raises :class:`HTTPException` 401 if the token is invalid or the user
-    does not exist.
+    Uses Redis cache (5-min TTL) to avoid a DB query on every protected request.
     """
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    try:
-        payload = jwt.decode(
-            token,
-            settings.JWT_SECRET_KEY,
-            algorithms=[JWT_ALGORITHM],
-            options={"require": ["sub", "exp"]},
-        )
-        user_id_str: str | None = payload.get("sub")
-        if user_id_str is None:
-            raise credentials_exception
-        user_id = UUID(user_id_str)
-    except (InvalidTokenError, ValueError) as exc:
-        logger.debug("JWT decode failed: %s", exc)
-        raise credentials_exception from exc
+    user_id: UUID | None = None
+
+    # 1. Try Supabase API verification (no JWT secret needed)
+    sb = _get_supabase_admin()
+    if sb is not None:
+        try:
+            sb_user = sb.auth.get_user(token)
+            if sb_user and sb_user.user:
+                user_id = UUID(sb_user.user.id)
+                logger.debug("Supabase token verified for user %s", user_id)
+        except Exception as exc:
+            logger.debug("Supabase token verification failed: %s", exc)
+
+    # 2. Fallback: legacy JWT decode
+    if user_id is None:
+        try:
+            payload = jwt.decode(
+                token,
+                settings.JWT_SECRET_KEY,
+                algorithms=[JWT_ALGORITHM],
+                options={"require": ["sub", "exp"]},
+            )
+            user_id_str: str | None = payload.get("sub")
+            if user_id_str is None:
+                raise credentials_exception
+            user_id = UUID(user_id_str)
+        except (InvalidTokenError, ValueError) as exc:
+            logger.debug("Legacy JWT decode also failed: %s", exc)
+            raise credentials_exception from exc
 
     # Try Redis cache first
     cache = getattr(request.app.state, "cache", None)
@@ -284,6 +328,41 @@ async def get_current_user(
     # Cache miss — query DB
     result = await db.execute(select(UserModel).where(UserModel.id == user_id))
     user_row = result.scalar_one_or_none()
+
+    # Auto-create user on first Supabase-authenticated API call
+    if user_row is None and sb is not None:
+        try:
+            sb_user_data = sb.auth.admin.get_user_by_id(str(user_id))
+            email = sb_user_data.user.email or ""
+
+            admin_emails = [e.strip().lower() for e in settings.ADMIN_EMAILS.split(",") if e.strip()]
+            is_admin = email.lower() in admin_emails
+            tier = settings.ADMIN_TIER if is_admin else "free"
+
+            user_row = UserModel(
+                id=user_id,
+                email=email,
+                password_hash="!",
+                subscription_tier=tier,
+                is_admin=is_admin,
+                email_verified=sb_user_data.user.email_confirmed_at is not None,
+                terms_accepted_at=datetime.now(timezone.utc),
+            )
+            db.add(user_row)
+            await db.flush()
+            logger.info("Auto-created user %s (%s) from Supabase", user_id, email)
+
+            # Send welcome email
+            if settings.RESEND_API_KEY:
+                try:
+                    from src.adapters.email import ResendNotifier
+                    notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+                    await notifier.send_welcome(email, settings.FRONTEND_URL)
+                except Exception:
+                    logger.debug("Welcome email failed for new user %s", user_id)
+        except Exception as exc:
+            logger.error("Failed to auto-create user %s: %s", user_id, exc)
+            raise credentials_exception from exc
 
     if user_row is None:
         raise credentials_exception
