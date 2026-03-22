@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Check, Copy, Loader2, Send, X } from "lucide-react";
+import {
+  AlertTriangle, ArrowRight, Check, ChevronDown, ChevronRight,
+  Copy, Info, Loader2, Send, Shield, ShieldAlert, ShieldCheck, ShieldX, X, Zap,
+} from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -12,11 +15,15 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   getActionsForDestination,
+  getExamplesForDestination,
   getUnsupportedForDestination,
+  RISK_CONFIG,
   type ActionDefinition,
+  type RiskLevel,
 } from "@/lib/action-definitions";
 import { useUpdateRule } from "@/hooks/use-routing-rules";
 import { useParsePreview, type ParsePreviewResult } from "@/hooks/use-parse-preview";
+import { useCopyToClipboard } from "@/hooks/use-clipboard";
 import { cn } from "@/lib/utils";
 import type { RoutingRuleResponse } from "@/types/api";
 
@@ -32,68 +39,130 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       onClick={() => {
-        navigator.clipboard.writeText(text.replace(/^"|"$/g, "").split('", "')[0]);
+        navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       }}
-      className="shrink-0 p-0.5 text-muted-foreground/50 hover:text-foreground transition-colors"
+      className="shrink-0 p-1 text-muted-foreground/40 hover:text-foreground transition-colors rounded"
       aria-label="Copy example"
     >
-      {copied ? <Check className="h-2.5 w-2.5 text-emerald-500" /> : <Copy className="h-2.5 w-2.5" />}
+      {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
     </button>
   );
 }
 
-function CommandTableRow({
+function RiskBadge({ risk }: { risk: RiskLevel }) {
+  const cfg = RISK_CONFIG[risk];
+  const Icon = risk === "destructive" ? ShieldAlert : risk === "caution" ? AlertTriangle : Shield;
+  return (
+    <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border", cfg.bg, cfg.color, cfg.border)}>
+      <Icon className="h-3 w-3" />
+      {cfg.label}
+    </span>
+  );
+}
+
+function ActionCard({
   action,
   isEnabled,
   onToggle,
   readOnly,
+  destinationType,
+  payloadVersion,
 }: {
   action: ActionDefinition;
   isEnabled: boolean;
   onToggle?: (key: string) => void;
   readOnly?: boolean;
+  destinationType: string;
+  payloadVersion?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const examples = getExamplesForDestination(action, destinationType);
+  const riskCfg = RISK_CONFIG[action.risk];
+
+  // V1 forex entry actions use simplified descriptions
+  const isV1Entry = payloadVersion === "V1" && action.isEntry && action.v1;
+  const description = isV1Entry ? action.v1!.description : action.description;
+  const scenario = isV1Entry ? action.v1!.scenario : action.scenario;
+  const effect = isV1Entry ? action.v1!.effect : action.effect;
+
   return (
-    <tr className={cn(
-      "border-b border-border/40 transition-colors",
+    <div className={cn(
+      "rounded-lg border transition-all",
       !isEnabled && "opacity-40",
+      action.risk === "destructive" && isEnabled && "border-red-500/20",
+      action.risk === "caution" && isEnabled && "border-amber-500/15",
     )}>
-      {/* On/Off */}
-      <td className="py-2 pr-2 align-top">
-        {readOnly ? (
-          <span className="text-[10px] text-emerald-500 font-medium">ON</span>
-        ) : (
-          <Switch
-            checked={isEnabled}
-            onCheckedChange={() => onToggle?.(action.key)}
-            className="scale-75 origin-left"
-            aria-label={`${action.label}: ${isEnabled ? "enabled" : "disabled"}`}
-          />
-        )}
-      </td>
-      {/* Telegram message example */}
-      <td className="py-2 pr-2 align-top">
-        <div className="flex items-start gap-1">
-          <code className="text-[11px] font-mono text-foreground/80 leading-snug">
-            {action.example}
-          </code>
-          <CopyButton text={action.example} />
+      {/* Header row */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className="shrink-0 w-10">
+          {readOnly ? (
+            <span className="text-[10px] text-emerald-500 font-semibold">ALWAYS</span>
+          ) : (
+            <Switch
+              checked={isEnabled}
+              onCheckedChange={() => onToggle?.(action.key)}
+              className="scale-90"
+              aria-label={`${action.label}: ${isEnabled ? "enabled" : "disabled"}`}
+            />
+          )}
         </div>
-      </td>
-      {/* Arrow */}
-      <td className="py-2 px-1 align-top">
-        <ArrowRight className="h-3 w-3 text-muted-foreground/40 mt-0.5" />
-      </td>
-      {/* Webhook action */}
-      <td className="py-2 align-top">
-        <span className="text-[11px] font-medium">{action.label}</span>
-        <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
-          {action.description}
-        </p>
-      </td>
-    </tr>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold">{action.label}</span>
+            <RiskBadge risk={action.risk} />
+            {isV1Entry && (
+              <span className="text-[9px] font-medium text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded">V1 — SL/TP from strategy</span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="shrink-0 p-1 text-muted-foreground hover:text-foreground transition-colors rounded"
+        >
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <Info className="h-3 w-3 text-muted-foreground" />
+              <span className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">When this happens</span>
+            </div>
+            <p className="text-xs text-foreground/80 leading-relaxed">{scenario}</p>
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <Zap className={cn("h-3 w-3", riskCfg.color)} />
+              <span className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">What gets dispatched</span>
+            </div>
+            <p className={cn("text-xs leading-relaxed", action.risk === "destructive" ? "text-red-400" : "text-foreground/80")}>
+              {effect}
+            </p>
+          </div>
+          <div>
+            <span className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">
+              Example Telegram messages
+            </span>
+            <div className="mt-1.5 grid gap-1">
+              {examples.map((ex, i) => (
+                <div key={i} className="flex items-center gap-2 group">
+                  <code className="flex-1 text-xs font-mono bg-muted/60 px-2.5 py-1.5 rounded border border-border/30">
+                    {ex}
+                  </code>
+                  <CopyButton text={ex} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -114,6 +183,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
 
   const updateRule = useUpdateRule();
   const parsePreview = useParsePreview();
+  const [copyText] = useCopyToClipboard();
   const [testMessage, setTestMessage] = useState("");
   const [previewResult, setPreviewResult] = useState<ParsePreviewResult | null>(null);
 
@@ -144,7 +214,11 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
     if (!testMessage.trim()) return;
     setPreviewResult(null);
     parsePreview.mutate(
-      { message: testMessage.trim(), destination_type: rule.destination_type },
+      {
+        message: testMessage.trim(),
+        destination_type: rule.destination_type,
+        enabled_actions: rule.enabled_actions ?? null,
+      },
       {
         onSuccess: (result) => setPreviewResult(result),
         onError: (err) => {
@@ -171,8 +245,8 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
     return match?.label ?? action;
   }
 
-  // Prefill example for the sandbox based on destination type
-  const sandboxPlaceholder = rule.destination_type === "sagemaster_crypto"
+  const isCrypto = rule.destination_type === "sagemaster_crypto";
+  const sandboxPlaceholder = isCrypto
     ? 'Try: "Buy BTC/USDT" or "Close 50%"'
     : 'Try: "Buy XAUUSD SL 2300 TP 2350"';
 
@@ -180,96 +254,104 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-[480px] flex flex-col"
+        className="w-full sm:max-w-full md:max-w-[85vw] lg:max-w-[75vw] xl:max-w-[65vw] flex flex-col p-0"
         aria-label={`Signal Commands for ${rule.rule_name || rule.source_channel_name || "route"}`}
       >
-        <SheetHeader className="shrink-0 space-y-1">
-          <SheetTitle className="text-sm">Signal Command Reference</SheetTitle>
-          <p className="text-[11px] text-muted-foreground">
-            {rule.rule_name || rule.source_channel_name || rule.source_channel_id}
-            {" · "}
-            {rule.destination_type === "sagemaster_forex" ? "SageMaster Forex" : "SageMaster Crypto"}
-          </p>
-        </SheetHeader>
-
-        {/* How it works — visual flow */}
-        <div className="shrink-0 rounded-md bg-muted/30 border border-border/50 px-3 py-2 mt-2">
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-            <span className="font-medium text-foreground/70">How it works:</span>
-            <span className="bg-muted px-1.5 py-0.5 rounded font-mono">Telegram message</span>
-            <ArrowRight className="h-3 w-3 shrink-0" />
-            <span className="bg-muted px-1.5 py-0.5 rounded">AI Parser</span>
-            <ArrowRight className="h-3 w-3 shrink-0" />
-            <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">Webhook Action</span>
+        <div className="shrink-0 border-b px-6 py-4">
+          <SheetHeader className="space-y-1">
+            <SheetTitle className="text-base">Signal Command Reference</SheetTitle>
+            <p className="text-xs text-muted-foreground">
+              {rule.rule_name || rule.source_channel_name || rule.source_channel_id}
+              {" · "}
+              {isCrypto ? "SageMaster Crypto" : "SageMaster Forex"}
+            </p>
+          </SheetHeader>
+          <div className="rounded-md bg-muted/30 border border-border/50 px-4 py-2.5 mt-3">
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground/70">How it works:</span>
+              <span className="bg-muted px-2 py-0.5 rounded font-mono">Telegram message</span>
+              <ArrowRight className="h-3 w-3 shrink-0" />
+              <span className="bg-muted px-2 py-0.5 rounded">Sage Intelligence</span>
+              <ArrowRight className="h-3 w-3 shrink-0" />
+              <span className="bg-primary/10 text-primary px-2 py-0.5 rounded font-medium">Webhook Action</span>
+              <ArrowRight className="h-3 w-3 shrink-0" />
+              <span className="bg-muted px-2 py-0.5 rounded">SageMaster</span>
+            </div>
+            <p className="text-[10px] text-muted-foreground/70 mt-1.5">
+              Your signal provider sends a message in Telegram. Sage Intelligence identifies the action
+              and routes it to your SageMaster account. Click any action below to see example messages and what happens.
+            </p>
           </div>
         </div>
 
-        {/* Scrollable command tables */}
-        <div className="flex-1 overflow-y-auto mt-3 space-y-5 pr-1">
-
-          {/* Entry Signals — always on */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-semibold">Entry Signals</h3>
-              <span className="text-[10px] text-emerald-500 font-medium">Always active</span>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-sm font-semibold">Entry Signals</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Open new positions. These are always active — every trade starts with an entry.
+                </p>
+              </div>
+              <span className="text-[10px] text-emerald-500 font-semibold bg-emerald-500/10 px-2 py-1 rounded-full">Always active</span>
             </div>
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-border/60">
-                  <th className="text-[9px] uppercase text-muted-foreground font-medium pb-1 w-8"></th>
-                  <th className="text-[9px] uppercase text-muted-foreground font-medium pb-1">Message</th>
-                  <th className="pb-1 w-5"></th>
-                  <th className="text-[9px] uppercase text-muted-foreground font-medium pb-1">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entryActions.map((action) => (
-                  <CommandTableRow key={action.key} action={action} isEnabled={true} readOnly />
-                ))}
-              </tbody>
-            </table>
+            <div className="grid gap-2">
+              {entryActions.map((action) => (
+                <ActionCard key={action.key} action={action} isEnabled={true} readOnly destinationType={rule.destination_type} payloadVersion={rule.payload_version} />
+              ))}
+            </div>
           </div>
 
-          {/* Management Signals — toggleable */}
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-semibold">Management Signals</h3>
-              <span className="text-[10px] text-muted-foreground">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-sm font-semibold">Trade Management Signals</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Manage open positions — close, partial close, breakeven, etc. Toggle each action on or off.
+                </p>
+              </div>
+              <span className="text-[10px] text-muted-foreground font-medium">
                 {enabledOptionalCount}/{optionalActions.length} active
               </span>
             </div>
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-border/60">
-                  <th className="text-[9px] uppercase text-muted-foreground font-medium pb-1 w-10"></th>
-                  <th className="text-[9px] uppercase text-muted-foreground font-medium pb-1">Message</th>
-                  <th className="pb-1 w-5"></th>
-                  <th className="text-[9px] uppercase text-muted-foreground font-medium pb-1">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {optionalActions.map((action) => (
-                  <CommandTableRow
-                    key={action.key}
-                    action={action}
-                    isEnabled={localEnabled.has(action.key)}
-                    onToggle={handleToggle}
-                  />
-                ))}
-              </tbody>
-            </table>
+            <div className="grid gap-2">
+              {optionalActions.map((action) => (
+                <ActionCard
+                  key={action.key}
+                  action={action}
+                  isEnabled={localEnabled.has(action.key)}
+                  onToggle={handleToggle}
+                  destinationType={rule.destination_type}
+                  payloadVersion={rule.payload_version}
+                />
+              ))}
+            </div>
           </div>
 
-          {/* Not Supported */}
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-red-500">About high-impact webhooks</p>
+                <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                  Actions marked <span className="text-red-500 font-medium">Destructive</span> dispatch webhooks that instruct your connected platform to close positions.
+                  Sage Radar only forwards the webhook — <span className="font-medium text-foreground">you are in full control</span> of
+                  your trading platform and any actions it takes. If you&apos;re unsure whether your signal provider sends these commands,
+                  consider disabling them until you&apos;ve verified their signal format using the simulator below.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {unsupported.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-muted-foreground mb-2">Not Supported</h3>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {unsupported.map((item) => (
-                  <div key={item.label} className="flex items-start gap-2 py-1 opacity-50">
-                    <X className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
+                  <div key={item.label} className="flex items-start gap-2 py-1.5 opacity-60">
+                    <X className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
                     <div>
-                      <span className="text-[11px] text-muted-foreground">{item.label}</span>
+                      <span className="text-xs text-muted-foreground">{item.label}</span>
                       <p className="text-[10px] text-muted-foreground/60">{item.reason}</p>
                     </div>
                   </div>
@@ -279,16 +361,16 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
           )}
         </div>
 
-        {/* Test Sandbox — sticky footer */}
-        <div className="shrink-0 border-t pt-3 mt-2 space-y-2">
+        <div className="shrink-0 border-t px-6 py-4 space-y-3 bg-background">
           <div className="flex items-center gap-2">
-            <Send className="h-3.5 w-3.5 text-primary shrink-0" />
-            <h3 className="text-xs font-semibold">Test a Signal</h3>
+            <Send className="h-4 w-4 text-primary shrink-0" />
+            <div>
+              <h3 className="text-sm font-semibold">Test a Signal</h3>
+              <p className="text-[10px] text-muted-foreground">
+                Paste a real message from your signal provider to see exactly how it would be routed.
+              </p>
+            </div>
           </div>
-          <p className="text-[10px] text-muted-foreground leading-relaxed">
-            Type a message like your signal provider would send in Telegram.
-            The AI parser will show you exactly what action it triggers.
-          </p>
           <div className="flex gap-2">
             <Input
               type="text"
@@ -299,100 +381,66 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
                 if (e.key === "Enter") { e.preventDefault(); handleTestCommand(); }
               }}
               maxLength={2000}
-              className="h-9 text-sm flex-1 font-mono"
+              className="h-10 text-sm flex-1 font-mono"
               disabled={parsePreview.isPending}
             />
-            <Button
-              type="button"
-              size="sm"
-              className="h-9 px-4"
-              onClick={handleTestCommand}
-              disabled={!testMessage.trim() || parsePreview.isPending}
-            >
-              {parsePreview.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                "Parse"
-              )}
+            <Button type="button" size="sm" className="h-10 px-5" onClick={handleTestCommand} disabled={!testMessage.trim() || parsePreview.isPending}>
+              {parsePreview.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Simulate"}
             </Button>
           </div>
 
           {parsePreview.isPending && (
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Running through AI parser...
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Running through Sage Intelligence...
             </div>
           )}
 
           {previewResult && (
             <div className={cn(
-              "rounded-md border px-3 py-2.5",
-              previewResult.is_valid_signal
-                ? "border-emerald-500/30 bg-emerald-500/5"
-                : "border-amber-500/30 bg-amber-500/5",
+              "rounded-lg border px-4 py-3",
+              previewResult.is_valid_signal ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5",
             )}>
               {previewResult.is_valid_signal ? (
                 <div className="space-y-2">
-                  {/* Visual flow: input → action */}
                   <div className="flex items-center gap-2 flex-wrap">
-                    <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded max-w-[140px] truncate">
-                      {testMessage}
-                    </code>
+                    <code className="text-xs font-mono bg-muted px-2 py-1 rounded max-w-[200px] truncate">{testMessage}</code>
                     <ArrowRight className="h-3 w-3 text-emerald-500 shrink-0" />
-                    <span className="text-xs font-semibold text-emerald-500">
-                      {getActionLabel(previewResult.action)}
-                    </span>
+                    <span className="text-sm font-semibold text-emerald-500">{getActionLabel(previewResult.action)}</span>
                   </div>
-                  {/* Parsed details */}
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                    {previewResult.symbol && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Symbol</span>
-                        <p className="text-[11px] font-medium">{previewResult.symbol}</p>
-                      </div>
-                    )}
-                    {previewResult.direction && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Direction</span>
-                        <p className="text-[11px] font-medium capitalize">{previewResult.direction}</p>
-                      </div>
-                    )}
-                    {previewResult.entry_price != null && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Entry Price</span>
-                        <p className="text-[11px] font-medium">{previewResult.entry_price}</p>
-                      </div>
-                    )}
-                    {previewResult.stop_loss != null && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Stop Loss</span>
-                        <p className="text-[11px] font-medium">{previewResult.stop_loss}</p>
-                      </div>
-                    )}
-                    {previewResult.take_profits.length > 0 && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Take Profit</span>
-                        <p className="text-[11px] font-medium">{previewResult.take_profits.join(", ")}</p>
-                      </div>
-                    )}
-                    {previewResult.percentage != null && (
-                      <div>
-                        <span className="text-[9px] uppercase text-muted-foreground">Percentage</span>
-                        <p className="text-[11px] font-medium">{previewResult.percentage}%</p>
-                      </div>
-                    )}
+
+                  {previewResult.route_would_forward != null && (
+                    <div className={cn(
+                      "flex items-center gap-1.5 text-[10px] font-medium rounded px-2 py-1",
+                      previewResult.route_would_forward ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-500",
+                    )}>
+                      {previewResult.route_would_forward ? (
+                        <><ShieldCheck className="h-3 w-3 shrink-0" /> Would be forwarded to webhook</>
+                      ) : (
+                        <><ShieldX className="h-3 w-3 shrink-0" /> {previewResult.blocked_reason || "Blocked by action filter"}</>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-x-4 gap-y-1">
+                    {previewResult.symbol && (<div><span className="text-[9px] uppercase text-muted-foreground">Symbol</span><p className="text-xs font-medium">{previewResult.symbol}</p></div>)}
+                    {previewResult.direction && (<div><span className="text-[9px] uppercase text-muted-foreground">Direction</span><p className="text-xs font-medium capitalize">{previewResult.direction}</p></div>)}
+                    {previewResult.entry_price != null && (<div><span className="text-[9px] uppercase text-muted-foreground">Entry Price</span><p className="text-xs font-medium">{previewResult.entry_price}</p></div>)}
+                    {previewResult.stop_loss != null && (<div><span className="text-[9px] uppercase text-muted-foreground">Stop Loss</span><p className="text-xs font-medium">{previewResult.stop_loss}</p></div>)}
+                    {previewResult.take_profits.length > 0 && (<div><span className="text-[9px] uppercase text-muted-foreground">Take Profit</span><p className="text-xs font-medium">{previewResult.take_profits.join(", ")}</p></div>)}
+                    {previewResult.percentage != null && (<div><span className="text-[9px] uppercase text-muted-foreground">Percentage</span><p className="text-xs font-medium">{previewResult.percentage}%</p></div>)}
                   </div>
+
+                  <button type="button" onClick={() => copyText(JSON.stringify(previewResult, null, 2), "Parsed result copied")} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                    <Copy className="h-2.5 w-2.5" /> Copy parsed result
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-1">
-                  <p className="text-[11px] font-medium text-amber-500">Not recognized as a signal</p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {previewResult.ignore_reason || "The AI parser couldn't identify a trading action in this message."}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground/60">
-                    Try something like: <code className="bg-muted px-1 py-0.5 rounded font-mono">{
-                      rule.destination_type === "sagemaster_crypto" ? "Buy BTC/USDT" : "Buy XAUUSD SL 2300 TP 2350"
-                    }</code>
+                  <p className="text-xs font-medium text-amber-500">Not recognized as a trading signal</p>
+                  <p className="text-[11px] text-muted-foreground">{previewResult.ignore_reason || "The Sage Intelligence couldn't identify a trading action in this message."}</p>
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Try something like: <code className="bg-muted px-1.5 py-0.5 rounded font-mono">{isCrypto ? "Buy BTC/USDT" : "Buy XAUUSD SL 2300 TP 2350"}</code>
                   </p>
                 </div>
               )}
