@@ -135,8 +135,8 @@ export function PrivacyPage() {
             </ul>
             <p className="text-muted-foreground leading-relaxed mt-2">
               To exercise any of these rights, use the in-app features in Settings or contact us at{" "}
-              <a href="mailto:support@sageintelligence.io" className="text-primary hover:underline">
-                support@sageintelligence.io
+              <a href="mailto:support@sageradar.io" className="text-primary hover:underline">
+                support@sageradar.io
               </a>
               .
             </p>
@@ -182,8 +182,8 @@ export function PrivacyPage() {
             <h2 className="text-xl font-semibold mb-3">12. Contact</h2>
             <p className="text-muted-foreground leading-relaxed">
               For questions about this Privacy Policy or your personal data, contact us at{" "}
-              <a href="mailto:support@sageintelligence.io" className="text-primary hover:underline">
-                support@sageintelligence.io
+              <a href="mailto:support@sageradar.io" className="text-primary hover:underline">
+                support@sageradar.io
               </a>
               .
             </p>
