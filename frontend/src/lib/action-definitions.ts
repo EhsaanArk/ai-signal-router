@@ -118,16 +118,16 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
   },
   {
     key: "move_sl_to_breakeven",
-    label: "Breakeven",
-    description: "Dispatch a webhook to move stop loss to entry price",
+    label: "Breakeven / Move SL",
+    description: "Dispatch a webhook to move stop loss — breakeven, trailing SL, or custom SL level",
     example: '"Move SL to BE", "Breakeven"',
     examples: {
-      forex: ["Move SL to BE", "Breakeven XAUUSD", "Secure entry on gold", "Move stop to entry", "BE on EURUSD"],
-      crypto: ["Breakeven BTC", "Move SL to entry", "Secure BTC position", "BE on ETH trade"],
+      forex: ["Move SL to BE", "Breakeven XAUUSD", "Move SL to 2350", "Trail SL 20 pips", "Secure entry on gold", "BE on EURUSD"],
+      crypto: ["Breakeven BTC", "Move SL to entry", "Move SL to 61000", "Trail stop 3%", "Secure BTC position"],
     },
     risk: "safe",
-    scenario: "Trade is in profit. Provider moves the stop loss to the entry price so the trade is risk-free — worst case, you exit at breakeven.",
-    effect: "Dispatches a webhook instructing your connected platform to move the stop loss to entry price.",
+    scenario: "Trade is in profit. Provider adjusts the stop loss — either to breakeven (entry price), a specific price level, or a trailing offset. All SL modifications route through this action.",
+    effect: "Dispatches a webhook instructing your connected platform to adjust the stop loss. Supports breakeven, custom SL price, and trailing SL offsets.",
   },
   {
     key: "open_extra_order",
@@ -346,11 +346,11 @@ export interface UnsupportedAction {
 export const UNSUPPORTED_ACTIONS: UnsupportedAction[] = [
   {
     label: "Modify TP on existing trade",
-    reason: "SageMaster doesn't support this via webhook",
+    reason: "Not supported via webhook — TP can only be set at entry time",
   },
   {
     label: "Set SL to absolute price (crypto)",
-    reason: "SageMaster crypto only supports relative SL offsets",
+    reason: "Crypto destinations only support relative SL offsets, not absolute price levels",
     destinationType: "sagemaster_crypto",
   },
 ];
