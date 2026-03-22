@@ -1,5 +1,24 @@
 # TODOS
 
+## P4 — Wire `getNormalizedEnabledActions()` to full-page command reference
+
+**What:** The `getNormalizedEnabledActions()` helper in `frontend/src/lib/action-definitions.ts` is exported but has no callers yet. It was added for the upcoming full-page command reference at `/routing-rules/{id}/commands`.
+
+**Why:** The full-page command reference needs to know which actions are enabled for a given route and destination type, filtered to only valid keys for that destination. This helper does exactly that.
+
+**Pros:** Already written and tested via TypeScript compilation. Just needs a consumer.
+
+**Cons:** Dead code until the full-page view is built.
+
+**Context:** Added during the cherry-pick PR (SGM-054 branch). The full-page command reference is the next planned task after these cherry-picks land.
+
+**Effort:** XS (wire it in when building the full-page view)
+**Priority:** P4
+**Depends on:** Full-page command reference implementation
+**Added:** 2026-03-22 (eng review of cherry-pick PR)
+
+---
+
 ## ~~P2 — Signal backfill with staleness filter on listener reconnect~~ DONE (PR pending)
 
 Built in `feature/SGM-030-signal-backfill-on-reconnect`. Includes dedup check in workflow.py (skips `success` + `ignored`), staleness filter with DB logging (60s default via `BACKFILL_MAX_AGE_SECONDS`), and 12 tests.
