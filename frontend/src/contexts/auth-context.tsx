@@ -16,6 +16,8 @@ interface AuthContextValue {
   user: UserMe | null;
   token: string | null;
   isLoading: boolean;
+  authError: string | null;
+  clearAuthError: () => void;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -24,6 +26,8 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const DEBUG = true;
+const PROFILE_LOAD_ERROR = "Signed in, but we could not load your account profile.";
+
 function log(...args: unknown[]) {
   if (DEBUG) console.log("[SageAuth]", ...args);
 }
@@ -32,10 +36,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserMe | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const initRef = useRef(false);
 
   // Fetch app-specific user data from backend
-  const fetchUser = useCallback(async (accessToken: string): Promise<boolean> => {
+  const fetchUser = useCallback(async (
+    accessToken: string,
+  ): Promise<{ user: UserMe | null; errorMessage: string | null }> => {
     log("fetchUser: calling /auth/me");
     try {
       const res = await fetch(`${API_BASE_URL}/auth/me`, {
@@ -47,16 +54,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         const me: UserMe = await res.json();
         log("fetchUser: success", me.email);
-        setUser(me);
-        return true;
+        return { user: me, errorMessage: null };
       }
-      log("fetchUser: failed with status", res.status);
-      return false;
+
+      const rawBody = await res.text().catch(() => "");
+      let detail = "";
+      if (rawBody) {
+        try {
+          const parsed = JSON.parse(rawBody) as { detail?: unknown };
+          detail = typeof parsed.detail === "string" ? parsed.detail : rawBody.slice(0, 160);
+        } catch {
+          detail = rawBody.slice(0, 160);
+        }
+      }
+      const statusText = detail ? `${res.status}: ${detail}` : `${res.status}`;
+      log("fetchUser: failed with status", statusText);
+
+      return {
+        user: null,
+        errorMessage: `${PROFILE_LOAD_ERROR} Session validation failed (${statusText}).`,
+      };
     } catch (err) {
       log("fetchUser: error", err);
-      return false;
+      return {
+        user: null,
+        errorMessage: `${PROFILE_LOAD_ERROR} Network error while validating session.`,
+      };
     }
   }, []);
+
+  const clearAuthError = useCallback(() => {
+    setAuthError(null);
+  }, []);
+
+  const hydrateSession = useCallback(async (accessToken: string) => {
+    const { user: me, errorMessage } = await fetchUser(accessToken);
+    if (me) {
+      setToken(accessToken);
+      setUser(me);
+      setAuthError(null);
+      return;
+    }
+
+    setToken(null);
+    setUser(null);
+    setAuthError(errorMessage || PROFILE_LOAD_ERROR);
+  }, [fetchUser]);
 
   // Initialize auth — runs once
   useEffect(() => {
@@ -69,8 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       log("init: getSession result", { hasSession: !!session, error: error?.message });
       if (session?.access_token) {
-        setToken(session.access_token);
-        fetchUser(session.access_token).finally(() => setIsLoading(false));
+        hydrateSession(session.access_token).finally(() => setIsLoading(false));
       } else {
         setIsLoading(false);
       }
@@ -89,11 +131,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Defer to prevent sync render loops
       setTimeout(() => {
         if (session?.access_token) {
-          setToken(session.access_token);
-          fetchUser(session.access_token).finally(() => setIsLoading(false));
+          setIsLoading(true);
+          hydrateSession(session.access_token).finally(() => setIsLoading(false));
         } else {
           setToken(null);
           setUser(null);
+          setAuthError(null);
           setIsLoading(false);
         }
       }, 0);
@@ -102,16 +145,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       subscription.unsubscribe();
     };
-  }, [fetchUser]);
+  }, [hydrateSession]);
 
   const login = useCallback(async (email: string, password: string) => {
     log("login:", email);
+    setAuthError(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
     log("register:", email);
+    setAuthError(null);
     const { error } = await supabase.auth.signUp({ email, password });
     if (error) throw new Error(error.message);
   }, []);
@@ -122,11 +167,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("sgm_setup_complete");
     setToken(null);
     setUser(null);
+    setAuthError(null);
   }, []);
 
   const value = useMemo(
-    () => ({ user, token, isLoading, login, register, logout }),
-    [user, token, isLoading, login, register, logout],
+    () => ({ user, token, isLoading, authError, clearAuthError, login, register, logout }),
+    [user, token, isLoading, authError, clearAuthError, login, register, logout],
   );
 
   return (
