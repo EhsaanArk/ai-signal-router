@@ -44,7 +44,7 @@ class TestIPRoyalProxyProvider:
         provider = self._make_provider()
         proxy = provider.get_proxy_for_user(USER_A)
 
-        assert proxy["proxy_type"] == "http"
+        assert proxy["proxy_type"] == "socks5"
         assert proxy["addr"] == "geo.iproyal.com"
         assert proxy["port"] == 12321
         assert proxy["username"] == "testaccount"
@@ -193,7 +193,7 @@ class TestGetProxyProvider:
             proxy = provider.get_proxy_for_user(USER_A)
             assert proxy["addr"] == "geo.iproyal.com"
             assert proxy["port"] == 12321
-            assert proxy["proxy_type"] == "http"
+            assert proxy["proxy_type"] == "socks5"
             assert "_lifetime-1h_" in proxy["password"]
             assert "_country-us_" in proxy["password"]
 
