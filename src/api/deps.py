@@ -142,6 +142,24 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
+# Lazy singleton for Supabase admin client (avoid re-creating per request)
+_supabase_admin_client = None
+
+
+def _get_supabase_admin():
+    """Return a cached Supabase admin client (service role)."""
+    global _supabase_admin_client
+    if _supabase_admin_client is None:
+        settings = get_settings()
+        if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+            return None
+        from supabase import create_client
+        _supabase_admin_client = create_client(
+            settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY,
+        )
+    return _supabase_admin_client
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Return a cached :class:`Settings` singleton."""
@@ -237,8 +255,10 @@ def _extract_supabase_user_id(token: str, settings: Settings) -> UUID:
                 options={"require": ["sub", "exp"]},
             )
             return UUID(payload["sub"])
-        except (InvalidTokenError, ValueError):
-            pass
+        except (InvalidTokenError, ValueError) as exc:
+            logger.debug("Supabase JWT decode failed: %s", exc)
+    else:
+        logger.debug("SUPABASE_JWT_SECRET not set — skipping Supabase JWT validation")
 
     # Fallback: legacy JWT secret (for backward compatibility during migration)
     try:
@@ -250,6 +270,7 @@ def _extract_supabase_user_id(token: str, settings: Settings) -> UUID:
         )
         return UUID(payload["sub"])
     except (InvalidTokenError, ValueError) as exc:
+        logger.debug("Legacy JWT decode also failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
@@ -315,10 +336,9 @@ async def get_current_user(
     user_row = result.scalar_one_or_none()
 
     # Auto-create user on first Supabase-authenticated API call
-    if user_row is None and settings.SUPABASE_SERVICE_ROLE_KEY:
+    sb = _get_supabase_admin()
+    if user_row is None and sb is not None:
         try:
-            from supabase import create_client
-            sb = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
             sb_user = sb.auth.admin.get_user_by_id(str(user_id))
             email = sb_user.user.email or ""
 
@@ -330,7 +350,7 @@ async def get_current_user(
             user_row = UserModel(
                 id=user_id,
                 email=email,
-                password_hash="supabase_managed",
+                password_hash="!",  # Invalid bcrypt hash — login only via Supabase
                 subscription_tier=tier,
                 is_admin=is_admin,
                 email_verified=sb_user.user.email_confirmed_at is not None,
@@ -340,13 +360,12 @@ async def get_current_user(
             await db.flush()
             logger.info("Auto-created user %s (%s) from Supabase", user_id, email)
 
-            # Send welcome email for new Supabase users (non-blocking)
+            # Send welcome email for new Supabase users
             if settings.RESEND_API_KEY:
                 try:
                     from src.adapters.email import ResendNotifier
                     notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
-                    import asyncio
-                    asyncio.ensure_future(notifier.send_welcome(email, settings.FRONTEND_URL))
+                    await notifier.send_welcome(email, settings.FRONTEND_URL)
                 except Exception:
                     logger.debug("Welcome email failed for new user %s", user_id)
         except Exception as exc:
