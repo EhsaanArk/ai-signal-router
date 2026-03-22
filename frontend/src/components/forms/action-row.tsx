@@ -74,21 +74,19 @@ export function ActionRow({
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium">{action.label}</span>
-            <span className="text-[10px] text-muted-foreground">
-              {action.description}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <p className="text-[10px] text-muted-foreground">
-              e.g. {action.example}
-            </p>
+          <span className="text-xs font-semibold block">{action.label}</span>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            {action.description}
+          </p>
+          <div className="flex items-center gap-1.5 mt-1">
+            <code className="text-[10px] text-muted-foreground/70 bg-muted/50 px-1.5 py-0.5 rounded font-mono">
+              {action.example}
+            </code>
             {showCopy && (
               <button
                 type="button"
                 onClick={handleCopy}
-                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors p-0.5"
                 aria-label={`Copy example: ${action.label}`}
               >
                 {copied ? (
