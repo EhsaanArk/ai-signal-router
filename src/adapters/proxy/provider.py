@@ -7,12 +7,13 @@ preventing Telegram from flagging multiple accounts on the same IP.
 Controlled by environment variables:
 
     PROXY_PROVIDER              – "iproyal" or "none" (default: "none")
-    PROXY_GATEWAY_HOST          – provider gateway hostname
+    PROXY_GATEWAY_HOST          – provider gateway hostname (default: "geo.iproyal.com")
     PROXY_GATEWAY_PORT          – provider gateway port (default: 12321)
     PROXY_USERNAME              – provider account username
-    PROXY_PASSWORD              – provider account password
-    PROXY_SESSION_DURATION      – sticky IP duration in minutes (default: 60)
-    PROXY_COUNTRY               – target country code, e.g. "us" (optional)
+    PROXY_PASSWORD              – provider account password (base, without session params)
+    PROXY_SESSION_LIFETIME      – sticky IP duration, e.g. "30m", "7d" (default: "7d")
+    PROXY_COUNTRY               – target country code, e.g. "de" (optional)
+    PROXY_IP_POOL_SIZE          – number of IP slots in the pool (default: 50)
 
 When ``PROXY_PROVIDER=none``, the :class:`NoOpProxyProvider` is returned
 and all users fall back to the global ``TELEGRAM_PROXY_URL`` or connect
@@ -21,6 +22,7 @@ directly.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from uuid import UUID
@@ -29,18 +31,22 @@ logger = logging.getLogger(__name__)
 
 
 class IPRoyalProxyProvider:
-    """Generate per-user SOCKS5 proxy configs via IPRoyal's gateway.
+    """Generate per-user HTTP proxy configs via IPRoyal's residential gateway.
 
-    IPRoyal uses a single gateway endpoint.  The session ID embedded in
-    the username determines which residential IP is assigned.  Same
-    session ID = same IP (sticky for ``session_duration`` minutes).
+    IPRoyal embeds session parameters in the password field.  Same
+    session ID = same sticky residential IP for ``lifetime`` duration.
 
     ::
 
-        socks5://acct-session-{uid}-sessionTime-60:pass@geo.iproyal.com:12321
+        http://user:pass_country-de_session-{sid}_lifetime-7d_streaming-1
+             @geo.iproyal.com:12321
 
-        User A → session-aaa... → IP 203.0.113.1  (sticky 60 min)
-        User B → session-bbb... → IP 198.51.100.7 (sticky 60 min)
+        User A → session-slot0001 → IP 92.208.104.15  (sticky 7 days)
+        User B → session-slot0002 → IP 84.59.143.74   (sticky 7 days)
+
+    IP sharing: users are distributed across ``ip_pool_size`` IP slots
+    via consistent hashing.  With pool_size=50 and 150 users, each IP
+    serves ~3 users.  Cost = pool_size * per-IP price/month.
     """
 
     def __init__(
@@ -49,33 +55,46 @@ class IPRoyalProxyProvider:
         gateway_port: int,
         username: str,
         password: str,
-        session_duration: int = 60,
+        session_lifetime: str = "7d",
         country: str | None = None,
+        ip_pool_size: int = 50,
     ) -> None:
         self._gateway_host = gateway_host
         self._gateway_port = gateway_port
-        self._base_username = username
-        self._password = password
-        self._duration = session_duration
+        self._username = username
+        self._base_password = password
+        self._lifetime = session_lifetime
         self._country = country
+        self._ip_pool_size = max(1, ip_pool_size)
+
+    def _session_id_for_user(self, user_id: UUID) -> str:
+        """Derive a session ID for this user.
+
+        Users are distributed across ``ip_pool_size`` slots via
+        consistent hashing.  Same user always maps to the same slot.
+        """
+        uid_hex = str(user_id).replace("-", "")
+        uid_hash = int(hashlib.sha256(uid_hex.encode()).hexdigest(), 16)
+        slot = uid_hash % self._ip_pool_size
+        return f"slot{slot:04d}"
 
     def get_proxy_for_user(self, user_id: UUID) -> dict:
-        """Return a SOCKS5 proxy dict with a unique session for this user."""
-        session_id = str(user_id).replace("-", "")
-        username = (
-            f"{self._base_username}"
-            f"-session-{session_id}"
-            f"-sessionTime-{self._duration}"
-        )
+        """Return an HTTP proxy dict with a sticky session for this user."""
+        session_id = self._session_id_for_user(user_id)
+        parts = [self._base_password]
         if self._country:
-            username += f"-country-{self._country}"
+            parts.append(f"country-{self._country}")
+        parts.append(f"session-{session_id}")
+        parts.append(f"lifetime-{self._lifetime}")
+        parts.append("streaming-1")
+        password = "_".join(parts)
 
         return {
-            "proxy_type": "socks5",
+            "proxy_type": "http",
             "addr": self._gateway_host,
             "port": self._gateway_port,
-            "username": username,
-            "password": self._password,
+            "username": self._username,
+            "password": password,
             "rdns": True,
         }
 
@@ -101,17 +120,18 @@ def get_proxy_provider() -> IPRoyalProxyProvider | NoOpProxyProvider:
     provider = os.environ.get("PROXY_PROVIDER", "none").lower()
 
     if provider == "iproyal":
-        host = os.environ.get("PROXY_GATEWAY_HOST", "")
+        host = os.environ.get("PROXY_GATEWAY_HOST", "geo.iproyal.com")
         port_str = os.environ.get("PROXY_GATEWAY_PORT", "12321")
         username = os.environ.get("PROXY_USERNAME", "")
         password = os.environ.get("PROXY_PASSWORD", "")
-        duration_str = os.environ.get("PROXY_SESSION_DURATION", "60")
+        lifetime = os.environ.get("PROXY_SESSION_LIFETIME", "7d")
         country = os.environ.get("PROXY_COUNTRY") or None
+        pool_size = int(os.environ.get("PROXY_IP_POOL_SIZE", "50"))
 
-        if not host or not username or not password:
+        if not username or not password:
             logger.warning(
                 "PROXY_PROVIDER=iproyal but missing required env vars "
-                "(PROXY_GATEWAY_HOST, PROXY_USERNAME, PROXY_PASSWORD). "
+                "(PROXY_USERNAME, PROXY_PASSWORD). "
                 "Falling back to no proxy."
             )
             return NoOpProxyProvider()
@@ -121,12 +141,14 @@ def get_proxy_provider() -> IPRoyalProxyProvider | NoOpProxyProvider:
             gateway_port=int(port_str),
             username=username,
             password=password,
-            session_duration=int(duration_str),
+            session_lifetime=lifetime,
             country=country,
+            ip_pool_size=pool_size,
         )
         logger.info(
-            "Proxy provider: IPRoyal (gateway=%s:%s, duration=%smin, country=%s)",
-            host, port_str, duration_str, country or "any",
+            "Proxy provider: IPRoyal (gateway=%s:%s, lifetime=%s, "
+            "country=%s, pool_size=%d)",
+            host, port_str, lifetime, country or "any", pool_size,
         )
         return proxy_provider
 
