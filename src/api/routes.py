@@ -28,6 +28,7 @@ from src.adapters.db.models import (
 )
 from src.api.deps import (
     Settings,
+    _get_real_ip,
     create_access_token,
     get_cache,
     get_current_user,
@@ -409,8 +410,8 @@ async def get_me(
         is_admin=current_user.is_admin,
         email_verified=current_user.email_verified,
         created_at=current_user.created_at.isoformat() if current_user.created_at else "",
-        accepted_tos_version=getattr(current_user, "accepted_tos_version", None),
-        accepted_risk_waiver=getattr(current_user, "accepted_risk_waiver", False),
+        accepted_tos_version=current_user.accepted_tos_version,
+        accepted_risk_waiver=current_user.accepted_risk_waiver,
     )
 
 
@@ -436,10 +437,8 @@ async def accept_terms(
             detail="You must accept the Terms of Service, Privacy Policy, and Risk Waiver",
         )
 
-    # Extract audit data
-    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
-        request.client.host if request.client else "unknown"
-    )
+    # Extract audit data (uses trusted proxy validation for accurate IP)
+    ip = _get_real_ip(request)
     user_agent = request.headers.get("User-Agent", "unknown")
 
     # Log each document acceptance
