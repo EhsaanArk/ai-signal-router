@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Check, Copy, Loader2, Play, Send, X } from "lucide-react";
+import { ArrowRight, Check, Copy, Loader2, Send, X } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -24,26 +24,6 @@ interface Props {
   rule: RoutingRuleResponse;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-/** Readable webhook action name from the internal key. */
-function webhookAction(key: string): string {
-  const map: Record<string, string> = {
-    start_long_market_deal: "Open long (market)",
-    start_short_market_deal: "Open short (market)",
-    start_long_limit_deal: "Open long (limit)",
-    start_short_limit_deal: "Open short (limit)",
-    close_order_at_market_price: "Close position",
-    partially_close_by_percentage: "Partial close %",
-    partially_close_by_lot: "Partial close lots",
-    move_sl_to_breakeven: "Move SL to entry",
-    open_extra_order: "Add funds / DCA",
-    close_all_orders_at_market_price: "Close all positions",
-    close_all_orders_at_market_price_and_stop_assist: "Close all + stop",
-    start_assist: "Resume Assist",
-    stop_assist: "Pause Assist",
-  };
-  return map[key] || key;
 }
 
 function CopyButton({ text }: { text: string }) {
