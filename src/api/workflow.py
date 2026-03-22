@@ -16,7 +16,7 @@ from typing import Annotated
 import sentry_sdk
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import ParserConfigModel, RoutingRuleModel, SignalLogModel
@@ -24,7 +24,7 @@ from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
 from src.api.qstash_auth import verify_qstash_signature
-from src.core.models import DispatchResult, ParsedSignal, RawSignal, RoutingRule
+from src.core.models import DispatchResult, ParsedSignal, RawSignal, RoutingRule, normalize_enabled_actions
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer("signal.pipeline")
@@ -334,7 +334,7 @@ async def process_signal(
             destination_type=rule_row.destination_type,
             custom_ai_instructions=rule_row.custom_ai_instructions,
             is_active=rule_row.is_active,
-            enabled_actions=rule_row.enabled_actions,
+            enabled_actions=normalize_enabled_actions(rule_row.enabled_actions),
             keyword_blacklist=rule_row.keyword_blacklist or [],
         )
 
@@ -546,6 +546,50 @@ async def process_signal(
                 )
         except Exception as exc:
             logger.error("Telegram notification failed (non-blocking): %s", exc)
+            sentry_sdk.capture_exception(exc)
+
+    # ------------------------------------------------------------------
+    # Step 7 — "First signal routed" milestone email
+    # ------------------------------------------------------------------
+    has_success = any(r.status == "success" for r in results)
+    if has_success and settings.RESEND_API_KEY:
+        try:
+            # Count prior successful signals for this user (exclude current batch)
+            prior_success_count = (
+                await db.execute(
+                    select(func.count()).where(
+                        SignalLogModel.user_id == raw_signal.user_id,
+                        SignalLogModel.status == "success",
+                    )
+                )
+            ).scalar_one()
+
+            # Current batch successes are already added to the session but not
+            # yet committed, so prior_success_count includes them.
+            current_successes = sum(1 for r in results if r.status == "success")
+            is_first = prior_success_count <= current_successes
+
+            if is_first:
+                from src.adapters.db.models import UserModel
+                from src.adapters.email import ResendNotifier
+
+                user_row = (
+                    await db.execute(
+                        select(UserModel.email).where(
+                            UserModel.id == raw_signal.user_id
+                        )
+                    )
+                ).scalar_one_or_none()
+
+                if user_row:
+                    notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+                    await notifier.send_first_signal_routed(
+                        user_email=user_row,
+                        symbol=parsed.symbol or "UNKNOWN",
+                        frontend_url=settings.FRONTEND_URL,
+                    )
+        except Exception as exc:
+            logger.error("First-signal milestone email failed (non-blocking): %s", exc)
             sentry_sdk.capture_exception(exc)
 
     return results

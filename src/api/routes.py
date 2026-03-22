@@ -38,7 +38,7 @@ from src.api.deps import (
 )
 import sentry_sdk
 
-from src.core.models import RoutingRule, SubscriptionTier, User
+from src.core.models import RoutingRule, SubscriptionTier, User, normalize_enabled_actions
 from src.core.security import sha256_hex, validate_outbound_webhook_url
 
 logger = logging.getLogger(__name__)
@@ -472,6 +472,14 @@ async def register(
             email_sent = True
         except Exception as exc:
             logger.exception("Failed to send verification email")
+            sentry_sdk.capture_exception(exc)
+        # Send welcome email (separate from verification)
+        try:
+            from src.adapters.email import ResendNotifier
+            notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+            await notifier.send_welcome(str(body.email), settings.FRONTEND_URL)
+        except Exception as exc:
+            logger.error("Welcome email failed (non-blocking): %s", exc)
             sentry_sdk.capture_exception(exc)
     else:
         logger.warning("RESEND_API_KEY not set — verification email not sent")
@@ -976,6 +984,18 @@ async def telegram_verify_code(
     # Invalidate telegram status cache
     await cache.delete(f"tg_status:{current_user.id}")
 
+    # Send "Telegram connected" milestone email (non-blocking)
+    if settings.RESEND_API_KEY:
+        try:
+            from src.adapters.email import ResendNotifier
+            notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+            await notifier.send_telegram_connected(
+                current_user.email, settings.FRONTEND_URL,
+            )
+        except Exception as exc:
+            logger.error("Telegram connected email failed (non-blocking): %s", exc)
+            sentry_sdk.capture_exception(exc)
+
     return VerifyCodeResponse(status="ok")
 
 
@@ -1314,7 +1334,7 @@ async def create_routing_rule(
         destination_label=body.destination_label,
         destination_type=body.destination_type,
         custom_ai_instructions=body.custom_ai_instructions,
-        enabled_actions=body.enabled_actions,
+        enabled_actions=normalize_enabled_actions(body.enabled_actions),
         keyword_blacklist=body.keyword_blacklist,
         is_active=True,
     )
@@ -1413,6 +1433,9 @@ async def update_routing_rule(
             ),
         )
 
+    if "enabled_actions" in update_data:
+        update_data["enabled_actions"] = normalize_enabled_actions(update_data["enabled_actions"])
+
     for field, value in update_data.items():
         setattr(row, field, value)
     await db.flush()
@@ -1451,6 +1474,7 @@ class ParsePreviewRequest(BaseModel):
     """Request body for the parse-preview sandbox."""
     message: str = Field(..., min_length=1, max_length=2000)
     destination_type: str = "sagemaster_forex"
+    enabled_actions: list[str] | None = None
 
 
 class ParsePreviewResponse(BaseModel):
@@ -1465,6 +1489,10 @@ class ParsePreviewResponse(BaseModel):
     take_profits: list[float] = Field(default_factory=list)
     percentage: int | None = None
     ignore_reason: str | None = None
+    # Enhanced fields for forwarding verdict
+    display_action_label: str | None = None
+    route_would_forward: bool | None = None
+    blocked_reason: str | None = None
 
 
 @router.post("/parse-preview", response_model=ParsePreviewResponse)
@@ -1518,6 +1546,29 @@ async def parse_preview(
             detail="Couldn't parse this message. Try different wording.",
         )
 
+    # Compute forwarding verdict against supplied enabled_actions
+    display_label: str | None = None
+    would_forward: bool | None = None
+    blocked: str | None = None
+
+    if parsed.is_valid_signal:
+        from src.core.mapper import _signal_action
+        from src.core.models import SignalAction as SA
+
+        try:
+            computed = _signal_action(parsed)
+            display_label = computed.value
+            normalized = normalize_enabled_actions(body.enabled_actions)
+            if normalized is not None and computed.value not in normalized:
+                would_forward = False
+                blocked = f"Action '{computed.value}' is disabled for this route"
+            else:
+                would_forward = True
+        except ValueError:
+            display_label = parsed.action
+            would_forward = False
+            blocked = f"Action '{parsed.action}' is not supported"
+
     return ParsePreviewResponse(
         is_valid_signal=parsed.is_valid_signal,
         action=parsed.action if parsed.is_valid_signal else None,
@@ -1529,6 +1580,9 @@ async def parse_preview(
         take_profits=parsed.take_profits,
         percentage=parsed.percentage,
         ignore_reason=parsed.ignore_reason if not parsed.is_valid_signal else None,
+        display_action_label=display_label,
+        route_would_forward=would_forward,
+        blocked_reason=blocked,
     )
 
 
