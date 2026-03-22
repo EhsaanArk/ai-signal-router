@@ -60,6 +60,43 @@ class SignalAction(str, Enum):
     extra_order = "open_extra_order"  # crypto only
 
 
+# Entry action values — always implicitly enabled.
+# Keep in sync with frontend: frontend/src/lib/action-definitions.ts (isEntry flag).
+ENTRY_ACTION_VALUES: frozenset[str] = frozenset(
+    a.value
+    for a in (
+        SignalAction.start_long,
+        SignalAction.start_short,
+        SignalAction.start_long_limit,
+        SignalAction.start_short_limit,
+    )
+)
+
+ALL_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in SignalAction)
+
+
+def normalize_enabled_actions(
+    raw: list[str] | None,
+) -> list[str] | None:
+    """Validate and normalise an ``enabled_actions`` list.
+
+    * Strips unrecognised keys.
+    * Ensures entry actions are always present.
+    * Returns ``None`` (= all enabled) when the result would equal the full set.
+    """
+    if raw is None:
+        return None
+
+    # Keep only recognised keys
+    cleaned = [k for k in raw if k in ALL_ACTION_VALUES]
+    # Force entry actions on
+    merged = list(dict.fromkeys(list(ENTRY_ACTION_VALUES) + cleaned))
+    # If every action is enabled, store None (= all)
+    if ALL_ACTION_VALUES <= set(merged):
+        return None
+    return merged
+
+
 # Crypto action type strings — differ from forex per SageMaster DCA UI.
 # Crypto uses "deals" and "ai_assist" instead of forex "orders" and "assist".
 # Crypto does not support lot-based partial close; both lot and pct map to percentage.
