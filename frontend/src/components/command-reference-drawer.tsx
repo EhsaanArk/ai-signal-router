@@ -341,6 +341,21 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
             </div>
           </div>
 
+          <div className="rounded-lg border border-sky-500/15 bg-sky-500/5 px-4 py-3">
+            <div className="flex items-start gap-2">
+              <Info className="h-4 w-4 text-sky-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-sky-400">Webhook delivery vs trade execution</p>
+                <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                  When Sage Radar shows <span className="font-medium text-emerald-500">&ldquo;Success&rdquo;</span>, it means the webhook was
+                  accepted by your connected platform — not that the trade was executed. Your platform may still reject the trade due to
+                  insufficient funds, minimum order size, or other account-level constraints. Always verify on your trading platform that
+                  trades landed as expected.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {unsupported.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-muted-foreground mb-2">Not Supported</h3>
