@@ -47,7 +47,6 @@ export function LoginPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
-  const [magicEmail, setMagicEmail] = useState("");
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -85,20 +84,20 @@ export function LoginPage() {
   }
 
   async function handleMagicLink() {
-    if (!magicEmail || !magicEmail.includes("@")) {
-      setFormError("Enter your email to receive a magic link");
+    const email = form.getValues("email");
+    if (!email || !email.includes("@")) {
+      setFormError("Enter your email above to receive a magic link");
       return;
     }
     setMagicLinkLoading(true);
     setFormError(null);
     try {
       const { error } = await supabase.auth.signInWithOtp({
-        email: magicEmail,
+        email,
         options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
       });
       if (error) throw new Error(error.message);
       setMagicLinkSent(true);
-      toast.success("Magic link sent! Check your email.");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to send magic link");
     } finally {
@@ -115,7 +114,8 @@ export function LoginPage() {
           <Mail className="h-10 w-10 text-primary mx-auto" />
           <p className="text-sm font-medium">Check your email</p>
           <p className="text-sm text-muted-foreground">
-            We sent a login link to <strong>{magicEmail}</strong>. Click it to sign in — no password needed.
+            We sent a login link to <strong>{form.getValues("email")}</strong>.
+            Click it to sign in — no password needed.
           </p>
           <Button variant="outline" size="sm" onClick={() => setMagicLinkSent(false)}>
             Back to Sign In
@@ -127,47 +127,25 @@ export function LoginPage() {
 
   return (
     <AuthLayout>
-      {/* Quick sign-in options */}
-      <div className="space-y-3">
-        <Button
-          variant="outline"
-          className="w-full"
-          onClick={handleGoogle}
-          disabled={anyLoading}
-        >
-          <GoogleIcon />
-          <span className="ml-2">{googleLoading ? "Redirecting..." : "Continue with Google"}</span>
-        </Button>
-
-        <div className="flex gap-2">
-          <Input
-            type="email"
-            placeholder="you@example.com"
-            value={magicEmail}
-            onChange={(e) => setMagicEmail(e.target.value)}
-            disabled={anyLoading}
-            className="flex-1"
-            onKeyDown={(e) => e.key === "Enter" && handleMagicLink()}
-          />
-          <Button
-            variant="outline"
-            onClick={handleMagicLink}
-            disabled={anyLoading}
-            className="shrink-0"
-          >
-            <Mail className="h-4 w-4 mr-1.5" />
-            {magicLinkLoading ? "Sending..." : "Magic Link"}
-          </Button>
-        </div>
-      </div>
+      {/* Google — primary one-click option */}
+      <Button
+        variant="outline"
+        className="w-full"
+        onClick={handleGoogle}
+        disabled={anyLoading}
+      >
+        <GoogleIcon />
+        <span className="ml-2">{googleLoading ? "Redirecting..." : "Continue with Google"}</span>
+      </Button>
 
       <div className="relative my-4">
         <Separator />
         <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-[10px] text-muted-foreground uppercase">
-          or sign in with password
+          or
         </span>
       </div>
 
+      {/* Single email + password form, magic link shares the email field */}
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           {formError && (
@@ -214,11 +192,26 @@ export function LoginPage() {
               </FormItem>
             )}
           />
-          <Button type="submit" className="w-full" disabled={anyLoading}>
-            {loading ? "Signing in..." : "Sign In"}
-          </Button>
+
+          {/* Two actions: Sign In (primary) + Magic Link (secondary) */}
+          <div className="flex gap-2">
+            <Button type="submit" className="flex-1" disabled={anyLoading}>
+              {loading ? "Signing in..." : "Sign In"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleMagicLink}
+              disabled={anyLoading}
+              className="shrink-0"
+            >
+              <Mail className="h-4 w-4 mr-1.5" />
+              {magicLinkLoading ? "Sending..." : "Magic Link"}
+            </Button>
+          </div>
         </form>
       </Form>
+
       <p className="mt-4 text-center text-sm text-muted-foreground">
         Don't have an account?{" "}
         <Link to="/register" className="text-primary hover:underline">
