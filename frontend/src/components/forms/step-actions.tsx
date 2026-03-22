@@ -3,19 +3,13 @@ import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   generateActionPreview,
   getActionsForDestination,
   getAllActionKeys,
 } from "@/lib/action-definitions";
+import { ActionRow } from "@/components/forms/action-row";
 import type { DestinationType } from "@/types/api";
 
 interface Props {
@@ -104,72 +98,31 @@ export function StepActions({ initialData, wizardData, onNext, onBack, isFinalSt
           const isExpanded = expandedPreview === action.key;
 
           return (
-            <div
-              key={action.key}
-              className={cn(
-                "rounded-md border px-3 py-2.5 transition-colors",
-                isEnabled
-                  ? "border-border"
-                  : "border-border/50 bg-muted/30 opacity-60",
-              )}
-            >
-              <div className="flex items-start gap-3">
-                {/* Toggle */}
-                <div className="pt-0.5">
-                  {action.isEntry ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div>
-                            <Switch checked disabled className="opacity-50" />
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs">Entry actions are always enabled</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  ) : (
-                    <Switch
-                      checked={isEnabled}
-                      onCheckedChange={() => toggleAction(action.key)}
+            <div key={action.key}>
+              <ActionRow
+                action={action}
+                isEnabled={isEnabled}
+                onToggle={toggleAction}
+              />
+              {/* JSON Preview toggle — wizard-only feature */}
+              {wizardData.webhook_body_template && (
+                <div className="ml-10 mt-0.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedPreview(isExpanded ? null : action.key)
+                    }
+                    className="flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary transition-colors"
+                  >
+                    <ChevronDown
+                      className={cn(
+                        "h-3 w-3 transition-transform",
+                        isExpanded && "rotate-180",
+                      )}
                     />
-                  )}
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium">{action.label}</span>
-                    <span className="text-[10px] text-muted-foreground">
-                      {action.description}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    e.g. {action.example}
-                  </p>
-
-                  {/* Preview toggle */}
-                  {wizardData.webhook_body_template && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpandedPreview(isExpanded ? null : action.key)
-                      }
-                      className="flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary mt-1 transition-colors"
-                    >
-                      <ChevronDown
-                        className={cn(
-                          "h-3 w-3 transition-transform",
-                          isExpanded && "rotate-180",
-                        )}
-                      />
-                      {isExpanded ? "Hide" : "Preview"} JSON
-                    </button>
-                  )}
-
-                  {/* JSON Preview */}
-                  {isExpanded && wizardData.webhook_body_template && (
+                    {isExpanded ? "Hide" : "Preview"} JSON
+                  </button>
+                  {isExpanded && (
                     <pre className="mt-2 rounded bg-muted/50 p-2 text-[10px] font-mono text-foreground/80 overflow-x-auto max-h-48">
                       {generateActionPreview(
                         action.key,
@@ -178,7 +131,7 @@ export function StepActions({ initialData, wizardData, onNext, onBack, isFinalSt
                     </pre>
                   )}
                 </div>
-              </div>
+              )}
             </div>
           );
         })}

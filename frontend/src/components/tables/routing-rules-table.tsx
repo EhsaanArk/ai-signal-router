@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Copy, FileJson, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { Copy, FileJson, ListChecks, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -35,6 +35,8 @@ import { useDeleteRule, useUpdateRule } from "@/hooks/use-routing-rules";
 import { DESTINATION_TYPE_LABELS_FULL } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { getActionBadge } from "@/lib/action-definitions";
+import { CommandReferenceDrawer } from "@/components/command-reference-drawer";
 import type { RoutingRuleResponse } from "@/types/api";
 
 interface Props {
@@ -45,6 +47,9 @@ export function RoutingRulesTable({ rules }: Props) {
   const navigate = useNavigate();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [commandsRuleId, setCommandsRuleId] = useState<string | null>(null);
+  const commandsRule = rules.find((r) => r.id === commandsRuleId);
+  const isSageMaster = (dt: string) => dt === "sagemaster_forex" || dt === "sagemaster_crypto";
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
 
@@ -108,6 +113,19 @@ export function RoutingRulesTable({ rules }: Props) {
                 <span className="rounded-sm border px-1.5 py-0.5 text-[10px] font-mono font-medium">
                   {rule.payload_version}
                 </span>
+                {isSageMaster(rule.destination_type) && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setCommandsRuleId(rule.id)}
+                        className="rounded-sm border px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {getActionBadge(rule.enabled_actions, rule.destination_type)}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>View signal commands</TooltipContent>
+                  </Tooltip>
+                )}
                 {rule.webhook_body_template && (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -221,9 +239,24 @@ export function RoutingRulesTable({ rules }: Props) {
                   </Tooltip>
                 </TableCell>
                 <TableCell className="py-2">
-                  <span className="rounded-sm border px-1.5 py-0.5 text-[10px] font-mono font-medium">
-                    {rule.payload_version}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded-sm border px-1.5 py-0.5 text-[10px] font-mono font-medium">
+                      {rule.payload_version}
+                    </span>
+                    {isSageMaster(rule.destination_type) && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={() => setCommandsRuleId(rule.id)}
+                            className="rounded-sm border px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {getActionBadge(rule.enabled_actions, rule.destination_type)}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>View signal commands</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="py-2">
                   {rule.webhook_body_template && (
@@ -269,6 +302,14 @@ export function RoutingRulesTable({ rules }: Props) {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                      {isSageMaster(rule.destination_type) && (
+                        <DropdownMenuItem
+                          onClick={() => setCommandsRuleId(rule.id)}
+                        >
+                          <ListChecks className="mr-2 h-3.5 w-3.5" />
+                          View Commands
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem
                         onClick={() => navigate(`/routing-rules/${rule.id}/edit`)}
                       >
@@ -326,6 +367,14 @@ export function RoutingRulesTable({ rules }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {commandsRule && (
+        <CommandReferenceDrawer
+          rule={commandsRule}
+          open={!!commandsRuleId}
+          onOpenChange={(open) => !open && setCommandsRuleId(null)}
+        />
+      )}
     </>
   );
 }
