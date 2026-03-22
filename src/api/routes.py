@@ -1566,7 +1566,6 @@ async def parse_preview(
 
     if parsed.is_valid_signal:
         from src.core.mapper import _signal_action
-        from src.core.models import SignalAction as SA
 
         try:
             computed = _signal_action(parsed)
