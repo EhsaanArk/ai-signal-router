@@ -693,6 +693,12 @@ async def change_password(
     )
     user_row = result.scalar_one()
 
+    if not user_row.password_hash or user_row.password_hash == "!":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password changes are managed through your sign-in provider (Google or Magic Link). Use Forgot Password to set a new password.",
+        )
+
     if not pwd_context.verify(body.current_password, user_row.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -722,6 +728,12 @@ async def delete_account(
         select(UserModel).where(UserModel.id == current_user.id)
     )
     user_row = result.scalar_one()
+
+    if not user_row.password_hash or user_row.password_hash == "!":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account deletion for OAuth users is not yet supported. Contact support@sagemaster.com.",
+        )
 
     if not pwd_context.verify(body.current_password, user_row.password_hash):
         raise HTTPException(
