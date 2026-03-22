@@ -128,6 +128,8 @@ class User(BaseModel):
     is_admin: bool = False
     is_disabled: bool = False
     email_verified: bool = False
+    accepted_tos_version: str | None = None
+    accepted_risk_waiver: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

@@ -310,6 +310,8 @@ async def get_current_user(
                     is_admin=data.get("is_admin", False),
                     is_disabled=data.get("is_disabled", False),
                     email_verified=data.get("email_verified", False),
+                    accepted_tos_version=data.get("accepted_tos_version"),
+                    accepted_risk_waiver=data.get("accepted_risk_waiver", False),
                     created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
                 )
                 if user.is_disabled:
@@ -346,7 +348,6 @@ async def get_current_user(
                 subscription_tier=tier,
                 is_admin=is_admin,
                 email_verified=sb_user_data.user.email_confirmed_at is not None,
-                terms_accepted_at=datetime.now(timezone.utc),
             )
             db.add(user_row)
             await db.flush()
@@ -381,6 +382,8 @@ async def get_current_user(
         is_admin=getattr(user_row, "is_admin", False),
         is_disabled=getattr(user_row, "is_disabled", False),
         email_verified=getattr(user_row, "email_verified", False),
+        accepted_tos_version=getattr(user_row, "accepted_tos_version", None),
+        accepted_risk_waiver=getattr(user_row, "accepted_risk_waiver", False),
         created_at=user_row.created_at,
     )
 
@@ -394,6 +397,8 @@ async def get_current_user(
                 "is_admin": user.is_admin,
                 "is_disabled": user.is_disabled,
                 "email_verified": user.email_verified,
+                "accepted_tos_version": user.accepted_tos_version,
+                "accepted_risk_waiver": user.accepted_risk_waiver,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
             }), ttl_seconds=_USER_CACHE_TTL)
         except Exception:

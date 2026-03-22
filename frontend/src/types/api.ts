@@ -17,6 +17,8 @@ export interface UserMe {
   is_admin: boolean;
   email_verified: boolean;
   created_at: string;
+  accepted_tos_version: string | null;
+  accepted_risk_waiver: boolean;
 }
 
 export interface TelegramStatusResponse {
