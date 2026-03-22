@@ -10,7 +10,6 @@ import {
 } from "react";
 import { supabase } from "@/lib/supabase";
 import type { UserMe } from "@/types/api";
-import type { Session } from "@supabase/supabase-js";
 import { API_BASE_URL } from "@/lib/constants";
 
 interface AuthContextValue {
@@ -24,17 +23,20 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const DEBUG = true;
+function log(...args: unknown[]) {
+  if (DEBUG) console.log("[SageAuth]", ...args);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserMe | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const fetchingRef = useRef(false);
-  const mountedRef = useRef(true);
+  const initRef = useRef(false);
 
-  // Fetch app-specific user data from backend — direct fetch, no loops
-  const fetchUser = useCallback(async (accessToken: string) => {
-    if (fetchingRef.current) return;
-    fetchingRef.current = true;
+  // Fetch app-specific user data from backend
+  const fetchUser = useCallback(async (accessToken: string): Promise<boolean> => {
+    log("fetchUser: calling /auth/me");
     try {
       const res = await fetch(`${API_BASE_URL}/auth/me`, {
         headers: {
@@ -42,70 +44,80 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           Authorization: `Bearer ${accessToken}`,
         },
       });
-      if (res.ok && mountedRef.current) {
+      if (res.ok) {
         const me: UserMe = await res.json();
+        log("fetchUser: success", me.email);
         setUser(me);
+        return true;
       }
+      log("fetchUser: failed with status", res.status);
+      return false;
     } catch (err) {
-      console.error("fetchUser failed:", err);
-    } finally {
-      fetchingRef.current = false;
+      log("fetchUser: error", err);
+      return false;
     }
   }, []);
 
-  // Handle session update — deferred to avoid synchronous render loops
-  const handleSession = useCallback((s: Session | null) => {
-    if (!mountedRef.current) return;
-    const newToken = s?.access_token ?? null;
-    setToken(newToken);
-    if (newToken) {
-      fetchUser(newToken).finally(() => {
-        if (mountedRef.current) setIsLoading(false);
-      });
-    } else {
-      setUser(null);
-      setIsLoading(false);
-    }
-  }, [fetchUser]);
-
+  // Initialize auth — runs once
   useEffect(() => {
-    mountedRef.current = true;
+    if (initRef.current) return;
+    initRef.current = true;
 
-    // 1. Get initial session
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      if (mountedRef.current) handleSession(s);
-    }).catch(() => {
-      if (mountedRef.current) setIsLoading(false);
+    log("init: starting, url =", window.location.href);
+
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      log("init: getSession result", { hasSession: !!session, error: error?.message });
+      if (session?.access_token) {
+        setToken(session.access_token);
+        fetchUser(session.access_token).finally(() => setIsLoading(false));
+      } else {
+        setIsLoading(false);
+      }
+    }).catch((err) => {
+      log("init: getSession error", err);
+      setIsLoading(false);
     });
 
-    // 2. Listen for auth changes — use setTimeout to defer and prevent sync loops
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, s) => {
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      log("onAuthStateChange:", event, { hasSession: !!session });
+
+      // Skip initial — handled above
       if (event === "INITIAL_SESSION") return;
-      // Defer to next tick to prevent synchronous render loops
+
+      // Defer to prevent sync render loops
       setTimeout(() => {
-        if (mountedRef.current) handleSession(s);
+        if (session?.access_token) {
+          setToken(session.access_token);
+          fetchUser(session.access_token).finally(() => setIsLoading(false));
+        } else {
+          setToken(null);
+          setUser(null);
+          setIsLoading(false);
+        }
       }, 0);
     });
 
     return () => {
-      mountedRef.current = false;
       subscription.unsubscribe();
     };
-  }, [handleSession]);
+  }, [fetchUser]);
 
   const login = useCallback(async (email: string, password: string) => {
+    log("login:", email);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
+    log("register:", email);
     const { error } = await supabase.auth.signUp({ email, password });
     if (error) throw new Error(error.message);
   }, []);
 
   const logout = useCallback(async () => {
+    log("logout");
     await supabase.auth.signOut();
     localStorage.removeItem("sgm_setup_complete");
     setToken(null);
