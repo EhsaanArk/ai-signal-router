@@ -320,12 +320,12 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
             <div className="flex items-start gap-2">
               <ShieldAlert className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
               <div>
-                <p className="text-xs font-semibold text-red-500">About destructive actions</p>
+                <p className="text-xs font-semibold text-red-500">About high-impact webhooks</p>
                 <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-                  Actions marked <span className="text-red-500 font-medium">Destructive</span> close positions at market price immediately.
-                  They are <span className="font-medium text-foreground">irreversible</span> — once executed, the trade is closed and cannot be reopened at the same price.
-                  If you&apos;re unsure whether your signal provider sends these commands, consider disabling them
-                  until you&apos;ve verified their signal format using the test sandbox below.
+                  Actions marked <span className="text-red-500 font-medium">Destructive</span> dispatch webhooks that instruct your connected platform to close positions.
+                  Sage Radar only forwards the webhook — <span className="font-medium text-foreground">you are in full control</span> of
+                  your trading platform and any actions it takes. If you&apos;re unsure whether your signal provider sends these commands,
+                  consider disabling them until you&apos;ve verified their signal format using the simulator below.
                 </p>
               </div>
             </div>
@@ -333,7 +333,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
 
           {unsupported.length > 0 && (
             <div>
-              <h3 className="text-xs font-semibold text-muted-foreground mb-2">Not Supported by SageMaster</h3>
+              <h3 className="text-xs font-semibold text-muted-foreground mb-2">Not Supported</h3>
               <div className="space-y-1.5">
                 {unsupported.map((item) => (
                   <div key={item.label} className="flex items-start gap-2 py-1.5 opacity-60">
