@@ -32,8 +32,9 @@ class TestIPRoyalProxyProvider:
             gateway_port=12321,
             username="testaccount",
             password="testpass",
-            session_duration=60,
+            session_lifetime="7d",
             country=None,
+            ip_pool_size=50,
         )
         defaults.update(overrides)
         return IPRoyalProxyProvider(**defaults)
@@ -43,53 +44,62 @@ class TestIPRoyalProxyProvider:
         provider = self._make_provider()
         proxy = provider.get_proxy_for_user(USER_A)
 
-        assert proxy["proxy_type"] == "socks5"
+        assert proxy["proxy_type"] == "http"
         assert proxy["addr"] == "geo.iproyal.com"
         assert proxy["port"] == 12321
-        assert proxy["password"] == "testpass"
+        assert proxy["username"] == "testaccount"
         assert proxy["rdns"] is True
-        assert "testaccount" in proxy["username"]
+        # Password contains session params
+        assert "testpass" in proxy["password"]
+        assert "session-slot" in proxy["password"]
 
-    def test_username_contains_session_id(self):
-        """Username should embed the user ID as a session identifier."""
+    def test_password_contains_session_id(self):
+        """Password should embed a slot-based session identifier."""
         provider = self._make_provider()
         proxy = provider.get_proxy_for_user(USER_A)
 
-        user_id_hex = str(USER_A).replace("-", "")
-        assert f"-session-{user_id_hex}" in proxy["username"]
+        assert "_session-slot" in proxy["password"]
 
-    def test_username_contains_session_duration(self):
-        """Username should include the sticky session duration."""
-        provider = self._make_provider(session_duration=30)
+    def test_password_contains_lifetime(self):
+        """Password should include the sticky session lifetime."""
+        provider = self._make_provider(session_lifetime="1h")
         proxy = provider.get_proxy_for_user(USER_A)
 
-        assert "-sessionTime-30" in proxy["username"]
+        assert "_lifetime-1h_" in proxy["password"]
 
-    def test_username_includes_country_when_set(self):
-        """Country code should be appended to username when configured."""
+    def test_password_includes_country_when_set(self):
+        """Country code should be in password when configured."""
         provider = self._make_provider(country="us")
         proxy = provider.get_proxy_for_user(USER_A)
 
-        assert "-country-us" in proxy["username"]
+        assert "_country-us_" in proxy["password"]
 
-    def test_username_excludes_country_when_none(self):
-        """No country suffix when country is not configured."""
+    def test_password_excludes_country_when_none(self):
+        """No country param when country is not configured."""
         provider = self._make_provider(country=None)
         proxy = provider.get_proxy_for_user(USER_A)
 
-        assert "-country-" not in proxy["username"]
+        assert "country-" not in proxy["password"]
 
-    def test_different_users_get_different_sessions(self):
-        """Each user should get a unique session ID → unique IP."""
+    def test_password_includes_streaming(self):
+        """Password should include streaming=1 for persistent connections."""
         provider = self._make_provider()
+        proxy = provider.get_proxy_for_user(USER_A)
+
+        assert proxy["password"].endswith("_streaming-1")
+
+    def test_different_users_get_different_sessions_with_large_pool(self):
+        """With a large pool, different users should get different slots."""
+        provider = self._make_provider(ip_pool_size=1000)
         proxy_a = provider.get_proxy_for_user(USER_A)
         proxy_b = provider.get_proxy_for_user(USER_B)
 
-        assert proxy_a["username"] != proxy_b["username"]
-        # Same gateway, same password, same port
+        # Different passwords (different session slots)
+        assert proxy_a["password"] != proxy_b["password"]
+        # Same gateway and username
         assert proxy_a["addr"] == proxy_b["addr"]
         assert proxy_a["port"] == proxy_b["port"]
-        assert proxy_a["password"] == proxy_b["password"]
+        assert proxy_a["username"] == proxy_b["username"]
 
     def test_same_user_gets_same_session(self):
         """Same user should always get the same proxy config (deterministic)."""
@@ -105,6 +115,24 @@ class TestIPRoyalProxyProvider:
         proxy = provider.get_proxy_for_user(USER_A)
 
         assert proxy["port"] == 9999
+
+    def test_pool_size_1_all_users_share_one_slot(self):
+        """With pool_size=1, all users should share the same slot."""
+        provider = self._make_provider(ip_pool_size=1)
+        proxy_a = provider.get_proxy_for_user(USER_A)
+        proxy_b = provider.get_proxy_for_user(USER_B)
+
+        assert proxy_a["password"] == proxy_b["password"]
+
+    def test_pool_grouping_is_consistent(self):
+        """Users should always land in the same slot across calls."""
+        provider = self._make_provider(ip_pool_size=5)
+        users = [UUID(f"{i:08x}-0000-0000-0000-000000000000") for i in range(20)]
+
+        for u in users:
+            p1 = provider.get_proxy_for_user(u)
+            p2 = provider.get_proxy_for_user(u)
+            assert p1 == p2, f"User {u} got different proxies on repeated calls"
 
 
 # =========================================================================
@@ -151,12 +179,11 @@ class TestGetProxyProvider:
         """PROXY_PROVIDER=iproyal with all required vars → IPRoyal."""
         env = {
             "PROXY_PROVIDER": "iproyal",
-            "PROXY_GATEWAY_HOST": "geo.iproyal.com",
-            "PROXY_GATEWAY_PORT": "12321",
             "PROXY_USERNAME": "testaccount",
             "PROXY_PASSWORD": "testpass",
-            "PROXY_SESSION_DURATION": "30",
+            "PROXY_SESSION_LIFETIME": "1h",
             "PROXY_COUNTRY": "us",
+            "PROXY_IP_POOL_SIZE": "10",
         }
         with patch.dict(os.environ, env, clear=True):
             provider = get_proxy_provider()
@@ -166,16 +193,16 @@ class TestGetProxyProvider:
             proxy = provider.get_proxy_for_user(USER_A)
             assert proxy["addr"] == "geo.iproyal.com"
             assert proxy["port"] == 12321
-            assert "-sessionTime-30" in proxy["username"]
-            assert "-country-us" in proxy["username"]
+            assert proxy["proxy_type"] == "http"
+            assert "_lifetime-1h_" in proxy["password"]
+            assert "_country-us_" in proxy["password"]
 
-    def test_iproyal_missing_host_falls_back(self):
-        """PROXY_PROVIDER=iproyal without required vars → NoOp with warning."""
+    def test_iproyal_missing_username_falls_back(self):
+        """PROXY_PROVIDER=iproyal without username → NoOp with warning."""
         env = {
             "PROXY_PROVIDER": "iproyal",
-            "PROXY_USERNAME": "testaccount",
             "PROXY_PASSWORD": "testpass",
-            # Missing PROXY_GATEWAY_HOST
+            # Missing PROXY_USERNAME
         }
         with patch.dict(os.environ, env, clear=True):
             provider = get_proxy_provider()
@@ -185,13 +212,26 @@ class TestGetProxyProvider:
         """PROXY_PROVIDER=iproyal without password → NoOp."""
         env = {
             "PROXY_PROVIDER": "iproyal",
-            "PROXY_GATEWAY_HOST": "geo.iproyal.com",
             "PROXY_USERNAME": "testaccount",
             # Missing PROXY_PASSWORD
         }
         with patch.dict(os.environ, env, clear=True):
             provider = get_proxy_provider()
             assert isinstance(provider, NoOpProxyProvider)
+
+    def test_iproyal_defaults_host_and_port(self):
+        """Host and port should default when not set."""
+        env = {
+            "PROXY_PROVIDER": "iproyal",
+            "PROXY_USERNAME": "testaccount",
+            "PROXY_PASSWORD": "testpass",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            provider = get_proxy_provider()
+            assert isinstance(provider, IPRoyalProxyProvider)
+            proxy = provider.get_proxy_for_user(USER_A)
+            assert proxy["addr"] == "geo.iproyal.com"
+            assert proxy["port"] == 12321
 
     def test_unknown_provider_falls_back(self):
         """PROXY_PROVIDER=unknown → NoOp with warning."""
