@@ -28,3 +28,4 @@ opentelemetry-instrumentation-logging==0.61b0
 protobuf==5.29.6
 sentry-sdk[fastapi]==2.19.2
 pysocks>=1.7.1
+supabase==2.15.2
