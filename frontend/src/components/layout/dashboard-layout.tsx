@@ -55,11 +55,22 @@ function SetupIncompleteBanner() {
 
 export function DashboardLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("sgm_sidebar_collapsed") === "true",
+  );
   useTelegramDisconnectAlert();
+
+  function toggleSidebar() {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("sgm_sidebar_collapsed", String(next));
+      return next;
+    });
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar className="hidden lg:flex" />
+      <Sidebar className="hidden lg:flex" collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
       <MobileNav open={mobileOpen} onOpenChange={setMobileOpen} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header onMenuClick={() => setMobileOpen(true)} />
