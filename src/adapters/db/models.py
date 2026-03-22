@@ -58,6 +58,12 @@ class UserModel(Base):
     terms_accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    accepted_tos_version: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
+    accepted_risk_waiver: Mapped[bool] = mapped_column(
+        Boolean, server_default=sa_false(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -349,6 +355,34 @@ class PasswordResetTokenModel(Base):
     )
 
     # Relationships
+    user: Mapped[UserModel] = relationship()
+
+
+class TermsAcceptanceLogModel(Base):
+    """Audit trail for terms/privacy/risk waiver acceptance — fintech compliance."""
+
+    __tablename__ = "terms_acceptance_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    document_type: Mapped[str] = mapped_column(
+        String(50), nullable=False  # 'tos', 'privacy', 'risk_waiver'
+    )
+    document_version: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )
+    ip_address: Mapped[str | None] = mapped_column(
+        String(45), nullable=True
+    )
+    user_agent: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    accepted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
     user: Mapped[UserModel] = relationship()
 
 
