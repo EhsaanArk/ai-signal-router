@@ -26,13 +26,12 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserMe | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const fetchingRef = useRef(false);
+  const mountedRef = useRef(true);
 
-  const token = session?.access_token ?? null;
-
-  // Fetch app-specific user data from backend — uses token directly, no getSession() call
+  // Fetch app-specific user data from backend — direct fetch, no loops
   const fetchUser = useCallback(async (accessToken: string) => {
     if (fetchingRef.current) return;
     fetchingRef.current = true;
@@ -43,80 +42,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           Authorization: `Bearer ${accessToken}`,
         },
       });
-      if (res.ok) {
-        const me = await res.json();
+      if (res.ok && mountedRef.current) {
+        const me: UserMe = await res.json();
         setUser(me);
-      } else {
-        setUser(null);
       }
-    } catch {
-      setUser(null);
+    } catch (err) {
+      console.error("fetchUser failed:", err);
     } finally {
       fetchingRef.current = false;
     }
   }, []);
 
-  // Listen for Supabase auth state changes
-  useEffect(() => {
-    let mounted = true;
+  // Handle session update — deferred to avoid synchronous render loops
+  const handleSession = useCallback((s: Session | null) => {
+    if (!mountedRef.current) return;
+    const newToken = s?.access_token ?? null;
+    setToken(newToken);
+    if (newToken) {
+      fetchUser(newToken).finally(() => {
+        if (mountedRef.current) setIsLoading(false);
+      });
+    } else {
+      setUser(null);
+      setIsLoading(false);
+    }
+  }, [fetchUser]);
 
-    // Get initial session
+  useEffect(() => {
+    mountedRef.current = true;
+
+    // 1. Get initial session
     supabase.auth.getSession().then(({ data: { session: s } }) => {
-      if (!mounted) return;
-      setSession(s);
-      if (s?.access_token) {
-        fetchUser(s.access_token).finally(() => {
-          if (mounted) setIsLoading(false);
-        });
-      } else {
-        setIsLoading(false);
-      }
+      if (mountedRef.current) handleSession(s);
+    }).catch(() => {
+      if (mountedRef.current) setIsLoading(false);
     });
 
-    // Subscribe to auth changes (login, logout, token refresh)
+    // 2. Listen for auth changes — use setTimeout to defer and prevent sync loops
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, s) => {
-      if (!mounted) return;
-      // Only act on meaningful events, skip duplicates
-      if (event === "INITIAL_SESSION") return; // handled by getSession above
-      setSession(s);
-      if (s?.access_token) {
-        fetchUser(s.access_token).finally(() => {
-          if (mounted) setIsLoading(false);
-        });
-      } else {
-        setUser(null);
-        setIsLoading(false);
-      }
+      if (event === "INITIAL_SESSION") return;
+      // Defer to next tick to prevent synchronous render loops
+      setTimeout(() => {
+        if (mountedRef.current) handleSession(s);
+      }, 0);
     });
 
     return () => {
-      mounted = false;
+      mountedRef.current = false;
       subscription.unsubscribe();
     };
-  }, [fetchUser]);
+  }, [handleSession]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+    const { error } = await supabase.auth.signUp({ email, password });
     if (error) throw new Error(error.message);
   }, []);
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
     localStorage.removeItem("sgm_setup_complete");
-    setSession(null);
+    setToken(null);
     setUser(null);
   }, []);
 
