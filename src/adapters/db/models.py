@@ -55,6 +55,9 @@ class UserModel(Base):
     email_verified: Mapped[bool] = mapped_column(
         Boolean, server_default=sa_false(), nullable=False
     )
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
