@@ -68,16 +68,24 @@ function ActionCard({
   onToggle,
   readOnly,
   destinationType,
+  payloadVersion,
 }: {
   action: ActionDefinition;
   isEnabled: boolean;
   onToggle?: (key: string) => void;
   readOnly?: boolean;
   destinationType: string;
+  payloadVersion?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const examples = getExamplesForDestination(action, destinationType);
   const riskCfg = RISK_CONFIG[action.risk];
+
+  // V1 forex entry actions use simplified descriptions
+  const isV1Entry = payloadVersion === "V1" && action.isEntry && action.v1;
+  const description = isV1Entry ? action.v1!.description : action.description;
+  const scenario = isV1Entry ? action.v1!.scenario : action.scenario;
+  const effect = isV1Entry ? action.v1!.effect : action.effect;
 
   return (
     <div className={cn(
@@ -104,8 +112,11 @@ function ActionCard({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold">{action.label}</span>
             <RiskBadge risk={action.risk} />
+            {isV1Entry && (
+              <span className="text-[9px] font-medium text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded">V1 — SL/TP from strategy</span>
+            )}
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5">{action.description}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
         </div>
         <button
           type="button"
@@ -123,15 +134,15 @@ function ActionCard({
               <Info className="h-3 w-3 text-muted-foreground" />
               <span className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">When this happens</span>
             </div>
-            <p className="text-xs text-foreground/80 leading-relaxed">{action.scenario}</p>
+            <p className="text-xs text-foreground/80 leading-relaxed">{scenario}</p>
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <Zap className={cn("h-3 w-3", riskCfg.color)} />
-              <span className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">What happens on your account</span>
+              <span className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">What gets dispatched</span>
             </div>
             <p className={cn("text-xs leading-relaxed", action.risk === "destructive" ? "text-red-400" : "text-foreground/80")}>
-              {action.effect}
+              {effect}
             </p>
           </div>
           <div>
@@ -286,7 +297,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
             </div>
             <div className="grid gap-2">
               {entryActions.map((action) => (
-                <ActionCard key={action.key} action={action} isEnabled={true} readOnly destinationType={rule.destination_type} />
+                <ActionCard key={action.key} action={action} isEnabled={true} readOnly destinationType={rule.destination_type} payloadVersion={rule.payload_version} />
               ))}
             </div>
           </div>
@@ -311,6 +322,7 @@ export function CommandReferenceDrawer({ rule, open, onOpenChange }: Props) {
                   isEnabled={localEnabled.has(action.key)}
                   onToggle={handleToggle}
                   destinationType={rule.destination_type}
+                  payloadVersion={rule.payload_version}
                 />
               ))}
             </div>

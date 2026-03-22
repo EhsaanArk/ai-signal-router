@@ -11,8 +11,10 @@ export interface ActionDefinition {
   risk: RiskLevel;
   /** When this action is typically sent in a trading context. */
   scenario: string;
-  /** What happens on the SageMaster side when this fires. */
+  /** What happens when this webhook is dispatched. */
   effect: string;
+  /** V1 payload version overrides for entry actions (forex only). */
+  v1?: { description: string; scenario: string; effect: string };
   isEntry?: boolean;
   forexOnly?: boolean;
   cryptoOnly?: boolean;
@@ -32,6 +34,11 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     risk: "safe",
     scenario: "Signal provider identifies a buying opportunity and sends an entry call. SL and TP levels are included when the provider specifies them.",
     effect: "Dispatches a webhook with the entry details, including any SL/TP levels detected in the message. Your connected platform handles the order.",
+    v1: {
+      description: "Dispatch a long/buy entry signal — SL/TP use your strategy config",
+      scenario: "Signal provider identifies a buying opportunity. With V1, SL and TP from the message are not forwarded — your platform strategy settings apply.",
+      effect: "Dispatches an entry-only webhook (symbol + direction). SL, TP, lot size, and risk management all come from your strategy configuration on your connected platform.",
+    },
     isEntry: true,
   },
   {
@@ -46,6 +53,11 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     risk: "safe",
     scenario: "Signal provider spots a bearish setup and sends a sell/short entry signal. SL and TP levels are included when the provider specifies them.",
     effect: "Dispatches a webhook with the entry details, including any SL/TP levels detected in the message. Your connected platform handles the order.",
+    v1: {
+      description: "Dispatch a short/sell entry signal — SL/TP use your strategy config",
+      scenario: "Signal provider spots a bearish setup. With V1, SL and TP from the message are not forwarded — your platform strategy settings apply.",
+      effect: "Dispatches an entry-only webhook (symbol + direction). SL, TP, lot size, and risk management all come from your strategy configuration on your connected platform.",
+    },
     isEntry: true,
   },
   {
@@ -60,6 +72,11 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     risk: "safe",
     scenario: "Provider wants to enter at a better price. The order waits until price reaches the limit level. SL and TP are included when specified.",
     effect: "Dispatches a webhook for a pending buy limit order with any SL/TP levels. Your connected platform places the order at the specified price.",
+    v1: {
+      description: "Dispatch a buy limit signal — SL/TP use your strategy config",
+      scenario: "Provider wants to enter at a better price. With V1, SL and TP from the message are not forwarded — your platform strategy settings apply.",
+      effect: "Dispatches an entry-only webhook (symbol + limit price). SL, TP, lot size, and risk management all come from your strategy configuration on your connected platform.",
+    },
     isEntry: true,
   },
   {
@@ -74,6 +91,11 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     risk: "safe",
     scenario: "Provider expects price to rise to a resistance level before selling. SL and TP are included when specified.",
     effect: "Dispatches a webhook for a pending sell limit order with any SL/TP levels. Your connected platform places the order at the specified price.",
+    v1: {
+      description: "Dispatch a sell limit signal — SL/TP use your strategy config",
+      scenario: "Provider expects price to rise before selling. With V1, SL and TP from the message are not forwarded — your platform strategy settings apply.",
+      effect: "Dispatches an entry-only webhook (symbol + limit price). SL, TP, lot size, and risk management all come from your strategy configuration on your connected platform.",
+    },
     isEntry: true,
   },
   {
