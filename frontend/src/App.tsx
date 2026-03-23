@@ -30,6 +30,9 @@ const AdminSignalsPage = lazyRetry(() => import("./pages/admin/signals"));
 const AdminSystemRulesPage = lazyRetry(() => import("./pages/admin/system-rules"));
 const AdminParserPage = lazyRetry(() => import("./pages/admin/parser"));
 const AdminSettingsPage = lazyRetry(() => import("./pages/admin/settings"));
+const MarketplacePage = lazyRetry(() => import("./pages/marketplace"));
+const MarketplaceSubscriptionsPage = lazyRetry(() => import("./pages/marketplace-subscriptions"));
+const AdminMarketplacePage = lazyRetry(() => import("./pages/admin/marketplace"));
 
 function AdminRoute({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -47,6 +50,7 @@ const router = createBrowserRouter([
   { path: "/privacy", element: <PrivacyPage /> },
   { path: "/auth/callback", element: <OAuthCallbackPage /> },
   { path: "/accept-terms", element: <AcceptTermsPage /> },
+  { path: "/marketplace", element: <MarketplacePage /> },
   {
     element: <ProtectedRoute />,
     children: [
@@ -67,7 +71,9 @@ const router = createBrowserRouter([
           { path: "/admin/signals", element: <AdminRoute><AdminSignalsPage /></AdminRoute> },
           { path: "/admin/system-rules", element: <AdminRoute><AdminSystemRulesPage /></AdminRoute> },
           { path: "/admin/parser", element: <AdminRoute><AdminParserPage /></AdminRoute> },
+          { path: "/admin/marketplace", element: <AdminRoute><AdminMarketplacePage /></AdminRoute> },
           { path: "/admin/settings", element: <AdminRoute><AdminSettingsPage /></AdminRoute> },
+          { path: "/dashboard/subscriptions", element: <MarketplaceSubscriptionsPage /> },
         ],
       },
     ],
