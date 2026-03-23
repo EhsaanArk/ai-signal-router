@@ -1,6 +1,4 @@
-import { BadgeCheck } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MarketplaceProvider } from "@/types/marketplace";
@@ -20,7 +18,7 @@ function formatPnl(pips: number | null): string {
 
 function formatDrawdown(dd: number | null): string {
   if (dd === null) return "--";
-  return `-${Math.abs(dd).toFixed(1)}%`;
+  return `-${Math.abs(dd).toFixed(0)}p`;
 }
 
 function formatWinRate(rate: number | null): string {
@@ -28,10 +26,35 @@ function formatWinRate(rate: number | null): string {
   return `${Math.round(rate)}%`;
 }
 
+/** Performance tier based on win rate */
+function getTierColor(winRate: number | null): {
+  border: string;
+  text: string;
+  glow: string;
+} {
+  if (winRate === null || winRate < 45)
+    return {
+      border: "border-l-rose-500",
+      text: "text-rose-500",
+      glow: "hover:shadow-rose-500/10",
+    };
+  if (winRate < 60)
+    return {
+      border: "border-l-foreground/40",
+      text: "text-foreground",
+      glow: "hover:shadow-foreground/5",
+    };
+  return {
+    border: "border-l-emerald-500",
+    text: "text-emerald-500",
+    glow: "hover:shadow-emerald-500/10",
+  };
+}
+
 const ASSET_LABELS: Record<string, string> = {
-  forex: "Forex",
+  forex: "FX",
   crypto: "Crypto",
-  both: "Multi-Asset",
+  both: "Multi",
 };
 
 export function ProviderCard({
@@ -41,102 +64,103 @@ export function ProviderCard({
   onUnsubscribe,
 }: ProviderCardProps) {
   const trackProgress = Math.min(provider.track_record_days / 180, 1);
-  const pnlPositive = provider.total_pnl_pips !== null && provider.total_pnl_pips >= 0;
+  const pnlPositive =
+    provider.total_pnl_pips !== null && provider.total_pnl_pips >= 0;
+  const tier = getTierColor(provider.win_rate);
 
   return (
-    <Card className="group relative flex flex-col transition-all duration-200 hover:scale-[1.01] hover:shadow-lg">
-      <CardContent className="flex flex-1 flex-col gap-4 p-5">
-        {/* Header: Name + badges */}
-        <div className="space-y-1.5">
-          <h3 className="text-sm font-semibold leading-tight truncate">
-            {provider.name}
-          </h3>
-          <div className="flex items-center gap-2">
-            {provider.is_verified && (
-              <Badge
-                variant="outline"
-                className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0"
-              >
-                <BadgeCheck className="h-3 w-3" />
-                Verified
-              </Badge>
-            )}
-            <Badge
-              variant="secondary"
-              className="text-[10px] px-1.5 py-0 text-muted-foreground"
-            >
-              {ASSET_LABELS[provider.asset_class] ?? provider.asset_class}
-            </Badge>
+    <div
+      className={cn(
+        "group relative flex flex-col rounded-lg border border-border/60 bg-card",
+        "border-l-2 transition-shadow duration-200",
+        tier.border,
+        tier.glow,
+        "hover:shadow-lg",
+      )}
+    >
+      {/* Track record gradient — subtle fill behind card bottom */}
+      <div className="absolute inset-x-0 bottom-0 h-16 overflow-hidden rounded-b-lg pointer-events-none">
+        <div
+          className="absolute bottom-0 left-0 h-full bg-gradient-to-r from-primary/[0.04] to-transparent"
+          style={{ width: `${trackProgress * 100}%` }}
+        />
+      </div>
+
+      <div className="relative flex flex-1 flex-col gap-3 p-4">
+        {/* Header row: name + asset pill */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold leading-tight truncate">
+              {provider.name}
+            </h3>
+            <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] text-emerald-500/80">
+              <Check className="h-2.5 w-2.5" />
+              Verified
+            </span>
           </div>
+          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            {ASSET_LABELS[provider.asset_class] ?? provider.asset_class}
+          </span>
         </div>
 
-        {/* Stats row — the star of the card */}
-        <div className="grid grid-cols-3 gap-3 text-center">
-          {/* Win Rate */}
-          <div>
-            <p
-              className={cn(
-                "text-2xl font-bold tabular-nums leading-none",
-                provider.win_rate !== null && provider.win_rate >= 60
-                  ? "text-emerald-500"
-                  : provider.win_rate !== null && provider.win_rate < 45
-                    ? "text-rose-500"
-                    : "text-foreground",
-              )}
-            >
-              {formatWinRate(provider.win_rate)}
-            </p>
-            <p className="mt-1 text-[10px] text-muted-foreground">win</p>
-          </div>
+        {/* HERO: Win Rate */}
+        <div className="py-1">
+          <p
+            className={cn(
+              "text-4xl font-black tabular-nums leading-none tracking-tight",
+              tier.text,
+            )}
+          >
+            {formatWinRate(provider.win_rate)}
+          </p>
+          <p className="mt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            Win Rate
+          </p>
+        </div>
 
-          {/* P&L */}
+        {/* Secondary stats: P&L + Drawdown side by side */}
+        <div className="flex gap-4">
           <div>
             <p
               className={cn(
-                "text-2xl font-bold tabular-nums leading-none",
-                pnlPositive ? "text-emerald-500" : "text-rose-500",
-                provider.total_pnl_pips === null && "text-zinc-400",
+                "text-base font-semibold tabular-nums leading-none",
+                provider.total_pnl_pips === null
+                  ? "text-muted-foreground"
+                  : pnlPositive
+                    ? "text-emerald-500"
+                    : "text-rose-500",
               )}
             >
               {formatPnl(provider.total_pnl_pips)}
             </p>
-            <p className="mt-1 text-[10px] text-muted-foreground">P&L</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">P&L</p>
           </div>
-
-          {/* Drawdown */}
           <div>
             <p
               className={cn(
-                "text-2xl font-bold tabular-nums leading-none",
+                "text-base font-semibold tabular-nums leading-none",
                 provider.max_drawdown_pips !== null
                   ? "text-rose-400"
-                  : "text-zinc-400",
+                  : "text-muted-foreground",
               )}
             >
               {formatDrawdown(provider.max_drawdown_pips)}
             </p>
-            <p className="mt-1 text-[10px] text-muted-foreground">DD</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Drawdown
+            </p>
           </div>
-        </div>
-
-        {/* Track record bar */}
-        <div className="space-y-1">
-          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-            <div
-              className="h-full rounded-full bg-primary/60 transition-all duration-500"
-              style={{ width: `${trackProgress * 100}%` }}
-            />
-          </div>
-          <p className="text-[10px] text-muted-foreground text-right tabular-nums">
-            {provider.track_record_days}d track record
-          </p>
         </div>
 
         {/* Meta row */}
-        <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
+        <div className="flex items-center gap-3 text-[10px] text-muted-foreground/70 tabular-nums">
           <span>{provider.signal_count.toLocaleString()} signals</span>
-          <span className="h-1 w-1 rounded-full bg-zinc-400" />
-          <span>{provider.subscriber_count.toLocaleString()} subscribers</span>
+          <span className="h-0.5 w-0.5 rounded-full bg-muted-foreground/30" />
+          <span>
+            {provider.subscriber_count.toLocaleString()} subscribers
+          </span>
+          <span className="h-0.5 w-0.5 rounded-full bg-muted-foreground/30" />
+          <span>{provider.track_record_days}d record</span>
         </div>
 
         {/* Action */}
@@ -160,7 +184,7 @@ export function ProviderCard({
             </Button>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
