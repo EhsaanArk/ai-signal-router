@@ -376,11 +376,11 @@ export interface UnsupportedAction {
 export const UNSUPPORTED_ACTIONS: UnsupportedAction[] = [
   {
     label: "Modify TP on existing trade",
-    reason: "Not supported via webhook — TP can only be set at entry time",
+    reason: "Not supported via webhook — TP can only be set at entry time. Signals like \"Move TP to 1.2500\" will be ignored",
   },
   {
-    label: "Modify SL to arbitrary price",
-    reason: "SL can only be moved to breakeven (entry price ± pip offset) — not to an arbitrary price level",
+    label: "Move SL to a specific price",
+    reason: "Signals like \"Move SL to 1.2450\" or \"SL 2350\" are not supported — SageMaster only accepts breakeven (entry price ± pip offset). To move SL, the provider must say \"Breakeven\" or \"Move SL to BE\"",
   },
   {
     label: "Add to position / DCA",
