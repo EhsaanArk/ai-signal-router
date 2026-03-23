@@ -628,8 +628,8 @@ def test_eventSymbol_empty_filled_from_signal():
     assert payload["tradeSymbol"] == "SOL/USDT"
 
 
-def test_modify_sl_payload_with_new_sl():
-    """modify_sl with new_sl should produce breakeven with slAdjustment = new_sl."""
+def test_modify_sl_payload_with_new_sl_rejected():
+    """modify_sl with absolute new_sl price must be rejected — slAdjustment is a pip offset, not a price."""
     rule = _rule_with_template({
         "type": "",
         "assistId": "my-assist-id",
@@ -637,9 +637,8 @@ def test_modify_sl_payload_with_new_sl():
         "source": "forex",
     }, version="V2")
     signal = ParsedSignal(action="modify_sl", symbol="EURUSD", new_sl=25)
-    payload = build_webhook_payload(signal, rule)
-    assert payload["type"] == "move_sl_to_breakeven"
-    assert payload["slAdjustment"] == 25
+    with pytest.raises(ValueError, match="Absolute SL modification is not supported"):
+        build_webhook_payload(signal, rule)
 
 
 def test_trailing_sl_payload():

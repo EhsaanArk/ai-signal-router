@@ -108,7 +108,8 @@ def _signal_action(signal: ParsedSignal) -> SignalAction:
     if action == "stop_assist":
         return SignalAction.stop_assist
     if action == "modify_sl":
-        # modify_sl maps to breakeven with slAdjustment when new_sl is available
+        # modify_sl maps to breakeven — but absolute SL prices are rejected
+        # in _inject_management_fields / _inject_crypto_management_fields
         return SignalAction.breakeven
     if action == "extra_order":
         return SignalAction.extra_order
@@ -141,7 +142,15 @@ def _inject_management_fields(payload: dict, signal: ParsedSignal, action: Signa
         payload["percentage"] = signal.percentage or 50
     elif action == SignalAction.breakeven:
         if signal.action == "modify_sl" and signal.new_sl is not None:
-            payload["slAdjustment"] = int(signal.new_sl)
+            # Absolute SL modification is not supported by SageMaster.
+            # slAdjustment is a pip offset from entry, not an absolute price.
+            # Passing an absolute price (e.g. 2350) would be misinterpreted as
+            # a 2350-pip offset, causing wildly incorrect SL placement.
+            raise ValueError(
+                f"Absolute SL modification is not supported by SageMaster "
+                f"(new_sl={signal.new_sl}). Only breakeven with pip offset "
+                f"is supported via move_sl_to_breakeven."
+            )
         elif signal.action == "trailing_sl" and signal.trailing_sl_pips is not None:
             payload["slAdjustment"] = signal.trailing_sl_pips
         elif signal.breakeven_offset_pips is not None:
