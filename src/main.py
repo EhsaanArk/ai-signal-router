@@ -397,12 +397,14 @@ def create_app() -> FastAPI:
     # Mount routers
     # ------------------------------------------------------------------
     from src.api.admin import admin_router
+    from src.api.marketplace_routes import marketplace_router
     from src.api.routes import router as v1_router
     from src.api.workflow import workflow_router
 
     application.include_router(v1_router)
     application.include_router(workflow_router)
     application.include_router(admin_router)
+    application.include_router(marketplace_router)
 
     if local_mode:
         from src.api.dev import dev_router
