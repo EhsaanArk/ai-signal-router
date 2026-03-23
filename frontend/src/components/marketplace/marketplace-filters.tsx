@@ -50,7 +50,7 @@ export function MarketplaceFilters({
 
       {/* Sort — inline text tabs */}
       <div className="flex items-center gap-1 text-[11px]">
-        <span className="text-muted-foreground/50 mr-1">Sort:</span>
+        <span className="text-muted-foreground mr-1">Sort:</span>
         {SORTS.map((s) => (
           <button
             key={s.value}
@@ -60,7 +60,7 @@ export function MarketplaceFilters({
               "px-2 py-0.5 rounded transition-colors",
               sort === s.value
                 ? "text-foreground font-medium"
-                : "text-muted-foreground/60 hover:text-muted-foreground",
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             {s.label}
