@@ -50,7 +50,6 @@ const router = createBrowserRouter([
   { path: "/privacy", element: <PrivacyPage /> },
   { path: "/auth/callback", element: <OAuthCallbackPage /> },
   { path: "/accept-terms", element: <AcceptTermsPage /> },
-  { path: "/marketplace", element: <MarketplacePage /> },
   {
     element: <ProtectedRoute />,
     children: [
@@ -63,6 +62,7 @@ const router = createBrowserRouter([
           { path: "/routing-rules", element: <RoutingRulesPage /> },
           { path: "/routing-rules/new", element: <RoutingRulesNewPage /> },
           { path: "/routing-rules/:id/edit", element: <RoutingRulesEditPage /> },
+          { path: "/marketplace", element: <MarketplacePage /> },
           { path: "/logs", element: <LogsPage /> },
           { path: "/settings", element: <SettingsPage /> },
           { path: "/admin/health", element: <AdminRoute><AdminHealthPage /></AdminRoute> },
