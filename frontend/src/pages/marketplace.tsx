@@ -25,16 +25,12 @@ export function MarketplacePage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // URL-driven sort/filter state
   const sort = (searchParams.get("sort") as MarketplaceSort) || "win_rate";
   const filter = (searchParams.get("filter") as MarketplaceFilter) || "all";
 
   const setSort = useCallback(
     (s: MarketplaceSort) => {
-      setSearchParams((prev) => {
-        prev.set("sort", s);
-        return prev;
-      });
+      setSearchParams((prev) => { prev.set("sort", s); return prev; });
     },
     [setSearchParams],
   );
@@ -42,40 +38,24 @@ export function MarketplacePage() {
   const setFilter = useCallback(
     (f: MarketplaceFilter) => {
       setSearchParams((prev) => {
-        if (f === "all") {
-          prev.delete("filter");
-        } else {
-          prev.set("filter", f);
-        }
+        if (f === "all") prev.delete("filter"); else prev.set("filter", f);
         return prev;
       });
     },
     [setSearchParams],
   );
 
-  // Data
-  const {
-    data: providers,
-    isLoading,
-    isError,
-    refetch,
-    isFetching,
-  } = useMarketplaceProviders(sort, filter);
-
+  const { data: providers, isLoading, isError, refetch, isFetching } =
+    useMarketplaceProviders(sort, filter);
   const { data: subscriptions } = useMySubscriptions(!!user);
   const subscribeMutation = useSubscribe();
   const unsubscribeMutation = useUnsubscribe();
 
-  // Subscribe sheet state
-  const [sheetProvider, setSheetProvider] = useState<MarketplaceProvider | null>(
-    null,
-  );
+  const [sheetProvider, setSheetProvider] = useState<MarketplaceProvider | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const subscribedIds = new Set(
-    subscriptions
-      ?.filter((s) => s.is_active)
-      .map((s) => s.provider_id) ?? [],
+    subscriptions?.filter((s) => s.is_active).map((s) => s.provider_id) ?? [],
   );
 
   function handleSubscribeClick(provider: MarketplaceProvider) {
@@ -84,72 +64,57 @@ export function MarketplacePage() {
   }
 
   function handleConfirmSubscribe(providerId: string, webhookDestinationId?: string) {
-    subscribeMutation.mutate({ providerId, webhookDestinationId: webhookDestinationId ?? "" }, {
-      onSuccess: () => {
-        toast.success(`Subscribed to ${sheetProvider?.name ?? "provider"}`);
-        setSheetOpen(false);
-        setSheetProvider(null);
+    subscribeMutation.mutate(
+      { providerId, webhookDestinationId: webhookDestinationId ?? "" },
+      {
+        onSuccess: () => {
+          toast.success(`Now following ${sheetProvider?.name ?? "provider"}`);
+          setSheetOpen(false);
+          setSheetProvider(null);
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error ? err.message : "Failed to subscribe");
+        },
       },
-      onError: (err) => {
-        toast.error(
-          err instanceof Error ? err.message : "Failed to subscribe",
-        );
-      },
-    });
+    );
   }
 
   function handleUnsubscribe(providerId: string) {
     unsubscribeMutation.mutate(providerId, {
-      onSuccess: () => {
-        toast.success("Unsubscribed");
-      },
-      onError: (err) => {
-        toast.error(
-          err instanceof Error ? err.message : "Failed to unsubscribe",
-        );
-      },
+      onSuccess: () => toast.success("Unfollowed"),
+      onError: (err) =>
+        toast.error(err instanceof Error ? err.message : "Failed to unsubscribe"),
     });
   }
 
-  const providerCount = providers?.length ?? 0;
-
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-      {/* Header area with subtle atmosphere */}
-      <div className="relative mb-6">
-        {/* Subtle radial gradient for atmosphere */}
-        <div className="absolute -inset-x-4 -top-8 h-32 bg-gradient-to-b from-primary/[0.03] to-transparent rounded-xl pointer-events-none" />
-
-        <div className="relative space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">
-              Signal Marketplace
-            </h1>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={() => refetch()}
-              aria-label="Refresh marketplace"
-            >
-              <RefreshCw
-                className={cn("h-3.5 w-3.5", isFetching && "animate-spin")}
-              />
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight text-foreground">
+            Signal Marketplace
+          </h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
             Verified providers ranked by Sage Intelligence
-            {!isLoading && providerCount > 0 && (
-              <span className="ml-1.5 text-muted-foreground/50">
-                &middot; {providerCount} provider{providerCount !== 1 ? "s" : ""}
-              </span>
+            {providers && providers.length > 0 && (
+              <span className="text-muted-foreground/50"> · {providers.length} providers</span>
             )}
           </p>
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground"
+          onClick={() => refetch()}
+          aria-label="Refresh"
+        >
+          <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+        </Button>
       </div>
 
-      {/* Sort / Filter bar — integrated with tighter spacing */}
-      <div className="mb-5 flex items-center gap-3 border-b border-border/40 pb-3">
+      {/* Filters */}
+      <div className="mb-4 pb-3 border-b border-border/40">
         <MarketplaceFilters
           sort={sort}
           filter={filter}
@@ -158,17 +123,15 @@ export function MarketplacePage() {
         />
       </div>
 
-      {/* Error banner */}
+      {/* Error */}
       {isError && (
-        <div className="mb-5 flex items-center gap-2 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2">
-          <AlertTriangle className="h-3.5 w-3.5 text-rose-500 shrink-0" />
-          <p className="flex-1 text-xs text-rose-600 dark:text-rose-400">
-            Failed to load providers.
-          </p>
+        <div className="mb-4 flex items-center gap-2 rounded-md border border-rose-500/20 bg-rose-500/5 px-3 py-2">
+          <AlertTriangle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+          <p className="flex-1 text-xs text-rose-400">Failed to load providers.</p>
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 text-[11px] text-rose-600 dark:text-rose-400"
+            className="h-6 text-[11px] text-rose-400"
             onClick={() => refetch()}
           >
             Retry
@@ -176,57 +139,51 @@ export function MarketplacePage() {
         </div>
       )}
 
-      {/* Loading skeleton grid */}
+      {/* Loading */}
       {isLoading && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="rounded-lg border border-border/60 bg-card border-l-2 border-l-muted p-4">
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <div className="space-y-1.5 flex-1">
-                    <Skeleton className="h-4 w-3/4" />
-                    <Skeleton className="h-2.5 w-16" />
-                  </div>
-                  <Skeleton className="h-5 w-12 rounded-full" />
+            <div key={i} className="rounded-md border border-border/50 bg-card/80 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Skeleton className="h-8 w-8 rounded-md" />
+                <div className="flex-1">
+                  <Skeleton className="h-3.5 w-3/4 mb-1" />
+                  <Skeleton className="h-2.5 w-16" />
                 </div>
-                <div className="space-y-1 py-1">
-                  <Skeleton className="h-10 w-20" />
-                  <Skeleton className="h-2.5 w-14" />
-                </div>
-                <div className="flex gap-4">
-                  <div className="space-y-1">
-                    <Skeleton className="h-5 w-16" />
-                    <Skeleton className="h-2 w-8" />
+              </div>
+              <div className="grid grid-cols-4 gap-px rounded-md overflow-hidden">
+                {[1, 2, 3, 4].map((n) => (
+                  <div key={n} className="bg-card p-2.5 flex flex-col items-center gap-1">
+                    <Skeleton className="h-2 w-10" />
+                    <Skeleton className="h-5 w-8" />
                   </div>
-                  <div className="space-y-1">
-                    <Skeleton className="h-5 w-14" />
-                    <Skeleton className="h-2 w-12" />
-                  </div>
-                </div>
-                <Skeleton className="h-2.5 w-full" />
-                <Skeleton className="h-8 w-full" />
+                ))}
+              </div>
+              <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/30">
+                <Skeleton className="h-2.5 w-24" />
+                <Skeleton className="h-7 w-16 rounded-md" />
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty */}
       {!isLoading && !isError && providers?.length === 0 && (
         <EmptyState
           icon={Radio}
           title="No providers found"
           description={
             filter !== "all"
-              ? `No ${filter} providers available yet. Try a different filter.`
-              : "No signal providers are listed yet. Check back soon."
+              ? `No ${filter} providers available. Try a different filter.`
+              : "No signal providers listed yet. Check back soon."
           }
         />
       )}
 
-      {/* Provider grid */}
+      {/* Grid */}
       {!isLoading && providers && providers.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {providers.map((provider) => (
             <ProviderCard
               key={provider.id}
@@ -240,12 +197,11 @@ export function MarketplacePage() {
       )}
 
       {/* Disclaimer */}
-      <p className="mt-8 text-center text-[10px] text-muted-foreground/60">
-        Past performance is not indicative of future results. Statistics
-        computed by Sage Intelligence based on historical signal data.
+      <p className="mt-6 text-center text-[10px] text-muted-foreground/40 leading-relaxed">
+        Past performance is not indicative of future results. Statistics computed
+        by Sage Intelligence based on historical signal data.
       </p>
 
-      {/* Subscribe consent sheet */}
       <SubscribeSheet
         provider={sheetProvider}
         open={sheetOpen}

@@ -1,24 +1,17 @@
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { MarketplaceSort, MarketplaceFilter } from "@/types/marketplace";
 
-const SORT_OPTIONS: { value: MarketplaceSort; label: string }[] = [
-  { value: "win_rate", label: "Win Rate" },
-  { value: "pnl", label: "P&L" },
-  { value: "signals", label: "Signals" },
-  { value: "subscribers", label: "Subscribers" },
-];
-
-const FILTER_OPTIONS: { value: MarketplaceFilter; label: string }[] = [
+const FILTERS: { value: MarketplaceFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "forex", label: "Forex" },
   { value: "crypto", label: "Crypto" },
+];
+
+const SORTS: { value: MarketplaceSort; label: string }[] = [
+  { value: "win_rate", label: "Win Rate" },
+  { value: "pnl", label: "P&L" },
+  { value: "signals", label: "Signals" },
+  { value: "subscribers", label: "Followers" },
 ];
 
 interface MarketplaceFiltersProps {
@@ -35,43 +28,45 @@ export function MarketplaceFilters({
   onFilterChange,
 }: MarketplaceFiltersProps) {
   return (
-    <div className="flex items-center gap-4">
-      {/* Filter pills — refined with left-border accent pattern */}
-      <div className="flex items-center gap-0.5">
-        {FILTER_OPTIONS.map((opt) => (
+    <div className="flex items-center gap-4 flex-wrap">
+      {/* Asset filter — segmented control */}
+      <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
+        {FILTERS.map((f) => (
           <button
-            key={opt.value}
-            onClick={() => onFilterChange(opt.value)}
+            key={f.value}
+            type="button"
+            onClick={() => onFilterChange(f.value)}
             className={cn(
-              "relative rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-              filter === opt.value
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+              "px-3 py-1 text-[11px] font-medium rounded-[5px] transition-colors",
+              filter === f.value
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {filter === opt.value && (
-              <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-r-full bg-primary" />
-            )}
-            {opt.label}
+            {f.label}
           </button>
         ))}
       </div>
 
-      <span className="h-4 w-px bg-border/60" />
-
-      {/* Sort dropdown — compact */}
-      <Select value={sort} onValueChange={(v) => onSortChange(v as MarketplaceSort)}>
-        <SelectTrigger className="h-7 w-[120px] text-[11px] border-border/60">
-          <SelectValue placeholder="Sort by" />
-        </SelectTrigger>
-        <SelectContent>
-          {SORT_OPTIONS.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value} className="text-xs">
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {/* Sort — inline text tabs */}
+      <div className="flex items-center gap-1 text-[11px]">
+        <span className="text-muted-foreground/50 mr-1">Sort:</span>
+        {SORTS.map((s) => (
+          <button
+            key={s.value}
+            type="button"
+            onClick={() => onSortChange(s.value)}
+            className={cn(
+              "px-2 py-0.5 rounded transition-colors",
+              sort === s.value
+                ? "text-foreground font-medium"
+                : "text-muted-foreground/60 hover:text-muted-foreground",
+            )}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
