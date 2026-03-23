@@ -96,17 +96,17 @@ export function MarketplacePage() {
           <h1 className="text-base font-semibold tracking-tight">
             Signal Marketplace
           </h1>
-          <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+          <p className="text-[11px] text-muted-foreground mt-0.5">
             Verified providers ranked by Sage Intelligence
             {providers && providers.length > 0 && (
-              <span className="text-muted-foreground/40"> · {providers.length} listed</span>
+              <span className="text-muted-foreground"> · {providers.length} listed</span>
             )}
           </p>
         </div>
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 text-muted-foreground/50 hover:text-muted-foreground"
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
           onClick={() => refetch()}
           aria-label="Refresh"
         >
@@ -211,7 +211,7 @@ export function MarketplacePage() {
       )}
 
       {/* Disclaimer */}
-      <p className="mt-6 text-center text-[10px] text-muted-foreground/30 leading-relaxed">
+      <p className="mt-6 text-center text-[10px] text-muted-foreground leading-relaxed">
         Past performance is not indicative of future results. Statistics computed
         by Sage Intelligence based on historical signal data.
       </p>

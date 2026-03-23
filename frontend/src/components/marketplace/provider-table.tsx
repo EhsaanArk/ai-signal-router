@@ -72,7 +72,7 @@ export function ProviderTable({
                     <span className="text-sm font-medium truncate max-w-[180px]">
                       {p.name}
                     </span>
-                    <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary/50" />
+                    <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
                   </div>
                 </TableCell>
 
@@ -87,9 +87,9 @@ export function ProviderTable({
                 <TableCell className="py-2.5 text-right">
                   <span className={cn(
                     "text-sm font-medium tabular-nums",
-                    !hasData ? "text-muted-foreground/40" :
-                    wr! >= 60 ? "text-emerald-400/90" :
-                    wr! >= 45 ? "text-foreground" : "text-rose-400/90",
+                    !hasData ? "text-muted-foreground" :
+                    wr! >= 60 ? "text-emerald-400" :
+                    wr! >= 45 ? "text-foreground" : "text-rose-400",
                   )}>
                     {hasData ? `${wr!.toFixed(1)}%` : "—"}
                   </span>
@@ -99,8 +99,8 @@ export function ProviderTable({
                 <TableCell className="py-2.5 text-right">
                   <span className={cn(
                     "text-sm font-medium tabular-nums",
-                    p.total_pnl_pips === null ? "text-muted-foreground/40" :
-                    p.total_pnl_pips >= 0 ? "text-emerald-400/90" : "text-rose-400/90",
+                    p.total_pnl_pips === null ? "text-muted-foreground" :
+                    p.total_pnl_pips >= 0 ? "text-emerald-400" : "text-rose-400",
                   )}>
                     {fmtPips(p.total_pnl_pips, true)}
                   </span>
@@ -110,7 +110,7 @@ export function ProviderTable({
                 <TableCell className="py-2.5 text-right">
                   <span className={cn(
                     "text-sm tabular-nums",
-                    p.max_drawdown_pips === null ? "text-muted-foreground/40" : "text-rose-400/70",
+                    p.max_drawdown_pips === null ? "text-muted-foreground" : "text-rose-400",
                   )}>
                     {p.max_drawdown_pips !== null ? `-${Math.round(Math.abs(p.max_drawdown_pips))}p` : "—"}
                   </span>
@@ -118,21 +118,21 @@ export function ProviderTable({
 
                 {/* Signals */}
                 <TableCell className="py-2.5 text-right">
-                  <span className="text-sm tabular-nums text-foreground/80">
+                  <span className="text-sm tabular-nums text-foreground">
                     {p.signal_count}
                   </span>
                 </TableCell>
 
                 {/* Followers */}
                 <TableCell className="py-2.5 text-right">
-                  <span className="text-sm tabular-nums text-foreground/60">
+                  <span className="text-sm tabular-nums text-muted-foreground">
                     {p.subscriber_count}
                   </span>
                 </TableCell>
 
                 {/* Track Record */}
                 <TableCell className="py-2.5 text-right">
-                  <span className="text-xs tabular-nums text-muted-foreground/60">
+                  <span className="text-xs tabular-nums text-muted-foreground">
                     {p.track_record_days}d
                   </span>
                 </TableCell>
@@ -143,7 +143,7 @@ export function ProviderTable({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 px-2 text-[10px] text-emerald-500/80 hover:text-rose-400 hover:bg-rose-500/5"
+                      className="h-6 px-2 text-[10px] text-emerald-500 hover:text-rose-400 hover:bg-rose-500/5"
                       onClick={() => onUnsubscribe(p.id)}
                     >
                       Following
@@ -152,7 +152,7 @@ export function ProviderTable({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 px-2 text-[10px] text-primary/70 hover:text-primary hover:bg-primary/5"
+                      className="h-6 px-2 text-[10px] text-primary hover:text-primary hover:bg-primary/5"
                       onClick={() => onSubscribe(p)}
                     >
                       Follow

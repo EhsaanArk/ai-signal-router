@@ -46,9 +46,9 @@ export function ProviderCard({
       <div className="flex items-center justify-between gap-2 mb-2.5">
         <div className="flex items-center gap-1.5 min-w-0">
           <h3 className="text-sm font-medium truncate">{provider.name}</h3>
-          <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary/60" />
+          <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
         </div>
-        <span className="shrink-0 text-[10px] text-muted-foreground/70">
+        <span className="shrink-0 text-[10px] text-muted-foreground">
           {ASSET_SHORT[provider.asset_class] ?? provider.asset_class}
         </span>
       </div>
@@ -58,49 +58,49 @@ export function ProviderCard({
         <div>
           <span className={cn(
             "text-sm font-semibold tabular-nums",
-            !hasData ? "text-muted-foreground/40" :
-            wr! >= 60 ? "text-emerald-400/90" :
-            wr! >= 45 ? "text-foreground" : "text-rose-400/90",
+            !hasData ? "text-muted-foreground" :
+            wr! >= 60 ? "text-emerald-400" :
+            wr! >= 45 ? "text-foreground" : "text-rose-400",
           )}>
             {hasData ? `${Math.round(wr!)}%` : "—"}
           </span>
-          <span className="ml-1 text-[10px] text-muted-foreground/50">win</span>
+          <span className="ml-1 text-[10px] text-muted-foreground">win</span>
         </div>
         <div>
           <span className={cn(
             "text-sm font-semibold tabular-nums",
-            pnl === null ? "text-muted-foreground/40" :
-            pnl >= 0 ? "text-emerald-400/90" : "text-rose-400/90",
+            pnl === null ? "text-muted-foreground" :
+            pnl >= 0 ? "text-emerald-400" : "text-rose-400",
           )}>
             {fmtPips(pnl, true)}
           </span>
-          <span className="ml-0.5 text-[10px] text-muted-foreground/50">p</span>
+          <span className="ml-0.5 text-[10px] text-muted-foreground">p</span>
         </div>
         <div>
           <span className={cn(
             "text-sm font-semibold tabular-nums",
-            dd === null ? "text-muted-foreground/40" : "text-rose-400/70",
+            dd === null ? "text-muted-foreground" : "text-rose-400",
           )}>
             {dd !== null ? `-${Math.round(Math.abs(dd))}` : "—"}
           </span>
-          <span className="ml-0.5 text-[10px] text-muted-foreground/50">dd</span>
+          <span className="ml-0.5 text-[10px] text-muted-foreground">dd</span>
         </div>
         <div>
-          <span className="text-sm tabular-nums text-foreground/70">{provider.signal_count}</span>
-          <span className="ml-0.5 text-[10px] text-muted-foreground/50">sig</span>
+          <span className="text-sm tabular-nums text-foreground">{provider.signal_count}</span>
+          <span className="ml-0.5 text-[10px] text-muted-foreground">sig</span>
         </div>
       </div>
 
       {/* Row 3: Meta + Action */}
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+        <span className="text-[10px] text-muted-foreground tabular-nums">
           {provider.subscriber_count} followers · {provider.track_record_days}d tracked
         </span>
         {isSubscribed ? (
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 px-2 text-[10px] text-emerald-500/80 hover:text-rose-400 hover:bg-rose-500/5"
+            className="h-6 px-2 text-[10px] text-emerald-500 hover:text-rose-400 hover:bg-rose-500/5"
             onClick={() => onUnsubscribe(provider.id)}
           >
             Following
@@ -109,7 +109,7 @@ export function ProviderCard({
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 px-2 text-[10px] text-primary/70 hover:text-primary hover:bg-primary/5"
+            className="h-6 px-2 text-[10px] text-primary hover:text-primary hover:bg-primary/5"
             onClick={() => onSubscribe(provider)}
           >
             Follow
