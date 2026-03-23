@@ -302,11 +302,7 @@ function ProviderTable() {
     }
   }
 
-  const statusColor: Record<string, string> = {
-    active: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
-    inactive: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
-    pending: "bg-amber-500/10 text-amber-500 border-amber-500/20",
-  };
+
 
   if (isLoading) {
     return (
@@ -388,10 +384,12 @@ function ProviderTable() {
                     variant="outline"
                     className={cn(
                       "text-[10px] capitalize",
-                      statusColor[provider.status] || ""
+                      provider.is_active
+                        ? "bg-emerald-500/10 text-emerald-600"
+                        : "bg-zinc-500/10 text-zinc-500"
                     )}
                   >
-                    {provider.status}
+                    {provider.is_active ? "Active" : "Inactive"}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-xs text-center font-tabular">

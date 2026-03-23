@@ -90,8 +90,8 @@ export function MarketplacePage() {
     setSheetOpen(true);
   }
 
-  function handleConfirmSubscribe(providerId: string) {
-    subscribeMutation.mutate(providerId, {
+  function handleConfirmSubscribe(providerId: string, webhookDestinationId?: string) {
+    subscribeMutation.mutate({ providerId, webhookDestinationId: webhookDestinationId ?? "" }, {
       onSuccess: () => {
         toast.success(`Subscribed to ${sheetProvider?.name ?? "provider"}`);
         setSheetOpen(false);
