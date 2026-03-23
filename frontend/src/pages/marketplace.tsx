@@ -4,7 +4,6 @@ import { AlertTriangle, Radio, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ProviderCard } from "@/components/marketplace/provider-card";
 import { SubscribeSheet } from "@/components/marketplace/subscribe-sheet";
@@ -112,33 +111,45 @@ export function MarketplacePage() {
     });
   }
 
+  const providerCount = providers?.length ?? 0;
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-      {/* Header */}
-      <div className="mb-6 space-y-1">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">
-            Signal Marketplace
-          </h1>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => refetch()}
-            aria-label="Refresh marketplace"
-          >
-            <RefreshCw
-              className={cn("h-3.5 w-3.5", isFetching && "animate-spin")}
-            />
-          </Button>
+      {/* Header area with subtle atmosphere */}
+      <div className="relative mb-6">
+        {/* Subtle radial gradient for atmosphere */}
+        <div className="absolute -inset-x-4 -top-8 h-32 bg-gradient-to-b from-primary/[0.03] to-transparent rounded-xl pointer-events-none" />
+
+        <div className="relative space-y-1">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight">
+              Signal Marketplace
+            </h1>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => refetch()}
+              aria-label="Refresh marketplace"
+            >
+              <RefreshCw
+                className={cn("h-3.5 w-3.5", isFetching && "animate-spin")}
+              />
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Verified providers ranked by Sage Intelligence
+            {!isLoading && providerCount > 0 && (
+              <span className="ml-1.5 text-muted-foreground/50">
+                &middot; {providerCount} provider{providerCount !== 1 ? "s" : ""}
+              </span>
+            )}
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Verified providers ranked by Sage Intelligence
-        </p>
       </div>
 
-      {/* Sort / Filter bar */}
-      <div className="mb-5">
+      {/* Sort / Filter bar — integrated with tighter spacing */}
+      <div className="mb-5 flex items-center gap-3 border-b border-border/40 pb-3">
         <MarketplaceFilters
           sort={sort}
           filter={filter}
@@ -169,34 +180,33 @@ export function MarketplacePage() {
       {isLoading && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
-            <Card key={i} className="p-5">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-3 w-1/2" />
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1 text-center">
-                    <Skeleton className="h-8 w-full" />
-                    <Skeleton className="mx-auto h-2 w-8" />
-                  </div>
-                  <div className="space-y-1 text-center">
-                    <Skeleton className="h-8 w-full" />
-                    <Skeleton className="mx-auto h-2 w-8" />
-                  </div>
-                  <div className="space-y-1 text-center">
-                    <Skeleton className="h-8 w-full" />
-                    <Skeleton className="mx-auto h-2 w-8" />
-                  </div>
-                </div>
-                <Skeleton className="h-1.5 w-full rounded-full" />
+            <div key={i} className="rounded-lg border border-border/60 bg-card border-l-2 border-l-muted p-4">
+              <div className="space-y-3">
                 <div className="flex justify-between">
-                  <Skeleton className="h-3 w-20" />
-                  <Skeleton className="h-3 w-24" />
+                  <div className="space-y-1.5 flex-1">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-2.5 w-16" />
+                  </div>
+                  <Skeleton className="h-5 w-12 rounded-full" />
                 </div>
+                <div className="space-y-1 py-1">
+                  <Skeleton className="h-10 w-20" />
+                  <Skeleton className="h-2.5 w-14" />
+                </div>
+                <div className="flex gap-4">
+                  <div className="space-y-1">
+                    <Skeleton className="h-5 w-16" />
+                    <Skeleton className="h-2 w-8" />
+                  </div>
+                  <div className="space-y-1">
+                    <Skeleton className="h-5 w-14" />
+                    <Skeleton className="h-2 w-12" />
+                  </div>
+                </div>
+                <Skeleton className="h-2.5 w-full" />
                 <Skeleton className="h-8 w-full" />
               </div>
-            </Card>
+            </div>
           ))}
         </div>
       )}

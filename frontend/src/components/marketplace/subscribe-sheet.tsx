@@ -37,8 +37,9 @@ export function SubscribeSheet({
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent side="bottom" className="rounded-t-xl max-h-[80vh] sm:max-w-lg sm:mx-auto">
         <SheetHeader>
-          <SheetTitle className="text-base">
-            Subscribe to {provider?.name ?? "Provider"}
+          <SheetTitle className="text-lg font-bold">
+            Subscribe to{" "}
+            <span className="text-primary">{provider?.name ?? "Provider"}</span>
           </SheetTitle>
           <SheetDescription>
             Please review and accept before subscribing.
