@@ -83,6 +83,10 @@ def create_app() -> FastAPI:
     * **LOCAL_MODE=false** — production mode; only public + workflow routers are
       mounted.  Database migrations are expected to be handled by Alembic.
     """
+    from src.core.logging_config import configure_logging
+
+    configure_logging()
+
     local_mode = os.environ.get("LOCAL_MODE", "true").lower() in ("true", "1", "yes")
 
     @asynccontextmanager
