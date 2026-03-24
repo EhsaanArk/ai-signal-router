@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import inspect
 import logging
+import os
 from typing import Annotated
 
 import sentry_sdk
@@ -19,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.adapters.db.models import ParserConfigModel, RoutingRuleModel, SignalLogModel
+from src.adapters.db.models import MarketplaceProviderModel, ParserConfigModel, RoutingRuleModel, SignalLogModel
 from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
@@ -269,6 +270,7 @@ async def process_signal(
                     raw_message=raw_signal.raw_message,
                     status="failed",
                     error_message=f"Parse error: {exc}",
+                    source_type="telegram",
                 )
             )
             raise HTTPException(
@@ -295,6 +297,7 @@ async def process_signal(
                 parsed_data=parsed.model_dump(),
                 status="ignored",
                 error_message=parsed.ignore_reason,
+                source_type="telegram",
             )
         )
         return [
@@ -346,6 +349,7 @@ async def process_signal(
             routing_rule_id=rule.id,
             raw_message=raw_signal.raw_message,
             parsed_data=parsed.model_dump(),
+            source_type="telegram",
         )
 
         # Pre-dispatch filtering: keyword blacklist check
@@ -476,6 +480,7 @@ async def process_signal(
                 parsed_data=parsed.model_dump(),
                 status="failed",
                 error_message=str(outcome),
+                source_type="telegram",
             ))
         else:
             dispatch_result, log_kwargs = outcome
@@ -488,6 +493,45 @@ async def process_signal(
         await cache.delete(f"log_stats:{raw_signal.user_id}")
     except Exception:
         logger.debug("Failed to invalidate log stats cache")
+
+    # ------------------------------------------------------------------
+    # Step 5b — Marketplace fan-out (dispatch to marketplace subscribers)
+    # ------------------------------------------------------------------
+    if os.getenv("MARKETPLACE_ENABLED", "false").lower() in ("true", "1", "yes"):
+        try:
+            # Check if this channel has an active marketplace provider listing
+            mp_result = await db.execute(
+                select(MarketplaceProviderModel.id).where(
+                    MarketplaceProviderModel.telegram_channel_id == raw_signal.channel_id,
+                    MarketplaceProviderModel.is_active.is_(True),
+                ).limit(1)
+            )
+            is_marketplace_channel = mp_result.scalar_one_or_none() is not None
+
+            if is_marketplace_channel:
+                from src.core.marketplace import marketplace_fanout
+
+                fanout_results = await marketplace_fanout(
+                    parsed_signal=parsed,
+                    channel_id=raw_signal.channel_id,
+                    raw_message=raw_signal.raw_message,
+                    message_id=raw_signal.message_id,
+                    reply_to_msg_id=raw_signal.reply_to_msg_id,
+                    dispatcher=dispatcher,
+                    db_session=db,
+                )
+                logger.info(
+                    "Marketplace fan-out for channel %s: %d dispatches",
+                    raw_signal.channel_id,
+                    len(fanout_results),
+                )
+        except Exception as exc:
+            logger.error(
+                "Marketplace fan-out failed for channel %s: %s",
+                raw_signal.channel_id,
+                exc,
+            )
+            sentry_sdk.capture_exception(exc)
 
     # ------------------------------------------------------------------
     # Step 6 — Send notification if configured
