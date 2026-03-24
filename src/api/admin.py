@@ -13,6 +13,7 @@ from sqlalchemy import case, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
+    ConnectionEventModel,
     GlobalSettingModel,
     ParserConfigModel,
     RoutingRuleModel,
@@ -1500,4 +1501,64 @@ async def update_global_settings(
             updated_at=r.updated_at.isoformat() if r.updated_at else None,
         )
         for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Connection Events (disconnect history)
+# ---------------------------------------------------------------------------
+
+
+class ConnectionEventResponse(BaseModel):
+    id: int
+    user_id: UUID
+    user_email: str | None = None
+    event_type: str
+    reason: str | None
+    failure_count: int | None
+    meta: dict | None
+    created_at: str
+
+
+@admin_router.get("/connection-events", response_model=list[ConnectionEventResponse])
+async def get_connection_events(
+    request: Request,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: UUID | None = Query(None, description="Filter by user ID"),
+    event_type: str | None = Query(None, description="Filter by event type"),
+    hours: int = Query(24, ge=1, le=720, description="Look-back window in hours"),
+    limit: int = Query(100, ge=1, le=1000),
+) -> list[ConnectionEventResponse]:
+    """Query historical connection events for diagnosing disconnect patterns."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    stmt = (
+        select(ConnectionEventModel, UserModel.email)
+        .outerjoin(UserModel, ConnectionEventModel.user_id == UserModel.id)
+        .where(ConnectionEventModel.created_at >= cutoff)
+        .order_by(ConnectionEventModel.created_at.desc())
+        .limit(limit)
+    )
+
+    if user_id is not None:
+        stmt = stmt.where(ConnectionEventModel.user_id == user_id)
+    if event_type is not None:
+        stmt = stmt.where(ConnectionEventModel.event_type == event_type)
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    return [
+        ConnectionEventResponse(
+            id=ev.id,
+            user_id=ev.user_id,
+            user_email=email,
+            event_type=ev.event_type,
+            reason=ev.reason,
+            failure_count=ev.failure_count,
+            meta=ev.meta,
+            created_at=ev.created_at.isoformat(),
+        )
+        for ev, email in rows
     ]

@@ -564,3 +564,29 @@ class MarketplaceConsentLogModel(Base):
     # Relationships
     user: Mapped[UserModel] = relationship()
     provider: Mapped[MarketplaceProviderModel] = relationship()
+
+
+class ConnectionEventModel(Base):
+    """Historical log of Telegram connection lifecycle events."""
+
+    __tablename__ = "connection_events"
+    __table_args__ = (
+        Index("idx_connection_events_user_time", "user_id", "created_at"),
+        Index("idx_connection_events_type_time", "event_type", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    failure_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+    )
+
+    user: Mapped[UserModel] = relationship()

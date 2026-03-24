@@ -19,7 +19,7 @@ from uuid import UUID
 
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncEngine
-from telethon.errors import AuthKeyError, FloodWaitError
+from telethon.errors import AuthKeyDuplicatedError, AuthKeyError, FloodWaitError
 
 from src.adapters.telegram.backfill import backfill_missed_signals
 from src.adapters.telegram.listener import TelegramListener
@@ -38,9 +38,15 @@ def _is_session_dead(exc: Exception) -> bool:
 
     Covers:
     - RuntimeError("not authorised") — Telethon auth check failure
-    - AuthKeyDuplicatedError — two connections used the same session
-    - AuthKeyError (parent) — any auth key corruption/revocation
+    - AuthKeyError (parent) — auth key corruption/revocation
+
+    Does NOT cover AuthKeyDuplicatedError — that is a transient conflict
+    caused by two connections momentarily sharing the same auth key
+    (e.g. during Telethon auto-reconnect).  It is retried, not deactivated.
     """
+    # AuthKeyDuplicatedError is transient — do NOT treat as dead
+    if isinstance(exc, AuthKeyDuplicatedError):
+        return False
     if isinstance(exc, AuthKeyError):
         return True
     if isinstance(exc, RuntimeError) and "not authorised" in str(exc).lower():
@@ -62,6 +68,9 @@ MAX_CONCURRENT_HEARTBEAT = 10
 
 # Proactive auth check: verify sessions every Nth heartbeat (~5 min at 30s).
 AUTH_CHECK_INTERVAL = 10
+
+# Max times to retry AuthKeyDuplicatedError before treating it as permanent.
+MAX_AUTH_DUP_RETRIES = 3
 
 # Startup backoff: after this many consecutive failures, start backing off.
 MAX_STARTUP_RETRIES = 3
@@ -113,6 +122,7 @@ class MultiUserListenerManager:
         self._monitored_channels: dict[UUID, set[str]] = {}
         self._failure_counts: dict[UUID, int] = {}
         self._startup_failures: dict[UUID, int] = {}
+        self._auth_dup_retries: dict[UUID, int] = {}
         self._heartbeat_count: int = 0
         self._refresh_task: asyncio.Task | None = None
         self._running = False
@@ -175,6 +185,7 @@ class MultiUserListenerManager:
             self._monitored_channels.clear()
             self._failure_counts.clear()
             self._startup_failures.clear()
+            self._auth_dup_retries.clear()
 
         logger.info("Multi-user listener manager stopped.")
 
@@ -279,10 +290,21 @@ class MultiUserListenerManager:
         self._monitored_channels[user_id] = channels
         self._failure_counts[user_id] = 0
         self._startup_failures.pop(user_id, None)  # Reset on success
+        self._auth_dup_retries.pop(user_id, None)  # Reset on success
 
         logger.info(
             "Listener started for user %s — monitoring %d channel(s)",
             user_id, len(channels),
+        )
+
+        # Log connection event
+        asyncio.create_task(
+            self._repo.log_connection_event(
+                user_id, "connected",
+                reason="startup",
+                meta={"channels": len(channels)},
+            ),
+            name=f"log-connected-{user_id}",
         )
 
         # Backfill any signals missed during downtime (best-effort)
@@ -368,6 +390,60 @@ class MultiUserListenerManager:
             self._notify_disconnect(user_id, reason),
             name=f"notify-disconnect-{user_id}",
         )
+        asyncio.create_task(
+            self._repo.log_connection_event(
+                user_id, "deactivated",
+                reason=reason,
+                failure_count=self._failure_counts.get(user_id),
+            ),
+            name=f"log-deactivated-{user_id}",
+        )
+
+    async def _handle_auth_key_duplicated(
+        self, user_id: UUID, listener: TelegramListener, context: str,
+    ) -> None:
+        """Handle transient AuthKeyDuplicatedError with retry + escalation.
+
+        Disconnects cleanly, waits for the old connection to expire on
+        Telegram's side, then does a full restart from DB.  After
+        ``MAX_AUTH_DUP_RETRIES`` consecutive failures the session is
+        treated as truly broken and deactivated.
+        """
+        dup_count = self._auth_dup_retries.get(user_id, 0) + 1
+        self._auth_dup_retries[user_id] = dup_count
+
+        if dup_count > MAX_AUTH_DUP_RETRIES:
+            logger.warning(
+                "User %s: AuthKeyDuplicatedError persists after %d retries "
+                "(%s) — session is truly broken, deactivating",
+                user_id, dup_count, context,
+            )
+            await self._deactivate_and_notify(
+                user_id, "auth_key_duplicated_permanent",
+            )
+            await self._stop_listener_for_user(user_id)
+            self._auth_dup_retries.pop(user_id, None)
+        else:
+            logger.warning(
+                "User %s: AuthKeyDuplicatedError (transient, retry %d/%d, %s) — "
+                "clean disconnect + restart in 3s",
+                user_id, dup_count, MAX_AUTH_DUP_RETRIES, context,
+            )
+            asyncio.create_task(
+                self._repo.log_connection_event(
+                    user_id, "disconnected",
+                    reason=f"auth_key_duplicated_{context}",
+                    failure_count=self._failure_counts.get(user_id),
+                    meta={"action": "clean_restart", "dup_retry": dup_count},
+                ),
+                name=f"log-authdup-{user_id}",
+            )
+            try:
+                await listener._client.disconnect()
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+            await self._restart_listener_for_user(user_id)
 
     # ------------------------------------------------------------------
     # Internal: refresh loop (sessions, channels, heartbeat)
@@ -491,6 +567,12 @@ class MultiUserListenerManager:
                                 await self._deactivate_and_notify(user_id)
                                 await self._stop_listener_for_user(user_id)
                                 return False
+                        except AuthKeyDuplicatedError as exc:
+                            await self._handle_auth_key_duplicated(
+                                user_id, listener, "auth_check",
+                            )
+                            _capture_user_exception(exc, user_id)
+                            return False
                         except AuthKeyError as exc:
                             logger.warning(
                                 "User %s: auth key invalid during proactive check (%s) — deactivating",
@@ -519,6 +601,14 @@ class MultiUserListenerManager:
                         "User %s: %d consecutive failures — full restart",
                         user_id, failures,
                     )
+                    asyncio.create_task(
+                        self._repo.log_connection_event(
+                            user_id, "disconnected",
+                            reason="max_failures_restart",
+                            failure_count=failures,
+                        ),
+                        name=f"log-disconnect-restart-{user_id}",
+                    )
                     await self._restart_listener_for_user(user_id)
                     return False
 
@@ -526,6 +616,16 @@ class MultiUserListenerManager:
                     "User %s: client disconnected (failure %d/%d), attempting reconnect",
                     user_id, failures, MAX_CONSECUTIVE_FAILURES,
                 )
+                # Log on first detection only to avoid spamming the table
+                if failures == 1:
+                    asyncio.create_task(
+                        self._repo.log_connection_event(
+                            user_id, "disconnected",
+                            reason="heartbeat_detected",
+                            failure_count=failures,
+                        ),
+                        name=f"log-disconnect-{user_id}",
+                    )
                 try:
                     await listener._client.connect()
                     # Re-prime entity cache for monitored channels only
@@ -536,6 +636,14 @@ class MultiUserListenerManager:
                             pass
                     self._failure_counts[user_id] = 0
                     logger.info("Reconnected user %s successfully", user_id)
+                    asyncio.create_task(
+                        self._repo.log_connection_event(
+                            user_id, "reconnected",
+                            reason="heartbeat_reconnect",
+                            failure_count=failures,
+                        ),
+                        name=f"log-reconnected-{user_id}",
+                    )
 
                     # Backfill signals missed during disconnection
                     user_channels = self._monitored_channels.get(user_id, set())
@@ -548,6 +656,11 @@ class MultiUserListenerManager:
                             name=f"backfill-reconnect-{user_id}",
                         )
                     return True
+                except AuthKeyDuplicatedError as exc:
+                    await self._handle_auth_key_duplicated(
+                        user_id, listener, "reconnect",
+                    )
+                    _capture_user_exception(exc, user_id)
                 except FloodWaitError as e:
                     logger.warning(
                         "User %s: flood-wait %ds during heartbeat reconnect",

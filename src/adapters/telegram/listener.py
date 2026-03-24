@@ -473,13 +473,25 @@ if __name__ == "__main__":
                         manager._monitored_channels,
                     )
 
+                # Log deploy_restart events for all connected users (awaited)
+                restart_tasks = [
+                    manager._repo.log_connection_event(
+                        uid, "deploy_restart",
+                        reason="sigterm_graceful_shutdown",
+                        meta={"listeners": len(manager._listeners)},
+                    )
+                    for uid in list(manager._listeners.keys())
+                ]
+                if restart_tasks:
+                    await asyncio.gather(*restart_tasks, return_exceptions=True)
+
                 logger.info("Shutting down — disconnecting all Telegram clients...")
                 try:
-                    # Give manager 23s to disconnect all clients.  Railway
+                    # Give manager 22s to disconnect all clients.  Railway
                     # sends SIGKILL after gracefulShutdownTimeoutSeconds (30s
-                    # in railway.toml).  The snapshot write + 2s buffer
-                    # accounts for the remaining time.
-                    await asyncio.wait_for(manager.stop(), timeout=23.0)
+                    # in railway.toml).  The snapshot write + event logging
+                    # + 2s buffer accounts for the remaining time.
+                    await asyncio.wait_for(manager.stop(), timeout=22.0)
                     logger.info("All clients disconnected. Exiting cleanly.")
                 except asyncio.TimeoutError:
                     logger.warning(
