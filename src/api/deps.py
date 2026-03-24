@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_LINK_SECRET: str = ""
     TRUSTED_PROXY_IPS: str = ""
 
+    # Two-stage dispatch pipeline (marketplace scale)
+    TWO_STAGE_DISPATCH: bool = False
+    BACKEND_URL: str = "http://localhost:8000"
+
     # Supabase settings
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
