@@ -23,6 +23,7 @@ and user IDs (UUIDs are not PII).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -165,6 +166,48 @@ def compare_snapshots(pre: dict, post: dict) -> dict:
         "new_user_ids": list(new_users),
         "pre_deploy_timestamp": pre.get("timestamp"),
     }
+
+
+async def wait_for_previous_shutdown(cache, guard_seconds: float = 5.0) -> None:
+    """Wait until the previous container's shutdown is safely past.
+
+    Reads the pre-deploy snapshot timestamp and sleeps until at least
+    ``guard_seconds`` have elapsed since that shutdown.  This prevents
+    the new container from connecting while the old one still has active
+    Telegram sessions, which would cause AuthKeyDuplicatedError.
+
+    If no snapshot exists (first deploy, or snapshot expired), returns
+    immediately — there is no overlap risk.
+    """
+    pre = await read_pre_deploy_snapshot(cache)
+    if pre is None:
+        return
+
+    shutdown_ts = pre.get("timestamp")
+    if not shutdown_ts:
+        return
+
+    try:
+        shutdown_time = datetime.fromisoformat(shutdown_ts)
+        elapsed = (datetime.now(timezone.utc) - shutdown_time).total_seconds()
+        remaining = guard_seconds - elapsed
+
+        if remaining > 0:
+            logger.info(
+                "Previous container shut down %.1fs ago — waiting %.1fs "
+                "for auth keys to fully release on Telegram's side",
+                elapsed, remaining,
+            )
+            await asyncio.sleep(remaining)
+            logger.info("Startup guard complete — safe to connect")
+        else:
+            logger.info(
+                "Previous container shut down %.1fs ago (>%.0fs guard) "
+                "— safe to connect immediately",
+                elapsed, guard_seconds,
+            )
+    except (ValueError, TypeError) as exc:
+        logger.debug("Could not parse snapshot timestamp: %s", exc)
 
 
 async def run_post_startup_check(

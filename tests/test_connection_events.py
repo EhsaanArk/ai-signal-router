@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -217,3 +219,93 @@ class TestLogConnectionEvent:
             await repo.log_connection_event(
                 user_id, "connected", reason="startup",
             )
+
+
+# ---------------------------------------------------------------------------
+# Startup guard — post-deploy delay
+# ---------------------------------------------------------------------------
+
+
+class TestStartupGuard:
+    """Test the deploy startup guard that prevents auth key overlap."""
+
+    @pytest.mark.asyncio
+    async def test_waits_when_recent_shutdown(self):
+        """Should sleep when previous container shut down recently."""
+        from src.adapters.telegram.deploy_snapshot import wait_for_previous_shutdown
+
+        recent_ts = datetime.now(timezone.utc).isoformat()
+        mock_cache = AsyncMock()
+        mock_cache.get = AsyncMock(return_value=json.dumps({
+            "timestamp": recent_ts,
+            "active_sessions": 3,
+        }))
+
+        with patch("src.adapters.telegram.deploy_snapshot.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            await wait_for_previous_shutdown(mock_cache, guard_seconds=5.0)
+
+        # Should have slept (shutdown was just now, need ~5s guard)
+        mock_sleep.assert_awaited_once()
+        slept = mock_sleep.call_args[0][0]
+        assert 4.0 < slept <= 5.0  # ~5s minus tiny elapsed time
+
+    @pytest.mark.asyncio
+    async def test_skips_when_old_shutdown(self):
+        """Should not sleep when previous container shut down long ago."""
+        from src.adapters.telegram.deploy_snapshot import wait_for_previous_shutdown
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
+        mock_cache = AsyncMock()
+        mock_cache.get = AsyncMock(return_value=json.dumps({
+            "timestamp": old_ts,
+            "active_sessions": 3,
+        }))
+
+        with patch("src.adapters.telegram.deploy_snapshot.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            await wait_for_previous_shutdown(mock_cache, guard_seconds=5.0)
+
+        mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_snapshot(self):
+        """Should return immediately when no snapshot exists."""
+        from src.adapters.telegram.deploy_snapshot import wait_for_previous_shutdown
+
+        mock_cache = AsyncMock()
+        mock_cache.get = AsyncMock(return_value=None)
+
+        with patch("src.adapters.telegram.deploy_snapshot.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            await wait_for_previous_shutdown(mock_cache, guard_seconds=5.0)
+
+        mock_sleep.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Client configuration constants
+# ---------------------------------------------------------------------------
+
+
+class TestClientConstants:
+    """Verify hardened client configuration values."""
+
+    def test_connection_retries_increased(self):
+        from src.adapters.telegram.listener import CLIENT_CONNECTION_RETRIES
+        assert CLIENT_CONNECTION_RETRIES >= 10
+
+    def test_retry_delay_increased(self):
+        from src.adapters.telegram.listener import CLIENT_RETRY_DELAY
+        assert CLIENT_RETRY_DELAY >= 2
+
+    def test_timeout_increased(self):
+        from src.adapters.telegram.listener import CLIENT_TIMEOUT
+        assert CLIENT_TIMEOUT >= 15
+
+    def test_flood_threshold_increased(self):
+        from src.adapters.telegram.listener import CLIENT_FLOOD_SLEEP_THRESHOLD
+        assert CLIENT_FLOOD_SLEEP_THRESHOLD >= 120
+
+    def test_device_fingerprint_set(self):
+        from src.adapters.telegram.listener import DEVICE_MODEL, SYSTEM_VERSION, APP_VERSION
+        assert DEVICE_MODEL == "Sage Radar Server"
+        assert SYSTEM_VERSION  # not empty
+        assert APP_VERSION  # not empty
