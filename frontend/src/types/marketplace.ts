@@ -3,7 +3,6 @@ export interface MarketplaceProvider {
   name: string;
   description: string | null;
   asset_class: "forex" | "crypto" | "both";
-  is_verified: boolean;
   is_active: boolean;
   win_rate: number | null;
   total_pnl_pips: number | null;

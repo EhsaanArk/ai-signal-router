@@ -55,6 +55,9 @@ export function useMarketplaceProviders(
       if (filter !== "all") {
         params.set("asset_class", filter);
       }
+      if (sort) {
+        params.set("sort", sort);
+      }
       const url = `${MARKETPLACE_API_BASE}/marketplace/providers${params.toString() ? "?" + params : ""}`;
       const res = await fetch(url, {
         headers: { "Content-Type": "application/json" },
