@@ -62,6 +62,24 @@ class TestIsSessionDead:
         # But _is_session_dead must check subclass first
         assert _is_session_dead(exc) is False
 
+    def test_session_revoked_is_dead(self):
+        """SessionRevokedError (UnauthorizedError subclass) is permanent."""
+        from telethon.errors import SessionRevokedError
+        exc = SessionRevokedError.__new__(SessionRevokedError)
+        assert _is_session_dead(exc) is True
+
+    def test_session_expired_is_dead(self):
+        """SessionExpiredError (UnauthorizedError subclass) is permanent."""
+        from telethon.errors import SessionExpiredError
+        exc = SessionExpiredError.__new__(SessionExpiredError)
+        assert _is_session_dead(exc) is True
+
+    def test_auth_key_unregistered_is_dead(self):
+        """AuthKeyUnregisteredError (UnauthorizedError subclass) is permanent."""
+        from telethon.errors import AuthKeyUnregisteredError
+        exc = AuthKeyUnregisteredError.__new__(AuthKeyUnregisteredError)
+        assert _is_session_dead(exc) is True
+
 
 # ---------------------------------------------------------------------------
 # _handle_auth_key_duplicated — retry logic tests

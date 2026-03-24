@@ -19,7 +19,12 @@ from uuid import UUID
 
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncEngine
-from telethon.errors import AuthKeyDuplicatedError, AuthKeyError, FloodWaitError
+from telethon.errors import (
+    AuthKeyDuplicatedError,
+    AuthKeyError,
+    FloodWaitError,
+    UnauthorizedError,
+)
 
 from src.adapters.telegram.backfill import backfill_missed_signals
 from src.adapters.telegram.listener import TelegramListener
@@ -37,8 +42,12 @@ def _is_session_dead(exc: Exception) -> bool:
     """Return True if the exception indicates a permanently invalid session.
 
     Covers:
-    - RuntimeError("not authorised") — Telethon auth check failure
     - AuthKeyError (parent) — auth key corruption/revocation
+    - UnauthorizedError — Telegram 401 errors including:
+        - SessionRevokedError — user terminated the session
+        - SessionExpiredError — session timed out server-side
+        - AuthKeyUnregisteredError — auth key unknown to Telegram
+    - RuntimeError("not authorised") — Telethon auth check failure
 
     Does NOT cover AuthKeyDuplicatedError — that is a transient conflict
     caused by two connections momentarily sharing the same auth key
@@ -48,6 +57,10 @@ def _is_session_dead(exc: Exception) -> bool:
     if isinstance(exc, AuthKeyDuplicatedError):
         return False
     if isinstance(exc, AuthKeyError):
+        return True
+    # SessionRevokedError, SessionExpiredError, AuthKeyUnregisteredError
+    # are all UnauthorizedError subclasses (NOT AuthKeyError subclasses)
+    if isinstance(exc, UnauthorizedError):
         return True
     if isinstance(exc, RuntimeError) and "not authorised" in str(exc).lower():
         return True
@@ -262,7 +275,7 @@ class MultiUserListenerManager:
                 self._startup_failures[user_id] = self._startup_failures.get(user_id, 0) + 1
                 _capture_user_exception(retry_exc, user_id)
                 return False
-        except (RuntimeError, AuthKeyError) as exc:
+        except (RuntimeError, AuthKeyError, UnauthorizedError) as exc:
             if _is_session_dead(exc):
                 logger.warning(
                     "Session invalid for user %s (%s) — deactivating",
@@ -573,7 +586,7 @@ class MultiUserListenerManager:
                             )
                             _capture_user_exception(exc, user_id)
                             return False
-                        except AuthKeyError as exc:
+                        except (AuthKeyError, UnauthorizedError) as exc:
                             logger.warning(
                                 "User %s: auth key invalid during proactive check (%s) — deactivating",
                                 user_id, type(exc).__name__,
@@ -670,7 +683,7 @@ class MultiUserListenerManager:
                         self._failure_counts.get(user_id, 1) - 1, 0,
                     )
                     _capture_user_exception(e, user_id)
-                except (RuntimeError, AuthKeyError) as exc:
+                except (RuntimeError, AuthKeyError, UnauthorizedError) as exc:
                     if _is_session_dead(exc):
                         logger.warning(
                             "User %s: session permanently invalid (%s) — deactivating",
