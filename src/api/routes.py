@@ -39,6 +39,10 @@ from src.api.deps import (
 )
 import sentry_sdk
 
+from src.core.constants import (
+    CURRENT_TOS_VERSION,
+    LEGACY_TOKEN_SCAN_LIMIT,
+)
 from src.core.models import RoutingRule, SubscriptionTier, User, normalize_enabled_actions
 from src.core.security import sha256_hex, validate_outbound_webhook_url
 
@@ -49,7 +53,7 @@ router = APIRouter(prefix="/api/v1", tags=["v1"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _BOT_LINK_PURPOSE = "telegram_bot_link"
 _BOT_LINK_EXP_MINUTES = 30
-_LEGACY_TOKEN_SCAN_LIMIT = 500
+_LEGACY_TOKEN_SCAN_LIMIT = LEGACY_TOKEN_SCAN_LIMIT
 
 
 def _build_verification_email_html(verify_link: str, welcome_line: str = "") -> str:
@@ -113,7 +117,7 @@ class LoginResponse(BaseModel):
     email_sent: bool = True
 
 
-CURRENT_TOS_VERSION = "2026-03-22"  # Update when ToS/Privacy changes
+# CURRENT_TOS_VERSION imported from src.core.constants
 
 
 def _user_me_from_row(row: UserModel) -> UserMeResponse:

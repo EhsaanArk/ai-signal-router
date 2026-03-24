@@ -24,6 +24,7 @@ from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
 from src.api.qstash_auth import verify_qstash_signature
+from src.core.constants import PARSER_CONFIG_CACHE_TTL_SECONDS
 from src.core.models import (
     DispatchJob, DispatchResult, ParsedSignal, RawSignal, RawSignalMeta,
     RoutingRule, normalize_enabled_actions,
@@ -80,7 +81,7 @@ async def _get_parser_config(request: Request, db: AsyncSession) -> tuple[str | 
         return None, "gpt-4o-mini", 0.0
     if cache:
         try:
-            await cache.set("parser:config", json.dumps({"system_prompt": system_prompt, "model_name": model_name, "temperature": temperature}), ttl_seconds=300)
+            await cache.set("parser:config", json.dumps({"system_prompt": system_prompt, "model_name": model_name, "temperature": temperature}), ttl_seconds=PARSER_CONFIG_CACHE_TTL_SECONDS)
         except Exception:
             pass
     return system_prompt, model_name, temperature

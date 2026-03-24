@@ -22,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import UserModel
 from src.adapters.db.session import get_async_session_factory
+from src.core.constants import ACCESS_TOKEN_EXPIRE_DAYS as _ACCESS_TOKEN_EXPIRE_DAYS
+from src.core.constants import USER_CACHE_TTL_SECONDS
 from src.core.models import SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
@@ -104,7 +106,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=F
 # ---------------------------------------------------------------------------
 
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_DAYS = 7
+ACCESS_TOKEN_EXPIRE_DAYS = _ACCESS_TOKEN_EXPIRE_DAYS
 
 
 class Settings(BaseSettings):
@@ -238,7 +240,7 @@ def create_access_token(data: dict, settings: Settings) -> str:
 # ---------------------------------------------------------------------------
 
 
-_USER_CACHE_TTL = 300  # 5 minutes
+_USER_CACHE_TTL = USER_CACHE_TTL_SECONDS
 
 
 async def get_current_user(

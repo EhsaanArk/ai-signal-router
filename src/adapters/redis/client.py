@@ -12,9 +12,11 @@ from uuid import UUID
 
 import redis.asyncio as aioredis
 
+from src.core.constants import SESSION_CACHE_TTL_SECONDS
+
 logger = logging.getLogger(__name__)
 
-_SESSION_TTL_SECONDS: int = 60 * 60 * 24  # 24 hours
+_SESSION_TTL_SECONDS: int = SESSION_CACHE_TTL_SECONDS
 
 
 # ---------------------------------------------------------------------------
