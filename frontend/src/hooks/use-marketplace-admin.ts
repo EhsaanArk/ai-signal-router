@@ -24,8 +24,9 @@ export interface MarketplaceProvider {
 export interface MarketplaceStats {
   total_providers: number;
   active_providers: number;
-  total_subscribers: number;
-  marketplace_signals_today: number;
+  total_subscriptions: number;
+  active_subscriptions: number;
+  total_signals_routed: number;
 }
 
 export interface CreateProviderRequest {

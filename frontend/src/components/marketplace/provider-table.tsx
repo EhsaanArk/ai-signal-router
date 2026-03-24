@@ -72,7 +72,9 @@ export function ProviderTable({
                     <span className="text-sm font-medium truncate max-w-[180px]">
                       {p.name}
                     </span>
-                    <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    {p.track_record_days >= 30 && p.signal_count >= 20 && (
+                      <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    )}
                   </div>
                 </TableCell>
 

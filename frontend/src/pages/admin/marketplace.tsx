@@ -93,14 +93,14 @@ function StatsCards() {
       color: "text-emerald-500",
     },
     {
-      label: "Total Subscribers",
-      value: data?.total_subscribers,
+      label: "Total Subscriptions",
+      value: data?.total_subscriptions,
       icon: Users,
       color: "text-violet-500",
     },
     {
-      label: "Signals Today",
-      value: data?.marketplace_signals_today,
+      label: "Signals Routed",
+      value: data?.total_signals_routed,
       icon: Radio,
       color: "text-orange-500",
     },

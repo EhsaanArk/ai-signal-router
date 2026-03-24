@@ -182,6 +182,7 @@ async def list_providers(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     asset_class: str | None = Query(default=None, pattern="^(forex|crypto|both)$"),
+    sort: str | None = Query(default=None, pattern="^(win_rate|pnl|signals|subscribers)$"),
 ) -> ProviderListResponse:
     """List active marketplace providers with cached stats."""
     query = select(MarketplaceProviderModel).where(
@@ -197,7 +198,14 @@ async def list_providers(
     total = (await db.execute(count_query)).scalar_one()
 
     # Paginated results
-    query = query.order_by(MarketplaceProviderModel.subscriber_count.desc()).offset(offset).limit(limit)
+    sort_map = {
+        "win_rate": MarketplaceProviderModel.win_rate.desc().nulls_last(),
+        "pnl": MarketplaceProviderModel.total_pnl_pips.desc().nulls_last(),
+        "signals": MarketplaceProviderModel.signal_count.desc(),
+        "subscribers": MarketplaceProviderModel.subscriber_count.desc(),
+    }
+    order_clause = sort_map.get(sort, MarketplaceProviderModel.subscriber_count.desc())
+    query = query.order_by(order_clause).offset(offset).limit(limit)
     result = await db.execute(query)
     providers = result.scalars().all()
 

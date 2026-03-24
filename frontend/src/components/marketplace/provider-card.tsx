@@ -46,7 +46,9 @@ export function ProviderCard({
       <div className="flex items-center justify-between gap-2 mb-2.5">
         <div className="flex items-center gap-1.5 min-w-0">
           <h3 className="text-sm font-medium truncate">{provider.name}</h3>
-          <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+          {provider.track_record_days >= 30 && provider.signal_count >= 20 && (
+            <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+          )}
         </div>
         <span className="shrink-0 text-[10px] text-muted-foreground">
           {ASSET_SHORT[provider.asset_class] ?? provider.asset_class}
