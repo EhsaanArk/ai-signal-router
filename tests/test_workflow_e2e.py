@@ -28,6 +28,8 @@ from sqlalchemy.orm import sessionmaker
 
 from src.adapters.db.models import (
     Base,
+    MarketplaceProviderModel,
+    MarketplaceSubscriptionModel,
     RoutingRuleModel,
     SignalLogModel,
     UserModel,
@@ -35,7 +37,7 @@ from src.adapters.db.models import (
 from src.adapters.webhook.dispatcher import WebhookDispatcher
 from src.api.deps import Settings, get_current_user, get_db, get_dispatcher, get_settings
 from src.api.qstash_auth import verify_qstash_signature
-from src.core.models import ParsedSignal, SubscriptionTier, User
+from src.core.models import DispatchJob, ParsedSignal, RawSignalMeta, SubscriptionTier, User
 from src.main import create_app
 
 # ---------------------------------------------------------------------------
@@ -776,3 +778,189 @@ async def test_asset_class_mismatch_ignores_signal(
     assert "sagemaster_crypto" in results[0]["error_message"]
     # Webhook should NOT have been called
     mock_post.assert_not_called()
+
+
+# ===========================================================================
+# Test: Two-stage dispatch — Stage 2 (dispatch-signal endpoint)
+# ===========================================================================
+
+
+SUBSCRIBER_USER_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_signal_stage2_endpoint(
+    client, session_factory, test_dispatcher,
+):
+    """Two-stage dispatch Stage 2: POST a DispatchJob to /api/workflow/dispatch-signal
+    and verify webhook dispatch + signal_log creation."""
+    rule_id = await _seed_routing_rule(session_factory, webhook_url=WEBHOOK_URL_1)
+
+    parsed = _make_valid_parsed_signal()
+    meta = RawSignalMeta(
+        user_id=SAMPLE_USER_ID,
+        channel_id=CHANNEL_ID,
+        message_id=999,
+        raw_message="EURUSD BUY @ 1.1000\nSL: 1.0950\nTP1: 1.1050",
+    )
+    job = DispatchJob(
+        parsed_signal=parsed,
+        routing_rule_id=rule_id,
+        raw_signal_meta=meta,
+    )
+
+    with _mock_httpx_post(dispatcher=test_dispatcher) as mock_post:
+        resp = await client.post(
+            "/api/workflow/dispatch-signal",
+            json=job.model_dump(mode="json"),
+        )
+
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["status"] == "success"
+    assert result["routing_rule_id"] == str(rule_id)
+
+    # Verify signal_log was created
+    logs = await _get_signal_logs(session_factory)
+    assert len(logs) >= 1
+    stage2_log = next((l for l in logs if l.routing_rule_id == rule_id), None)
+    assert stage2_log is not None
+    assert stage2_log.status == "success"
+    assert stage2_log.source_type == "telegram"
+
+    # Verify webhook was called
+    mock_post.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_signal_stage2_dedup(
+    client, session_factory, test_dispatcher,
+):
+    """Stage 2 dedup: if a signal_log already exists for this rule+message,
+    return 'ignored' without dispatching."""
+    rule_id = await _seed_routing_rule(session_factory, webhook_url=WEBHOOK_URL_1)
+
+    # First dispatch — should succeed
+    parsed = _make_valid_parsed_signal()
+    meta = RawSignalMeta(
+        user_id=SAMPLE_USER_ID,
+        channel_id=CHANNEL_ID,
+        message_id=888,
+        raw_message="EURUSD BUY",
+    )
+    job = DispatchJob(parsed_signal=parsed, routing_rule_id=rule_id, raw_signal_meta=meta)
+
+    with _mock_httpx_post(dispatcher=test_dispatcher):
+        resp1 = await client.post(
+            "/api/workflow/dispatch-signal",
+            json=job.model_dump(mode="json"),
+        )
+    assert resp1.json()["status"] == "success"
+
+    # Second dispatch with same message_id — should be deduped
+    with _mock_httpx_post(dispatcher=test_dispatcher) as mock_post:
+        resp2 = await client.post(
+            "/api/workflow/dispatch-signal",
+            json=job.model_dump(mode="json"),
+        )
+    assert resp2.json()["status"] == "ignored"
+    assert "Already processed" in resp2.json()["error_message"]
+    mock_post.assert_not_called()
+
+
+# ===========================================================================
+# Test: Marketplace fan-out integration
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_marketplace_fanout_integration(
+    client, session_factory, test_dispatcher,
+):
+    """When a signal arrives from a marketplace provider's channel,
+    the workflow should fan out to all marketplace subscribers."""
+    # Seed the original user's routing rule (their own channel subscription)
+    rule_id = await _seed_routing_rule(session_factory, webhook_url=WEBHOOK_URL_1)
+
+    # Seed a second user (marketplace subscriber)
+    sub_user_id = SUBSCRIBER_USER_ID
+    async with session_factory() as session:
+        session.add(UserModel(
+            id=sub_user_id,
+            email="subscriber@example.com",
+            password_hash="$2b$12$fakehashedpassword",
+            subscription_tier="pro",
+        ))
+        await session.commit()
+
+    # Seed marketplace provider for the channel
+    provider_id = uuid.uuid4()
+    async with session_factory() as session:
+        session.add(MarketplaceProviderModel(
+            id=provider_id,
+            name="Test Signals",
+            asset_class="forex",
+            telegram_channel_id=CHANNEL_ID,
+            is_active=True,
+        ))
+        await session.commit()
+
+    # Seed a routing rule for the marketplace subscriber
+    sub_rule_id = uuid.uuid4()
+    async with session_factory() as session:
+        session.add(RoutingRuleModel(
+            id=sub_rule_id,
+            user_id=sub_user_id,
+            source_channel_id=CHANNEL_ID,
+            destination_webhook_url=WEBHOOK_URL_2,
+            payload_version="V1",
+            symbol_mappings={},
+            risk_overrides={},
+            webhook_body_template=DEFAULT_TEMPLATE.copy(),
+            destination_type="sagemaster_forex",
+            is_active=True,
+        ))
+        await session.commit()
+
+    # Seed marketplace subscription linking subscriber to provider
+    async with session_factory() as session:
+        session.add(MarketplaceSubscriptionModel(
+            user_id=sub_user_id,
+            provider_id=provider_id,
+            routing_rule_id=sub_rule_id,
+            is_active=True,
+        ))
+        await session.commit()
+
+    parsed = _make_valid_parsed_signal()
+
+    with (
+        _mock_openai_parser(parsed),
+        _mock_httpx_post(dispatcher=test_dispatcher) as mock_post,
+        patch.dict("os.environ", {"MARKETPLACE_ENABLED": "true"}),
+    ):
+        resp = await client.post(
+            "/api/workflow/process-signal",
+            json=_raw_signal_payload(),
+        )
+
+    assert resp.status_code == 200
+    results = resp.json()
+    # Original user's dispatch should succeed
+    assert any(r["status"] == "success" for r in results)
+
+    # Verify marketplace fan-out created signal_logs for the subscriber
+    async with session_factory() as session:
+        result = await session.execute(
+            select(SignalLogModel).where(
+                SignalLogModel.user_id == sub_user_id,
+                SignalLogModel.source_type == "marketplace",
+            )
+        )
+        marketplace_logs = result.scalars().all()
+
+    assert len(marketplace_logs) >= 1
+    assert marketplace_logs[0].status == "success"
+
+    # Webhook should have been called at least twice (original + marketplace)
+    assert mock_post.call_count >= 2

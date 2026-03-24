@@ -192,8 +192,7 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
     if raw_signal.reply_to_msg_id:
         row = await db.execute(select(SignalLogModel.raw_message).where(SignalLogModel.channel_id == raw_signal.channel_id, SignalLogModel.message_id == raw_signal.reply_to_msg_id).limit(1))
         original_message_text = row.scalar_one_or_none()
-    ci_row = await db.execute(select(RoutingRuleModel.custom_ai_instructions).where(RoutingRuleModel.user_id == raw_signal.user_id, RoutingRuleModel.source_channel_id == raw_signal.channel_id, RoutingRuleModel.is_active.is_(True), RoutingRuleModel.custom_ai_instructions.isnot(None), RoutingRuleModel.custom_ai_instructions != "").limit(1))
-    custom_instructions = ci_row.scalar_one_or_none()
+    custom_instructions = next((r.custom_ai_instructions for r in rules if r.custom_ai_instructions), None)
     parsed: ParsedSignal
     with tracer.start_as_current_span("signal.parse") as span:
         span.set_attribute("signal.channel_id", raw_signal.channel_id)

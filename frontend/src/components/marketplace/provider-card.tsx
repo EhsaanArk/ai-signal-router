@@ -2,6 +2,7 @@ import { BadgeCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MarketplaceProvider } from "@/types/marketplace";
+import { fmtPips, ASSET_SHORT } from "./format";
 
 interface ProviderCardProps {
   provider: MarketplaceProvider;
@@ -9,21 +10,6 @@ interface ProviderCardProps {
   onSubscribe: (provider: MarketplaceProvider) => void;
   onUnsubscribe: (providerId: string) => void;
 }
-
-function fmtPips(v: number | null, sign = false): string {
-  if (v === null) return "—";
-  const prefix = sign && v > 0 ? "+" : "";
-  const n = Math.abs(v) >= 1000
-    ? v.toLocaleString(undefined, { maximumFractionDigits: 0 })
-    : Number.isInteger(v) ? v.toString() : v.toFixed(1);
-  return `${prefix}${n}`;
-}
-
-const ASSET_SHORT: Record<string, string> = {
-  forex: "FX",
-  crypto: "Crypto",
-  both: "Multi",
-};
 
 /**
  * Mobile card — used on small screens where the table doesn't fit.
@@ -76,7 +62,6 @@ export function ProviderCard({
           )}>
             {fmtPips(pnl, true)}
           </span>
-          <span className="ml-0.5 text-[10px] text-muted-foreground">p</span>
         </div>
         <div>
           <span className={cn(
