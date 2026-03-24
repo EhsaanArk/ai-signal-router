@@ -557,3 +557,82 @@ All 4 actions (close_all, close_all_stop, start_assist, stop_assist) implemented
 **Priority:** P2 — admin marketplace UI is completely broken
 **Depends on:** Nothing
 **Added:** 2026-03-24 (GPT 5.4 code audit)
+
+---
+
+## P1 — Build comprehensive Playwright E2E + API regression test suite
+
+**What:** Expand the existing 9 Playwright page-load tests and 17 API smoke tests into a full regression suite (~50+ E2E interaction tests + ~30 API regression tests) that runs automatically after every staging deploy.
+
+**Why:** Current test coverage is shallow — page loads and auth guards only. No tests verify actual user flows (create routing rule, connect Telegram, parse preview, error states). An acquiring team will immediately ask "what's your E2E coverage?" and the answer is currently "page loads."
+
+**Pros:**
+- Catches UI regressions, broken forms, error message display issues
+- Catches API contract changes (like the `detail` → `error.message` issue GPT caught)
+- Runs automatically in CI — no manual QA needed per deploy
+- Playwright is already in the stack (post-deploy workflow uses it)
+- Builds acquisition confidence — "592 unit + 80 E2E tests, all green"
+
+**Cons:**
+- Initial build effort (~2-3 hours CC time)
+- E2E tests are slower (~2-3 min vs 26s for unit tests)
+- Need a dedicated test user on staging with known credentials
+
+**Context:**
+
+Existing infrastructure (ready to build on):
+- `tests/e2e/test_ui_flows.py` — 9 Playwright tests (page loads only)
+- `tests/e2e/test_api_smoke.py` — 17 API tests against staging URL
+- `tests/e2e/conftest.py` — fixtures with `STAGING_API_URL`, `STAGING_TEST_USER_EMAIL/PASSWORD`
+- `.github/workflows/post-deploy-staging.yml` — runs E2E after deploy
+- `/qa` gstack skill — available for ad-hoc live testing
+- QA Guardian agent (`.claude/agents/qa-guardian.md`) — deploy confidence scoring
+
+Test suites to build:
+
+**API Regression Tests** (~30 tests in `tests/e2e/test_api_regression.py`):
+- Auth: register → login → /me → change password → logout
+- Auth errors: wrong password (401), disabled account (403), expired token (401)
+- Routing rules: create → list → update → delete → tier limit (403)
+- Routing rule validation: invalid webhook URL (422), duplicate webhook (409), missing template (422)
+- Signal logs: list → paginate → filter by status
+- Parse preview: valid signal → invalid signal → no API key (502) → timeout
+- Telegram: status (no session) → send-code (mocked) → channels (mocked)
+- Marketplace: list providers → subscribe → unsubscribe
+- Error response shape: verify all errors return both `detail` and `error.message`
+
+**Playwright E2E Interaction Tests** (~50 tests in `tests/e2e/test_ui_interactions.py`):
+- Login flow: enter credentials → submit → dashboard loads → correct user shown
+- Login errors: wrong password → error message displayed → retry works
+- Registration: fill form → accept terms → submit → redirect to setup
+- Routing rules: navigate → create new → fill form → submit → appears in list
+- Routing rule edit: click rule → modify → save → changes reflected
+- Routing rule delete: click delete → confirm → removed from list
+- Parse preview: enter signal text → click parse → result displayed
+- Signal logs: navigate → logs visible → pagination works → filter by status
+- Settings: notification preferences → toggle → save → persists
+- Telegram status: page loads → shows disconnected state
+- Mobile responsive: key pages render correctly at 375px width
+- Error states: navigate to /routing-rules/nonexistent-id → 404 page
+- Empty states: new user → no rules → empty state message shown
+
+**No separate infrastructure needed:**
+- Staging IS the sandbox — Railway auto-deploys from `staging` branch
+- Test user isolated by `user_id` — no cross-contamination
+- Playwright runs headless in CI (GitHub Actions)
+- Credentials already in CI secrets (`STAGING_TEST_USER_EMAIL`, `STAGING_TEST_USER_PASSWORD`)
+
+**Architecture:**
+```
+tests/e2e/
+├── conftest.py              # existing — staging URL + auth fixtures
+├── test_api_smoke.py        # existing — 17 basic checks
+├── test_api_regression.py   # NEW — 30 API regression tests
+├── test_ui_flows.py         # existing — 9 page loads
+└── test_ui_interactions.py  # NEW — 50 interaction tests
+```
+
+**Effort:** L (human: ~2 weeks) → M (CC: ~2-3 hours)
+**Priority:** P1 — acquisition readiness requires demonstrable test coverage
+**Depends on:** Nothing — staging is already deployed and test infrastructure exists
+**Added:** 2026-03-24 (acquisition code audit)
