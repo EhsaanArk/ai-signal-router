@@ -6,10 +6,11 @@ import type {
   RoutingRuleUpdate,
 } from "@/types/api";
 
-export function useRoutingRules() {
+export function useRoutingRules(enabled = true) {
   return useQuery({
     queryKey: ["routing-rules"],
     queryFn: () => apiFetch<RoutingRuleResponse[]>("/routing-rules"),
+    enabled,
   });
 }
 
