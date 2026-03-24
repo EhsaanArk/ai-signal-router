@@ -361,8 +361,16 @@ async def subscribe_to_provider(
     await db_session.flush()  # get the rule's ID
 
     # 5. Create or reactivate subscription
-    if existing_sub is not None:
-        # Re-subscribe: reactivate existing row (avoids unique constraint violation)
+    is_resubscribe = existing_sub is not None
+    if is_resubscribe:
+        # Re-subscribe: deactivate old routing rule, then reactivate subscription
+        old_rule_id = existing_sub.routing_rule_id
+        if old_rule_id:
+            await db_session.execute(
+                update(RoutingRuleModel)
+                .where(RoutingRuleModel.id == old_rule_id)
+                .values(is_active=False)
+            )
         existing_sub.is_active = True
         existing_sub.routing_rule_id = marketplace_rule.id
         existing_sub.updated_at = datetime.now(timezone.utc)
@@ -385,7 +393,8 @@ async def subscribe_to_provider(
     )
     db_session.add(consent)
 
-    # 7. Update subscriber count
+    # 7. Update subscriber count (only for new subs — resubscribes already
+    #    had the count decremented on unsubscribe, so increment is correct)
     await db_session.execute(
         update(MarketplaceProviderModel)
         .where(MarketplaceProviderModel.id == provider_id)
