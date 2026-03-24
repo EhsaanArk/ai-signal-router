@@ -11,6 +11,9 @@ export interface MarketplaceProvider {
   subscriber_count: number;
   track_record_days: number;
   stats_last_computed_at: string | null;
+  created_at?: string;
+  /** Admin-only field — present in admin responses */
+  telegram_channel_id?: string;
 }
 
 export interface MarketplaceSubscription {

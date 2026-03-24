@@ -372,3 +372,29 @@ All 4 actions (close_all, close_all_stop, start_assist, stop_assist) implemented
 **Priority:** P3
 **Depends on:** Command Reference drawer (Signal Command Reference Panel feature)
 **Added:** 2026-03-21 (CEO plan review)
+
+---
+
+## P3 — Add rate limiting to admin.py endpoints
+
+**What:** Add `@limiter.limit("30/minute")` rate limiting to all 19 admin endpoints in `src/api/admin.py`. Requires adding `request: Request` parameter to each endpoint handler.
+
+**Why:** Admin endpoints currently have zero rate limiting. If an admin token is compromised, an attacker could spam all admin operations without throttling. Marketplace admin endpoints were fixed in the marketplace eng review PR, but `admin.py` has 19 endpoints still unprotected.
+
+**Pros:**
+- Defense-in-depth against compromised admin tokens
+- Consistent rate limiting across all API surfaces
+
+**Cons:**
+- Touches 19 endpoint signatures (large diff)
+- Requires adding `request: Request` param to each handler
+
+**Context:**
+- Marketplace admin endpoints already have rate limits (added in eng review PR, 2026-03-24)
+- `limiter` import already added to admin.py — just needs per-endpoint decorators
+- All endpoints need `request: Request` as first param for slowapi to work
+
+**Effort:** S (CC: ~10 min)
+**Priority:** P3
+**Depends on:** Nothing
+**Added:** 2026-03-24 (eng review)

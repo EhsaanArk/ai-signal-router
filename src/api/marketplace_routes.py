@@ -128,8 +128,10 @@ class MarketplaceStatsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _provider_to_response(p: MarketplaceProviderModel) -> ProviderResponse:
-    return ProviderResponse(
+def _provider_to_response(
+    p: MarketplaceProviderModel, *, include_admin: bool = False,
+) -> ProviderResponse | AdminProviderResponse:
+    base = dict(
         id=p.id,
         name=p.name,
         description=p.description,
@@ -146,27 +148,9 @@ def _provider_to_response(p: MarketplaceProviderModel) -> ProviderResponse:
         ),
         created_at=p.created_at.isoformat() if p.created_at else "",
     )
-
-
-def _provider_to_admin_response(p: MarketplaceProviderModel) -> AdminProviderResponse:
-    return AdminProviderResponse(
-        id=p.id,
-        name=p.name,
-        description=p.description,
-        asset_class=p.asset_class,
-        telegram_channel_id=p.telegram_channel_id,
-        is_active=p.is_active,
-        win_rate=p.win_rate,
-        total_pnl_pips=p.total_pnl_pips,
-        max_drawdown_pips=p.max_drawdown_pips,
-        signal_count=p.signal_count,
-        subscriber_count=p.subscriber_count,
-        track_record_days=p.track_record_days,
-        stats_last_computed_at=(
-            p.stats_last_computed_at.isoformat() if p.stats_last_computed_at else None
-        ),
-        created_at=p.created_at.isoformat() if p.created_at else "",
-    )
+    if include_admin:
+        return AdminProviderResponse(**base, telegram_channel_id=p.telegram_channel_id)
+    return ProviderResponse(**base)
 
 
 # ===========================================================================
@@ -205,7 +189,7 @@ async def list_providers(
         "subscribers": MarketplaceProviderModel.subscriber_count.desc(),
     }
     order_clause = sort_map.get(sort, MarketplaceProviderModel.subscriber_count.desc())
-    query = query.order_by(order_clause).offset(offset).limit(limit)
+    query = query.order_by(order_clause, MarketplaceProviderModel.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     providers = result.scalars().all()
 
@@ -332,7 +316,9 @@ async def my_subscriptions(
 
 
 @marketplace_router.post("/api/admin/marketplace/providers")
+@limiter.limit("30/minute")
 async def admin_create_provider(
+    request: Request,
     body: CreateProviderRequest,
     admin: Annotated[User, Depends(get_admin_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -359,11 +345,13 @@ async def admin_create_provider(
     db.add(provider)
     await db.flush()
 
-    return _provider_to_admin_response(provider)
+    return _provider_to_response(provider, include_admin=True)
 
 
 @marketplace_router.get("/api/admin/marketplace/providers")
+@limiter.limit("60/minute")
 async def admin_list_providers(
+    request: Request,
     admin: Annotated[User, Depends(get_admin_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     include_inactive: bool = Query(default=True),
@@ -377,11 +365,13 @@ async def admin_list_providers(
     result = await db.execute(query)
     providers = result.scalars().all()
 
-    return [_provider_to_admin_response(p) for p in providers]
+    return [_provider_to_response(p, include_admin=True) for p in providers]
 
 
 @marketplace_router.put("/api/admin/marketplace/providers/{provider_id}")
+@limiter.limit("30/minute")
 async def admin_update_provider(
+    request: Request,
     provider_id: UUID,
     body: UpdateProviderRequest,
     admin: Annotated[User, Depends(get_admin_user)],
@@ -422,11 +412,13 @@ async def admin_update_provider(
         setattr(provider, field, value)
 
     await db.flush()
-    return _provider_to_admin_response(provider)
+    return _provider_to_response(provider, include_admin=True)
 
 
 @marketplace_router.delete("/api/admin/marketplace/providers/{provider_id}")
+@limiter.limit("10/minute")
 async def admin_delete_provider(
+    request: Request,
     provider_id: UUID,
     admin: Annotated[User, Depends(get_admin_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -474,7 +466,9 @@ async def admin_delete_provider(
 
 
 @marketplace_router.get("/api/admin/marketplace/stats")
+@limiter.limit("60/minute")
 async def admin_marketplace_stats(
+    request: Request,
     admin: Annotated[User, Depends(get_admin_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> MarketplaceStatsResponse:

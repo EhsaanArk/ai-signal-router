@@ -1,25 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { MarketplaceProvider } from "@/types/marketplace";
+
+// Re-export for consumers that import from this module
+export type { MarketplaceProvider };
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export interface MarketplaceProvider {
-  id: string;
-  name: string;
-  description: string | null;
-  asset_class: "forex" | "crypto" | "both";
-  telegram_channel_id: string;
-  is_active: boolean;
-  subscriber_count: number;
-  win_rate: number | null;
-  total_pnl_pips: number | null;
-  max_drawdown_pips: number | null;
-  signal_count: number;
-  track_record_days: number;
-  stats_last_computed_at: string | null;
-  created_at: string;
-}
 
 export interface MarketplaceStats {
   total_providers: number;

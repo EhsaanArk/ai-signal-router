@@ -214,7 +214,7 @@ class SignalLogModel(Base):
     __tablename__ = "signal_logs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('success', 'failed', 'ignored')",
+            "status IN ('success', 'failed', 'ignored', 'queued')",
             name="ck_signal_logs_status",
         ),
         Index("idx_signal_logs_user_date", "user_id", "processed_at"),

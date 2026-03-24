@@ -20,7 +20,7 @@ from src.adapters.db.models import (
     TelegramSessionModel,
     UserModel,
 )
-from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings
+from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings, limiter
 from src.core.models import User
 
 logger = logging.getLogger(__name__)
