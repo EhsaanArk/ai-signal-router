@@ -7,12 +7,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
+    ConnectionEventModel,
     GlobalSettingModel,
     ParserConfigModel,
     RoutingRuleModel,
@@ -20,7 +21,8 @@ from src.adapters.db.models import (
     TelegramSessionModel,
     UserModel,
 )
-from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings
+from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings, limiter
+from src.core.exceptions import InputValidationError, ResourceNotFoundError
 from src.core.models import User
 
 logger = logging.getLogger(__name__)
@@ -223,7 +225,7 @@ async def admin_get_user(
     """Get detailed user info including their rules and recent signals."""
     user_row = (await db.execute(select(UserModel).where(UserModel.id == user_id))).scalar_one_or_none()
     if user_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise ResourceNotFoundError("User not found")
 
     # Routing rules
     rules_result = await db.execute(
@@ -312,14 +314,13 @@ async def admin_update_user(
     """Update a user's tier or disabled status."""
     user_row = (await db.execute(select(UserModel).where(UserModel.id == user_id))).scalar_one_or_none()
     if user_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise ResourceNotFoundError("User not found")
 
     if body.subscription_tier is not None:
         valid_tiers = {"free", "starter", "pro", "elite"}
         if body.subscription_tier not in valid_tiers:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid tier. Must be one of: {', '.join(sorted(valid_tiers))}",
+            raise InputValidationError(
+                f"Invalid tier. Must be one of: {', '.join(sorted(valid_tiers))}",
             )
         user_row.subscription_tier = body.subscription_tier
 
@@ -975,10 +976,7 @@ async def revert_parser_prompt(
     )).scalar_one_or_none()
 
     if old_row is None or old_row.config_key != "system_prompt":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Version not found",
-        )
+        raise ResourceNotFoundError("Version not found")
 
     new_row = await _save_config_version(
         db, cache, "system_prompt", admin.email,
@@ -1092,10 +1090,7 @@ async def test_parse_signal(
             )).scalar_one_or_none()
 
             if rule_row is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Routing rule not found for mapping dry-run",
-                )
+                raise ResourceNotFoundError("Routing rule not found for mapping dry-run")
 
             rule = RoutingRule(
                 id=rule_row.id,
@@ -1298,10 +1293,7 @@ async def replay_signal(
     )).scalar_one_or_none()
 
     if signal_log is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Signal log not found",
-        )
+        raise ResourceNotFoundError("Signal log not found")
 
     system_prompt, model_name, temperature = await _load_active_parser_config(db)
 
@@ -1351,10 +1343,7 @@ async def test_dispatch_signal(
     )).scalar_one_or_none()
 
     if rule_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Routing rule not found",
-        )
+        raise ResourceNotFoundError("Routing rule not found")
 
     system_prompt, model_name, temperature = await _load_active_parser_config(db)
 
@@ -1377,9 +1366,8 @@ async def test_dispatch_signal(
     )
 
     if not parsed.is_valid_signal:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Signal is not valid: {parsed.ignore_reason}",
+        raise InputValidationError(
+            f"Signal is not valid: {parsed.ignore_reason}",
         )
 
     # Build routing rule domain object
@@ -1480,7 +1468,7 @@ async def update_global_settings(
                 continue
 
     if errors:
-        raise HTTPException(status_code=422, detail="; ".join(errors))
+        raise InputValidationError("; ".join(errors))
 
     for key, value in body.settings.items():
         result = await db.execute(
@@ -1513,4 +1501,64 @@ async def update_global_settings(
             updated_at=r.updated_at.isoformat() if r.updated_at else None,
         )
         for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Connection Events (disconnect history)
+# ---------------------------------------------------------------------------
+
+
+class ConnectionEventResponse(BaseModel):
+    id: int
+    user_id: UUID
+    user_email: str | None = None
+    event_type: str
+    reason: str | None
+    failure_count: int | None
+    meta: dict | None
+    created_at: str
+
+
+@admin_router.get("/connection-events", response_model=list[ConnectionEventResponse])
+async def get_connection_events(
+    request: Request,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: UUID | None = Query(None, description="Filter by user ID"),
+    event_type: str | None = Query(None, description="Filter by event type"),
+    hours: int = Query(24, ge=1, le=720, description="Look-back window in hours"),
+    limit: int = Query(100, ge=1, le=1000),
+) -> list[ConnectionEventResponse]:
+    """Query historical connection events for diagnosing disconnect patterns."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    stmt = (
+        select(ConnectionEventModel, UserModel.email)
+        .outerjoin(UserModel, ConnectionEventModel.user_id == UserModel.id)
+        .where(ConnectionEventModel.created_at >= cutoff)
+        .order_by(ConnectionEventModel.created_at.desc())
+        .limit(limit)
+    )
+
+    if user_id is not None:
+        stmt = stmt.where(ConnectionEventModel.user_id == user_id)
+    if event_type is not None:
+        stmt = stmt.where(ConnectionEventModel.event_type == event_type)
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    return [
+        ConnectionEventResponse(
+            id=ev.id,
+            user_id=ev.user_id,
+            user_email=email,
+            event_type=ev.event_type,
+            reason=ev.reason,
+            failure_count=ev.failure_count,
+            meta=ev.meta,
+            created_at=ev.created_at.isoformat(),
+        )
+        for ev, email in rows
     ]

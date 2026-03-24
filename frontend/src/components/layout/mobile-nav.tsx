@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
+  Bookmark,
   BookOpen,
   Brain,
   LayoutDashboard,
@@ -9,6 +10,7 @@ import {
   Route,
   ScrollText,
   Settings,
+  Store,
   Users,
 } from "lucide-react";
 import {
@@ -26,6 +28,8 @@ const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/telegram", label: "Telegram", icon: MessageSquare },
   { path: "/routing-rules", label: "Signal Routes", icon: Route },
+  { path: "/marketplace", label: "Marketplace", icon: Store },
+  { path: "/dashboard/subscriptions", label: "My Subs", icon: Bookmark },
   { path: "/logs", label: "Signal Logs", icon: ScrollText },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
@@ -93,6 +97,7 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
                   { path: "/admin/signals", label: "All Signals", icon: Radio },
                   { path: "/admin/system-rules", label: "System Rules", icon: BookOpen },
                   { path: "/admin/parser", label: "Sage Intelligence", icon: Brain },
+                  { path: "/admin/marketplace", label: "Marketplace", icon: Store },
                   { path: "/admin/settings", label: "Settings", icon: Settings },
                 ].map((item) => {
                   const isActive = location.pathname.startsWith(item.path);

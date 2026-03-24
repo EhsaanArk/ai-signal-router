@@ -31,6 +31,30 @@ class ResendNotifier:
     ) -> None:
         self._api_key = api_key
         self._from_address = from_address
+        # Set the module-level API key once, not on every send call.
+        if api_key:
+            resend.api_key = api_key
+
+    async def send_raw_email(
+        self, to: str, subject: str, html: str,
+    ) -> None:
+        """Send an arbitrary email via Resend.
+
+        Silently skips when the API key is not configured.
+        """
+        if not self._api_key:
+            logger.debug("RESEND_API_KEY not set — skipping email")
+            return
+        try:
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": self._from_address,
+                "to": [to],
+                "subject": subject,
+                "html": html,
+            })
+        except Exception as exc:
+            logger.error("Failed to send email (%s): %s", subject, exc)
+            sentry_sdk.capture_exception(exc)
 
     async def send_dispatch_summary(
         self,
@@ -69,7 +93,6 @@ class ResendNotifier:
         html_body = "\n".join(lines)
 
         try:
-            resend.api_key = self._api_key
             await asyncio.to_thread(resend.Emails.send, {
                 "from": self._from_address,
                 "to": [user_email],
@@ -98,6 +121,12 @@ class ResendNotifier:
             "Session data could not be decrypted",
             "This can happen after a server-side encryption key rotation. "
             "Please reconnect your Telegram account to create a new session.",
+        ),
+        "auth_key_duplicated_permanent": (
+            "Your Telegram session had a connection conflict",
+            "Multiple connections tried to use the same session simultaneously "
+            "and recovery attempts were unsuccessful. "
+            "Please reconnect your Telegram account to create a fresh session.",
         ),
     }
 
@@ -134,7 +163,6 @@ class ResendNotifier:
         )
 
         try:
-            resend.api_key = self._api_key
             await asyncio.to_thread(resend.Emails.send, {
                 "from": self._from_address,
                 "to": [user_email],
@@ -177,7 +205,6 @@ class ResendNotifier:
         )
 
         try:
-            resend.api_key = self._api_key
             await asyncio.to_thread(resend.Emails.send, {
                 "from": self._from_address,
                 "to": [user_email],
@@ -214,7 +241,6 @@ class ResendNotifier:
         )
 
         try:
-            resend.api_key = self._api_key
             await asyncio.to_thread(resend.Emails.send, {
                 "from": self._from_address,
                 "to": [user_email],
@@ -255,7 +281,6 @@ class ResendNotifier:
         )
 
         try:
-            resend.api_key = self._api_key
             await asyncio.to_thread(resend.Emails.send, {
                 "from": self._from_address,
                 "to": [user_email],

@@ -269,7 +269,26 @@ class DispatchResult(BaseModel):
     """Outcome of dispatching a parsed signal through a routing rule."""
 
     routing_rule_id: UUID | None = None
-    status: Literal["success", "failed", "ignored"]
+    status: Literal["success", "failed", "ignored", "queued"]
     error_message: str | None = None
     webhook_payload: dict | None = None
     attempt_count: int = 1
+
+
+class RawSignalMeta(BaseModel):
+    """Lightweight metadata for reconstructing a RawSignal in Stage 2."""
+
+    user_id: UUID
+    channel_id: str
+    message_id: int
+    reply_to_msg_id: int | None = None
+    raw_message: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DispatchJob(BaseModel):
+    """A single per-routing-rule dispatch job for Stage 2 processing."""
+
+    parsed_signal: ParsedSignal
+    routing_rule_id: UUID
+    raw_signal_meta: RawSignalMeta

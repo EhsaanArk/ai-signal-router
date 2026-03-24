@@ -13,15 +13,20 @@ import random
 import httpx
 import sentry_sdk
 
+from src.core.constants import (
+    RETRYABLE_HTTP_CODES,
+    WEBHOOK_MAX_RETRIES,
+    WEBHOOK_RETRY_BASE_DELAY,
+)
 from src.core.mapper import apply_symbol_mapping, build_webhook_payload
 from src.core.models import DispatchResult, ParsedSignal, RoutingRule
 from src.core.security import validate_outbound_webhook_url
 
 logger = logging.getLogger(__name__)
 
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 0.5  # seconds
-_RETRYABLE_CODES = {429, 500, 502, 503, 504}
+MAX_RETRIES = WEBHOOK_MAX_RETRIES
+RETRY_BASE_DELAY = WEBHOOK_RETRY_BASE_DELAY
+_RETRYABLE_CODES = RETRYABLE_HTTP_CODES
 
 
 class WebhookDispatcher:

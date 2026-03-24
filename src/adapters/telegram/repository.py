@@ -14,6 +14,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.adapters.db.models import (
+    ConnectionEventModel,
     RoutingRuleModel,
     SignalLogModel,
     TelegramSessionModel,
@@ -136,6 +137,34 @@ class TelegramSessionRepository:
             logger.error(
                 "Failed to deactivate session for user %s: %s",
                 user_id, exc,
+            )
+
+    # ------------------------------------------------------------------
+    # Connection event logging
+    # ------------------------------------------------------------------
+
+    async def log_connection_event(
+        self,
+        user_id: UUID,
+        event_type: str,
+        reason: str | None = None,
+        failure_count: int | None = None,
+        meta: dict | None = None,
+    ) -> None:
+        """Append a connection lifecycle event to the history table."""
+        try:
+            async with AsyncSession(self._engine, expire_on_commit=False) as db:
+                db.add(ConnectionEventModel(
+                    user_id=user_id,
+                    event_type=event_type,
+                    reason=reason,
+                    failure_count=failure_count,
+                    meta=meta,
+                ))
+                await db.commit()
+        except Exception as exc:
+            logger.debug(
+                "Failed to log connection event for user %s: %s", user_id, exc,
             )
 
     # ------------------------------------------------------------------

@@ -216,7 +216,7 @@ class TestAuthLogin:
             data={"username": SAMPLE_USER_EMAIL, "password": "wrongpassword"},
         )
         assert resp.status_code == 401
-        assert "Incorrect email or password" in resp.json()["detail"]
+        assert "Incorrect email or password" in resp.json()["error"]["message"]
 
     async def test_login_nonexistent_user(self, client: AsyncClient):
         resp = await client.post(
@@ -643,7 +643,7 @@ class TestWebhookUrlSecurity:
             },
         )
         assert resp.status_code == 422
-        assert "Invalid destination webhook URL" in resp.json()["detail"]
+        assert "Invalid destination webhook URL" in resp.json()["error"]["message"]
 
     async def test_update_rule_rejects_private_webhook_url(self, authed_client: AsyncClient):
         create_resp = await authed_client.post(
@@ -662,7 +662,7 @@ class TestWebhookUrlSecurity:
             json={"destination_webhook_url": "https://169.254.169.254/latest/meta-data"},
         )
         assert update_resp.status_code == 422
-        assert "Invalid destination webhook URL" in update_resp.json()["detail"]
+        assert "Invalid destination webhook URL" in update_resp.json()["error"]["message"]
 
     async def test_webhook_test_rejects_private_url_with_422(self, authed_client: AsyncClient):
         resp = await authed_client.post(
@@ -670,7 +670,7 @@ class TestWebhookUrlSecurity:
             json={"url": "https://localhost/test"},
         )
         assert resp.status_code == 422
-        assert "Invalid webhook URL" in resp.json()["detail"]
+        assert "Invalid webhook URL" in resp.json()["error"]["message"]
 
 
 class TestWebhookUrlUniqueness:
@@ -711,7 +711,7 @@ class TestWebhookUrlUniqueness:
             },
         )
         assert resp.status_code == 409
-        assert "already in use by another account" in resp.json()["detail"]
+        assert "already in use by another account" in resp.json()["error"]["message"]
 
     async def test_create_allows_same_webhook_url_for_same_user(
         self, authed_client: AsyncClient,
@@ -987,7 +987,7 @@ class TestPhoneUniqueness:
                 )
 
         assert resp.status_code == 409
-        assert "already connected" in resp.json()["detail"]
+        assert "already connected" in resp.json()["error"]["message"]
 
 
 # ===========================================================================

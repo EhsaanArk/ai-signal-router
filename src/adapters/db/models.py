@@ -10,8 +10,10 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -212,7 +214,7 @@ class SignalLogModel(Base):
     __tablename__ = "signal_logs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('success', 'failed', 'ignored')",
+            "status IN ('success', 'failed', 'ignored', 'queued')",
             name="ck_signal_logs_status",
         ),
         Index("idx_signal_logs_user_date", "user_id", "processed_at"),
@@ -256,6 +258,9 @@ class SignalLogModel(Base):
     )
     error_message: Mapped[str | None] = mapped_column(
         Text, nullable=True
+    )
+    source_type: Mapped[str | None] = mapped_column(
+        String(50), server_default="telegram", nullable=True
     )
     processed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -414,4 +419,174 @@ class EmailVerificationTokenModel(Base):
     )
 
     # Relationships
+    user: Mapped[UserModel] = relationship()
+
+
+class MarketplaceProviderModel(Base):
+    """A curated signal provider listed on the marketplace."""
+
+    __tablename__ = "marketplace_providers"
+    __table_args__ = (
+        CheckConstraint(
+            "asset_class IN ('forex', 'crypto', 'both')",
+            name="ck_marketplace_providers_asset_class",
+        ),
+        Index("idx_marketplace_providers_active", "is_active"),
+        Index("idx_marketplace_providers_channel", "telegram_channel_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )
+    description: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    asset_class: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )
+    telegram_channel_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default="true"
+    )
+    win_rate: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    total_pnl_pips: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    max_drawdown_pips: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    signal_count: Mapped[int] = mapped_column(
+        Integer, server_default="0", nullable=False
+    )
+    subscriber_count: Mapped[int] = mapped_column(
+        Integer, server_default="0", nullable=False
+    )
+    track_record_days: Mapped[int] = mapped_column(
+        Integer, server_default="0", nullable=False
+    )
+    stats_last_computed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    subscriptions: Mapped[list[MarketplaceSubscriptionModel]] = relationship(
+        back_populates="provider", cascade="all, delete-orphan"
+    )
+
+
+class MarketplaceSubscriptionModel(Base):
+    """A user's subscription to a marketplace signal provider."""
+
+    __tablename__ = "marketplace_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider_id", name="uq_marketplace_sub_user_provider"),
+        Index("idx_marketplace_sub_user_active", "user_id", "is_active"),
+        Index("idx_marketplace_sub_provider_active", "provider_id", "is_active"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("marketplace_providers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    routing_rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("routing_rules.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    user: Mapped[UserModel] = relationship()
+    provider: Mapped[MarketplaceProviderModel] = relationship(
+        back_populates="subscriptions"
+    )
+    routing_rule: Mapped[RoutingRuleModel | None] = relationship()
+
+
+class MarketplaceConsentLogModel(Base):
+    """Audit trail for marketplace risk disclaimer acceptance."""
+
+    __tablename__ = "marketplace_consent_log"
+    __table_args__ = (
+        Index("idx_marketplace_consent_user", "user_id", "provider_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("marketplace_providers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    consented_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    disclaimer_version: Mapped[str] = mapped_column(
+        String(20), server_default="1.0", nullable=False
+    )
+
+    # Relationships
+    user: Mapped[UserModel] = relationship()
+    provider: Mapped[MarketplaceProviderModel] = relationship()
+
+
+class ConnectionEventModel(Base):
+    """Historical log of Telegram connection lifecycle events."""
+
+    __tablename__ = "connection_events"
+    __table_args__ = (
+        Index("idx_connection_events_user_time", "user_id", "created_at"),
+        Index("idx_connection_events_type_time", "event_type", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    failure_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+    )
+
     user: Mapped[UserModel] = relationship()
