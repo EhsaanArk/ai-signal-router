@@ -2,6 +2,15 @@
 
 Connects to Telegram via Telethon's MTProto API and forwards every new
 channel/supergroup message to the processing pipeline through a ``QueuePort``.
+
+Connection resilience is tuned for residential SOCKS5 proxies on Railway:
+
+- ``connection_retries=10`` — more attempts for proxy flakiness
+- ``retry_delay=2`` — give the proxy gateway time to stabilise
+- ``timeout=15`` — residential proxies have higher latency than DC
+- ``flood_sleep_threshold=120`` — auto-sleep Telegram rate-limits ≤2 min
+- Consistent device fingerprint so Railway container rebuilds don't
+  appear as "new device" to Telegram
 """
 
 from __future__ import annotations
@@ -22,6 +31,35 @@ from src.core.models import RawSignal
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer("telegram.listener")
+
+# ── Hardened Telethon client defaults ─────────────────────────────────────
+# Tuned for residential SOCKS5 proxies on Railway ephemeral containers.
+# These values are intentionally more generous than Telethon's defaults
+# to survive proxy flakiness, container restarts, and IP rotation.
+CLIENT_CONNECTION_RETRIES = 10   # default 5 — more resilient for proxy envs
+CLIENT_RETRY_DELAY = 2           # default 1 — give proxy time to stabilise
+CLIENT_TIMEOUT = 15              # default 10 — residential proxies are slower
+CLIENT_FLOOD_SLEEP_THRESHOLD = 120  # default 60 — auto-handle ≤2min rate limits
+
+# ── Consistent device fingerprint ─────────────────────────────────────────
+# Telethon defaults to platform.uname() which can vary between Railway
+# container images.  A changing fingerprint makes Telegram think a new
+# device connected, which can trigger session re-validation.  By setting
+# explicit values we ensure the fingerprint is identical across all
+# deploys and container restarts.
+DEVICE_MODEL = "Sage Radar Server"
+SYSTEM_VERSION = "Linux 5.15"
+APP_VERSION = "1.0.0"
+
+# ── Post-deploy startup delay ─────────────────────────────────────────────
+# After a Railway deploy the old container has up to 30s to release all
+# Telegram connections (SIGTERM grace period).  If the new container
+# connects before the old one fully disconnects, both share the same
+# auth key simultaneously → AuthKeyDuplicatedError.
+#
+# We read the previous container's shutdown timestamp from Redis and
+# wait until at least this many seconds have elapsed since that shutdown.
+DEPLOY_STARTUP_GUARD_SECONDS = 5
 
 
 class TelegramListener:
@@ -82,9 +120,14 @@ class TelegramListener:
             StringSession(session_string),
             self._api_id,
             self._api_hash,
-            connection_retries=5,
-            retry_delay=1,
+            connection_retries=CLIENT_CONNECTION_RETRIES,
+            retry_delay=CLIENT_RETRY_DELAY,
+            timeout=CLIENT_TIMEOUT,
             auto_reconnect=True,
+            flood_sleep_threshold=CLIENT_FLOOD_SLEEP_THRESHOLD,
+            device_model=DEVICE_MODEL,
+            system_version=SYSTEM_VERSION,
+            app_version=APP_VERSION,
             proxy=self._proxy,
         )
         await self._client.connect()
@@ -403,13 +446,39 @@ if __name__ == "__main__":
             )
 
             logger.info("Starting multi-user listener manager...")
+
+            # ── Pre-connect startup guard ─────────────────────────────────
+            # Wait for the previous container to fully release all Telegram
+            # sessions before we connect.  Prevents AuthKeyDuplicatedError
+            # caused by both containers holding the same auth keys at once.
+            redis_url = os.environ.get("REDIS_URL", "")
+            if redis_url:
+                from src.adapters.redis.client import RedisCacheAdapter
+                import redis.asyncio as aioredis
+                from src.adapters.telegram.deploy_snapshot import (
+                    run_post_startup_check,
+                    wait_for_previous_shutdown,
+                )
+
+                _guard_redis = aioredis.from_url(redis_url, decode_responses=True)
+                _guard_cache = RedisCacheAdapter(_guard_redis)
+                try:
+                    await wait_for_previous_shutdown(
+                        _guard_cache,
+                        guard_seconds=DEPLOY_STARTUP_GUARD_SECONDS,
+                    )
+                except Exception as exc:
+                    logger.warning("Startup guard failed (proceeding anyway): %s", exc)
+                finally:
+                    _close = getattr(_guard_redis, "aclose", None) or _guard_redis.close
+                    await _close()
+
             await manager.start()
 
             # ── Post-startup deploy health self-check ─────────────────────
             # Compare current state against the pre-shutdown snapshot saved
             # by the previous container (if any).  This detects session loss
             # caused by AuthKeyDuplicatedError during rolling deploys.
-            redis_url = os.environ.get("REDIS_URL", "")
             if redis_url:
                 from src.adapters.redis.client import RedisCacheAdapter
                 import redis.asyncio as aioredis
