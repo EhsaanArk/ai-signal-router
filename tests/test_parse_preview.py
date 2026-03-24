@@ -155,7 +155,7 @@ class TestParsePreviewEndpoint:
         """Provide a settings object with OPENAI_API_KEY set."""
         mock_settings = MagicMock()
         mock_settings.OPENAI_API_KEY = "test-key"
-        with patch("src.api.routes.get_settings", return_value=mock_settings):
+        with patch("src.api.routes.routing_rules.get_settings", return_value=mock_settings):
             yield mock_settings
 
     @pytest.fixture
@@ -293,7 +293,7 @@ class TestParsePreviewForwardingVerdict:
     def _patch_settings(self):
         mock_settings = MagicMock()
         mock_settings.OPENAI_API_KEY = "test-key"
-        with patch("src.api.routes.get_settings", return_value=mock_settings):
+        with patch("src.api.routes.routing_rules.get_settings", return_value=mock_settings):
             yield mock_settings
 
     async def test_valid_signal_no_enabled_actions_forwards(self):

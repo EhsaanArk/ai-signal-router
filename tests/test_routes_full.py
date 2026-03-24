@@ -216,7 +216,7 @@ class TestAuthLogin:
             data={"username": SAMPLE_USER_EMAIL, "password": "wrongpassword"},
         )
         assert resp.status_code == 401
-        assert "Incorrect email or password" in resp.json()["error"]["message"]
+        assert "Incorrect email or password" in resp.json()["detail"]
 
     async def test_login_nonexistent_user(self, client: AsyncClient):
         resp = await client.post(
@@ -330,7 +330,7 @@ class TestTelegramSendCode:
         mock_auth = AsyncMock()
         mock_auth.send_code.return_value = {"phone_code_hash": "abc123hash"}
 
-        with patch("src.api.routes._get_telegram_auth", return_value=mock_auth):
+        with patch("src.api.routes.telegram._get_telegram_auth", return_value=mock_auth):
             resp = await authed_client.post(
                 "/api/v1/telegram/send-code",
                 json={"phone_number": "+15551234567"},
@@ -369,7 +369,7 @@ class TestTelegramVerifyCode:
         mock_auth = AsyncMock()
         mock_auth.verify_code.return_value = "fake-session-string"
 
-        with patch("src.api.routes._get_telegram_auth", return_value=mock_auth):
+        with patch("src.api.routes.telegram._get_telegram_auth", return_value=mock_auth):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 resp = await ac.post(
@@ -643,7 +643,7 @@ class TestWebhookUrlSecurity:
             },
         )
         assert resp.status_code == 422
-        assert "Invalid destination webhook URL" in resp.json()["error"]["message"]
+        assert "Invalid destination webhook URL" in resp.json()["detail"]
 
     async def test_update_rule_rejects_private_webhook_url(self, authed_client: AsyncClient):
         create_resp = await authed_client.post(
@@ -662,7 +662,7 @@ class TestWebhookUrlSecurity:
             json={"destination_webhook_url": "https://169.254.169.254/latest/meta-data"},
         )
         assert update_resp.status_code == 422
-        assert "Invalid destination webhook URL" in update_resp.json()["error"]["message"]
+        assert "Invalid destination webhook URL" in update_resp.json()["detail"]
 
     async def test_webhook_test_rejects_private_url_with_422(self, authed_client: AsyncClient):
         resp = await authed_client.post(
@@ -670,7 +670,7 @@ class TestWebhookUrlSecurity:
             json={"url": "https://localhost/test"},
         )
         assert resp.status_code == 422
-        assert "Invalid webhook URL" in resp.json()["error"]["message"]
+        assert "Invalid webhook URL" in resp.json()["detail"]
 
 
 class TestWebhookUrlUniqueness:
@@ -711,7 +711,7 @@ class TestWebhookUrlUniqueness:
             },
         )
         assert resp.status_code == 409
-        assert "already in use by another account" in resp.json()["error"]["message"]
+        assert "already in use by another account" in resp.json()["detail"]
 
     async def test_create_allows_same_webhook_url_for_same_user(
         self, authed_client: AsyncClient,
@@ -971,7 +971,7 @@ class TestPhoneUniqueness:
         # Mock the Telegram auth to return a session string and encryption
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            with patch("src.api.routes._get_telegram_auth") as mock_get_auth, \
+            with patch("src.api.routes.telegram._get_telegram_auth") as mock_get_auth, \
                  patch("src.core.security.encrypt_session", return_value="encrypted"):
                 mock_auth = AsyncMock()
                 mock_auth.verify_code = AsyncMock(return_value="fake_session_string")
@@ -987,7 +987,7 @@ class TestPhoneUniqueness:
                 )
 
         assert resp.status_code == 409
-        assert "already connected" in resp.json()["error"]["message"]
+        assert "already connected" in resp.json()["detail"]
 
 
 # ===========================================================================
@@ -1127,7 +1127,7 @@ class TestLegacyTokenFallback:
             await session.commit()
 
         with patch(
-            "src.api.routes.pwd_context.verify",
+            "src.api.routes.auth.pwd_context.verify",
             side_effect=lambda raw, stored: raw == stored,
         ):
             transport = ASGITransport(app=app)
@@ -1161,10 +1161,10 @@ class TestLegacyTokenFallback:
             await session.commit()
 
         with patch(
-            "src.api.routes.pwd_context.verify",
+            "src.api.routes.auth.pwd_context.verify",
             side_effect=lambda raw, stored: raw == stored,
         ), patch(
-            "src.api.routes.pwd_context.hash",
+            "src.api.routes.auth.pwd_context.hash",
             side_effect=lambda value: f"hashed:{value}",
         ):
             transport = ASGITransport(app=app)

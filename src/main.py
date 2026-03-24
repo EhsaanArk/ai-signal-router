@@ -273,7 +273,10 @@ def create_app() -> FastAPI:
             headers = {"WWW-Authenticate": "Bearer"}
         return JSONResponse(
             status_code=status_code,
-            content={"error": {"code": type(exc).__name__, "message": exc.message}},
+            content={
+                "error": {"code": type(exc).__name__, "message": exc.message},
+                "detail": exc.message,  # backward compat for frontend callers
+            },
             headers=headers,
         )
 
