@@ -143,10 +143,16 @@ class TelegramAuth:
         session_string: str = client.session.save()  # type: ignore[union-attr]
         logger.info("Authentication successful for %s", _phone_id(phone_number))
 
-        # Cleanup: remove from pending but do NOT disconnect — the caller may
-        # want to keep using the session.  We disconnect on explicit request.
+        # Cleanup: remove from pending AND disconnect immediately.
+        # The session string is self-contained — keeping the client alive
+        # creates an overlapping connection when the listener starts with
+        # the same auth key, triggering AuthKeyDuplicatedError.
         self._pending_clients.pop(phone_number, None)
         self._pending_timestamps.pop(phone_number, None)
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
 
         return session_string
 

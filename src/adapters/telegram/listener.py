@@ -530,18 +530,6 @@ if __name__ == "__main__":
             except (KeyboardInterrupt, asyncio.CancelledError):
                 pass
             finally:
-                # ── Save pre-shutdown snapshot to Redis ────────────────────
-                if redis_url:
-                    from src.adapters.telegram.deploy_snapshot import (
-                        save_pre_shutdown_snapshot,
-                    )
-
-                    await save_pre_shutdown_snapshot(
-                        redis_url,
-                        manager._listeners,
-                        manager._monitored_channels,
-                    )
-
                 # Log deploy_restart events for all connected users (awaited)
                 restart_tasks = [
                     manager._repo.log_connection_event(
@@ -556,16 +544,32 @@ if __name__ == "__main__":
 
                 logger.info("Shutting down — disconnecting all Telegram clients...")
                 try:
-                    # Give manager 22s to disconnect all clients.  Railway
+                    # Give manager 20s to disconnect all clients.  Railway
                     # sends SIGKILL after gracefulShutdownTimeoutSeconds (30s
-                    # in railway.toml).  The snapshot write + event logging
-                    # + 2s buffer accounts for the remaining time.
-                    await asyncio.wait_for(manager.stop(), timeout=22.0)
+                    # in railway.toml).  Event logging + disconnect + snapshot
+                    # + buffer must fit within 30s.
+                    await asyncio.wait_for(manager.stop(), timeout=20.0)
                     logger.info("All clients disconnected. Exiting cleanly.")
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "Shutdown timed out after 23s — "
+                        "Shutdown timed out after 20s — "
                         "some clients may not have disconnected cleanly."
+                    )
+
+                # ── Save post-disconnect snapshot to Redis ──────────────
+                # Written AFTER manager.stop() so the timestamp reflects
+                # when auth keys were actually released.  The new container
+                # reads this timestamp to know how long to wait before
+                # connecting (startup guard).
+                if redis_url:
+                    from src.adapters.telegram.deploy_snapshot import (
+                        save_pre_shutdown_snapshot,
+                    )
+
+                    await save_pre_shutdown_snapshot(
+                        redis_url,
+                        manager._listeners,
+                        manager._monitored_channels,
                     )
 
     logging.basicConfig(level=logging.INFO)
