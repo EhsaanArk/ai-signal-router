@@ -50,6 +50,8 @@ export function ProviderTable({
             return (
               <TableRow
                 key={p.id}
+                role="article"
+                aria-label={`${p.name} - ${hasData ? `${wr!.toFixed(1)}%` : "N/A"} win rate`}
                 className="border-border/30 hover:bg-accent/5 transition-colors"
               >
                 {/* Provider name */}
@@ -62,6 +64,11 @@ export function ProviderTable({
                       <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
                     )}
                   </div>
+                  {p.description && (
+                    <p className="text-[11px] text-muted-foreground truncate max-w-[200px] mt-0.5">
+                      {p.description.length > 60 ? `${p.description.slice(0, 60)}...` : p.description}
+                    </p>
+                  )}
                 </TableCell>
 
                 {/* Asset type */}

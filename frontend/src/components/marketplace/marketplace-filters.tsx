@@ -35,6 +35,7 @@ export function MarketplaceFilters({
           <button
             key={f.value}
             type="button"
+            aria-pressed={filter === f.value}
             onClick={() => onFilterChange(f.value)}
             className={cn(
               "px-3 py-1 text-[11px] font-medium rounded-[5px] transition-colors",
@@ -55,6 +56,7 @@ export function MarketplaceFilters({
           <button
             key={s.value}
             type="button"
+            aria-pressed={sort === s.value}
             onClick={() => onSortChange(s.value)}
             className={cn(
               "px-2 py-0.5 rounded transition-colors",
