@@ -33,10 +33,12 @@ pytestmark = pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_login_valid_credentials(
     staging_api_url: str,
+    auth_token: str,
     test_user_email: str,
     test_user_password: str,
 ) -> None:
     """Login with valid credentials returns 200 + access_token + user profile."""
+    # auth_token fixture already validated login works — re-verify the response shape
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(
             f"{staging_api_url}/api/v1/auth/login-json",
@@ -523,11 +525,18 @@ async def test_pipeline_v1_payload_contract(
 
 @pytest.mark.asyncio
 async def test_list_marketplace_providers(staging_api_url: str) -> None:
-    """GET /api/marketplace/providers returns a list (public endpoint)."""
+    """GET /api/marketplace/providers returns providers (public endpoint)."""
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(f"{staging_api_url}/api/marketplace/providers")
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+    data = resp.json()
+    # API returns either a list or paginated {items, total} structure
+    if isinstance(data, list):
+        providers = data
+    else:
+        assert "items" in data, f"Expected 'items' in response: {data}"
+        providers = data["items"]
+    assert isinstance(providers, list)
     assert_response_time(resp)
 
 
@@ -553,7 +562,8 @@ async def test_marketplace_subscribe_lifecycle(
     async with httpx.AsyncClient(timeout=15.0) as client:
         # First, check if there are any providers
         resp = await client.get(f"{staging_api_url}/api/marketplace/providers")
-        providers = resp.json()
+        data = resp.json()
+        providers = data["items"] if isinstance(data, dict) else data
         if not providers:
             pytest.skip("No marketplace providers on staging")
 
