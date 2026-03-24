@@ -398,3 +398,162 @@ All 4 actions (close_all, close_all_stop, start_assist, stop_assist) implemented
 **Priority:** P3
 **Depends on:** Nothing
 **Added:** 2026-03-24 (eng review)
+
+---
+
+## P1 — Marketplace fan-out wired to wrong source
+
+**What:** `workflow.py:188` returns before parsing/fan-out when the emitting user has no active personal routing rule, while `workflow.py:247` fans out from any provider-matched channel. This means marketplace subscriber delivery can be skipped entirely (if no personal rule exists) or triggered from an ordinary user connection (not the admin listener).
+
+**Why:** Contradicts the marketplace design doc (`docs/designs/SIGNAL-MARKETPLACE.md:37`, `:239`): only the dedicated admin listener should originate marketplace fan-out. Currently, any user who happens to be connected to a provider channel can trigger subscriber deliveries, and if no user has a personal rule for that channel, marketplace subscribers get nothing.
+
+**Pros:**
+- Guarantees 100% marketplace signal delivery regardless of user connections
+- Prevents unauthorized fan-out from ordinary user listeners
+- Aligns code with the documented architecture
+
+**Cons:**
+- Requires restructuring the early-return logic in `process_signal`
+- May need `source_identity` field on `RawSignal` to distinguish admin vs user listeners
+- Touches pipeline-critical `workflow.py` (requires eng review)
+
+**Context:**
+- Fix by deciding marketplace routing before the personal-rule early return
+- Carry explicit listener/source identity into `RawSignal` so fan-out only fires from the admin listener
+- Files: `src/api/workflow.py`, `src/core/models.py` (RawSignal)
+
+**Effort:** M (human) → S (CC)
+**Priority:** P1 — marketplace subscribers may receive no signals or duplicates
+**Depends on:** Nothing
+**Added:** 2026-03-24 (GPT 5.4 code audit)
+
+---
+
+## P1 — Marketplace fan-out bypasses subscriber safety controls
+
+**What:** `marketplace.py:117` calls `dispatcher.dispatch()` directly instead of the guarded workflow path (`_process_single_rule`). This means disabled actions (close/stop), blacklisted keywords, and template/asset class mismatches bypass all safety checks and route directly to SageMaster.
+
+**Why:** The normal routing path in `workflow.py` runs keyword blacklist checks, enabled_actions filtering, symbol/asset class mismatch validation, and template symbol validation before dispatching. Marketplace fan-out skips all of this. A subscriber who disabled "close_all" actions would still receive close_all signals via marketplace.
+
+**Pros:**
+- Prevents unwanted trades for marketplace subscribers
+- Consistent safety guarantees regardless of signal source
+- Builds trust in marketplace — subscribers' per-rule settings are always honored
+
+**Cons:**
+- Requires extracting pre-dispatch filter logic from `_process_single_rule` into a shared helper
+- Adds complexity to the fan-out path
+
+**Context:**
+- `marketplace.py:98` correctly rebuilds rules with `enabled_actions` and `keyword_blacklist` from the subscription, but never checks them before dispatch
+- Fix: reuse `_process_single_rule` or extract its pre-dispatch filter logic into a shared helper that both normal routing and marketplace fan-out call
+- Files: `src/core/marketplace.py`, `src/api/workflow.py`
+
+**Effort:** M (human) → S (CC)
+**Priority:** P1 — safety controls are silently bypassed for paying subscribers
+**Depends on:** Nothing
+**Added:** 2026-03-24 (GPT 5.4 code audit)
+
+---
+
+## P1 — Stage-2 dispatch not safely idempotent under retry concurrency
+
+**What:** `workflow.py:265` does a read-before-write dedup check against `signal_logs`, but there is no advisory lock and no unique DB constraint on `(message_id, routing_rule_id)` in `SignalLogModel`. Two parallel QStash retries for the same dispatch job can both pass the dedup check and dispatch to SageMaster before either log row is committed.
+
+**Why:** QStash has at-least-once delivery semantics — it can deliver the same job to `/dispatch-signal` multiple times concurrently. Without a fence, duplicate webhook calls to SageMaster could cause duplicate trades.
+
+**Pros:**
+- Prevents duplicate trades from retry storms
+- Makes the two-stage pipeline production-safe under load
+
+**Cons:**
+- Advisory lock adds ~1ms per dispatch
+- Alternatively, a unique constraint on `(message_id, routing_rule_id)` requires a migration
+
+**Context:**
+- Stage 1 (`process_signal`) already uses PostgreSQL advisory locks (`_message_lock_key`) for dedup — Stage 2 should do the same
+- Fix options: (A) advisory lock on `(message_id, routing_rule_id)` hash before dispatch, or (B) unique constraint + INSERT ... ON CONFLICT DO NOTHING
+- Files: `src/api/workflow.py`, optionally `src/adapters/db/models.py`
+
+**Effort:** S (human) → S (CC)
+**Priority:** P1 — duplicate trades are the highest-risk failure mode
+**Depends on:** Nothing
+**Added:** 2026-03-24 (GPT 5.4 code audit)
+
+---
+
+## P2 — Provider stats measuring subscriber delivery, not provider performance
+
+**What:** `marketplace.py:204` counts `signal_logs` rows with `source_type="marketplace"`, but `marketplace.py:125` writes one row per subscriber dispatch. So `signal_count` scales with subscriber count (10 subscribers = 10 "signals"), and `win_rate` measures webhook delivery success, not the outcome-based trading performance described in the design doc.
+
+**Why:** The design doc (`SIGNAL-MARKETPLACE.md:227`) frames provider stats as verified performance metrics (signal accuracy, win rate). Displaying delivery counts as "signals" and HTTP 200s as "wins" is misleading to subscribers making subscription decisions.
+
+**Pros:**
+- Accurate provider performance metrics build marketplace trust
+- Prevents inflated signal counts from high subscriber counts
+
+**Cons:**
+- Requires a separate provider-level signal identity (one row per parsed signal, not per fan-out)
+- May need a new `marketplace_signals` table or aggregation view
+
+**Context:**
+- Fix by aggregating on provider-level signal identity/outcome, not fan-out rows
+- Consider a `marketplace_signal_events` table with one row per unique signal, linked to provider
+- Files: `src/core/marketplace.py`, possibly new migration
+
+**Effort:** M (human) → S-M (CC)
+**Priority:** P2
+**Depends on:** Nothing
+**Added:** 2026-03-24 (GPT 5.4 code audit)
+
+---
+
+## P2 — Marketplace subscriptions bypass tier enforcement
+
+**What:** `marketplace.py:343` creates a new routing rule for each marketplace subscription but never checks the user's destination count against their subscription tier limit. The same limit enforced in `routes/routing_rules.py:135` (`_check_tier_limit`) is completely absent from the marketplace subscribe path.
+
+**Why:** Users can exceed their plan's route limit by subscribing to marketplace providers. A free-tier user limited to 1 destination could subscribe to 5 marketplace providers and effectively have 6 active routing rules.
+
+**Pros:**
+- Consistent tier enforcement across all rule creation paths
+- Prevents revenue leakage (users get premium capacity for free)
+
+**Cons:**
+- Subscribers may hit their limit and be unable to subscribe — needs clear UX messaging
+- May need to decide whether marketplace rules count toward the tier limit or have a separate cap
+
+**Context:**
+- Fix by counting active rules (including marketplace rules) before inserting
+- Reuse `_check_tier_limit` or the same query pattern
+- Product decision needed: do marketplace subscriptions share the tier cap or have their own?
+- Files: `src/core/marketplace.py`, `src/api/marketplace_routes.py`
+
+**Effort:** S (human) → S (CC)
+**Priority:** P2
+**Depends on:** Product decision on tier cap policy
+**Added:** 2026-03-24 (GPT 5.4 code audit)
+
+---
+
+## P2 — Admin marketplace frontend uses wrong auth token
+
+**What:** `frontend/src/hooks/use-marketplace-admin.ts:37` reads `localStorage["access_token"]` for auth headers, but the app uses Supabase sessions from `frontend/src/contexts/auth-context.tsx:112` and never writes that localStorage key. Signed-in admins will hit 401s on all provider CRUD and stats endpoints.
+
+**Why:** The marketplace admin hook was likely written assuming the legacy JWT auth flow, but the app migrated to Supabase Auth. The auth header logic in `frontend/src/lib/api.ts:20` correctly uses Supabase sessions — the admin hook should reuse it.
+
+**Pros:**
+- Admin marketplace management actually works
+- Single auth pattern across the frontend
+
+**Cons:**
+- None — straightforward fix
+
+**Context:**
+- Fix by reusing the shared Supabase-backed auth header logic from `frontend/src/lib/api.ts:20`
+- Or import `supabase.auth.getSession()` directly in the hook
+- Files: `frontend/src/hooks/use-marketplace-admin.ts`
+
+**Effort:** S (human) → S (CC: ~5 min)
+**Priority:** P2 — admin marketplace UI is completely broken
+**Depends on:** Nothing
+**Added:** 2026-03-24 (GPT 5.4 code audit)
