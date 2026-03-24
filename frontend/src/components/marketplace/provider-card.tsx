@@ -50,7 +50,7 @@ export function ProviderCard({
             wr! >= 60 ? "text-emerald-400" :
             wr! >= 45 ? "text-foreground" : "text-rose-400",
           )}>
-            {hasData ? `${Math.round(wr!)}%` : "—"}
+            {hasData ? `${wr!.toFixed(1)}%` : "—"}
           </span>
           <span className="ml-1 text-[10px] text-muted-foreground">win</span>
         </div>

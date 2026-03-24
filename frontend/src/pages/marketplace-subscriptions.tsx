@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Store } from "lucide-react";
+import { AlertTriangle, Store } from "lucide-react";
 import { useState } from "react";
 import {
   Table,
@@ -34,7 +34,7 @@ import { toast } from "sonner";
 export function MarketplaceSubscriptionsPage() {
   usePageTitle("My Subscriptions");
   const navigate = useNavigate();
-  const { data: subscriptions, isLoading } = useMySubscriptions();
+  const { data: subscriptions, isLoading, isError, refetch } = useMySubscriptions();
   const unsubscribe = useUnsubscribe();
   const [unsubId, setUnsubId] = useState<string | null>(null);
 
@@ -66,7 +66,15 @@ export function MarketplaceSubscriptionsPage() {
         </Button>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="flex items-center gap-2 rounded-md border border-rose-500/20 bg-rose-500/5 px-3 py-2">
+          <AlertTriangle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+          <p className="flex-1 text-xs text-rose-400">Failed to load subscriptions.</p>
+          <Button variant="ghost" size="sm" className="h-6 text-[11px] text-rose-400" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </div>
+      ) : isLoading ? (
         <div className="rounded-md border">
           <Table>
             <TableHeader>
