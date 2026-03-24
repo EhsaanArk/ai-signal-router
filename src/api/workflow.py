@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import inspect
 import logging
+import os
 from typing import Annotated
 
 import sentry_sdk
@@ -18,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.adapters.db.models import ParserConfigModel, RoutingRuleModel, SignalLogModel
+from src.adapters.db.models import MarketplaceProviderModel, ParserConfigModel, RoutingRuleModel, SignalLogModel
 from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
@@ -92,7 +93,7 @@ def _build_routing_rule(rule_row: RoutingRuleModel) -> RoutingRule:
 async def _process_single_rule(rule_row: RoutingRuleModel, raw_signal: RawSignal, parsed: ParsedSignal, dispatcher: WebhookDispatcher) -> tuple[DispatchResult, dict]:
     from src.core.mapper import _signal_action, apply_symbol_mapping, check_asset_class_mismatch, check_template_symbol_mismatch
     rule = _build_routing_rule(rule_row)
-    base_log = dict(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, routing_rule_id=rule.id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump())
+    base_log = dict(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, routing_rule_id=rule.id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), source_type="telegram")
     if rule.keyword_blacklist:
         raw_lower = raw_signal.raw_message.lower()
         matched_kw = next((kw for kw in rule.keyword_blacklist if kw.lower() in raw_lower), None)
@@ -205,10 +206,11 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
             span.set_attribute("signal.is_valid", parsed.is_valid_signal)
         except Exception as exc:
             span.record_exception(exc)
-            db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, status="failed", error_message=f"Parse error: {exc}"))
+            logger.error("Signal parsing failed: %s", exc)
+            db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, status="failed", error_message=f"Parse error: {exc}", source_type="telegram"))
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Failed to parse signal: {exc}") from exc
     if not parsed.is_valid_signal:
-        db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), status="ignored", error_message=parsed.ignore_reason))
+        db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), status="ignored", error_message=parsed.ignore_reason, source_type="telegram"))
         return [DispatchResult(routing_rule_id=None, status="ignored", error_message=parsed.ignore_reason)]
     if settings.TWO_STAGE_DISPATCH:
         dispatch_queue = request.app.state.dispatch_queue
@@ -230,7 +232,7 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
             sentry_sdk.capture_exception(outcome)
             dr = DispatchResult(routing_rule_id=rules[i].id, status="failed", error_message=str(outcome))
             results.append(dr)
-            db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, routing_rule_id=rules[i].id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), status="failed", error_message=str(outcome)))
+            db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, routing_rule_id=rules[i].id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), status="failed", error_message=str(outcome), source_type="telegram"))
         else:
             dispatch_result, log_kwargs = outcome
             results.append(dispatch_result)
@@ -240,6 +242,18 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
         await cache.delete(f"log_stats:{raw_signal.user_id}")
     except Exception:
         pass
+
+    # Marketplace fan-out
+    if os.getenv("MARKETPLACE_ENABLED", "false").lower() in ("true", "1", "yes"):
+        try:
+            mp_result = await db.execute(select(MarketplaceProviderModel.id).where(MarketplaceProviderModel.telegram_channel_id == raw_signal.channel_id, MarketplaceProviderModel.is_active.is_(True)).limit(1))
+            if mp_result.scalar_one_or_none() is not None:
+                from src.core.marketplace import marketplace_fanout
+                fanout_results = await marketplace_fanout(parsed_signal=parsed, channel_id=raw_signal.channel_id, raw_message=raw_signal.raw_message, message_id=raw_signal.message_id, reply_to_msg_id=raw_signal.reply_to_msg_id, dispatcher=dispatcher, db_session=db)
+                logger.info("Marketplace fan-out for channel %s: %d dispatches", raw_signal.channel_id, len(fanout_results))
+        except Exception as exc:
+            logger.error("Marketplace fan-out failed for channel %s: %s", raw_signal.channel_id, exc)
+            sentry_sdk.capture_exception(exc)
     await _send_dispatch_notifications(db, settings, raw_signal.user_id, parsed, results)
     await _check_first_signal_milestone(db, settings, raw_signal.user_id, parsed, results)
     return results

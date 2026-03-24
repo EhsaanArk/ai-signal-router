@@ -9,13 +9,21 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useRoutingRules } from "@/hooks/use-routing-rules";
 import type { MarketplaceProvider } from "@/types/marketplace";
 
 interface SubscribeSheetProps {
   provider: MarketplaceProvider | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (providerId: string) => void;
+  onConfirm: (providerId: string, webhookDestinationId: string) => void;
   isLoading: boolean;
 }
 
@@ -27,9 +35,17 @@ export function SubscribeSheet({
   isLoading,
 }: SubscribeSheetProps) {
   const [accepted, setAccepted] = useState(false);
+  const [selectedRuleId, setSelectedRuleId] = useState<string>("");
+  const { data: rules } = useRoutingRules();
+
+  // Only show active rules with a webhook URL configured
+  const availableRules = rules?.filter((r) => r.is_active && r.destination_webhook_url) ?? [];
 
   function handleOpenChange(next: boolean) {
-    if (!next) setAccepted(false);
+    if (!next) {
+      setAccepted(false);
+      setSelectedRuleId("");
+    }
     onOpenChange(next);
   }
 
@@ -42,11 +58,45 @@ export function SubscribeSheet({
             <span className="text-primary">{provider?.name ?? "Provider"}</span>
           </SheetTitle>
           <SheetDescription>
-            Please review and accept before subscribing.
+            Choose a destination and accept the disclaimer.
           </SheetDescription>
         </SheetHeader>
 
         <div className="space-y-3 px-4 py-2">
+          {/* Destination picker */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">
+              Webhook Destination
+            </label>
+            {availableRules.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No signal routes configured. Create a signal route first to subscribe.
+              </p>
+            ) : (
+              <Select value={selectedRuleId} onValueChange={setSelectedRuleId}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Select a destination..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableRules.map((rule) => (
+                    <SelectItem key={rule.id} value={rule.id} className="text-xs">
+                      {rule.destination_label || rule.rule_name || "Unnamed route"}
+                      {rule.destination_type && (
+                        <span className="text-muted-foreground ml-1">
+                          ({rule.destination_type})
+                        </span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <p className="text-[10px] text-muted-foreground">
+              Signals will be routed to this destination&apos;s webhook URL.
+            </p>
+          </div>
+
+          {/* Disclaimer */}
           <ul className="space-y-2 text-xs text-muted-foreground list-disc pl-4">
             <li>
               Signals from this provider will be routed to your configured
@@ -89,8 +139,8 @@ export function SubscribeSheet({
           <Button
             size="sm"
             className="flex-1"
-            disabled={!accepted || isLoading}
-            onClick={() => provider && onConfirm(provider.id)}
+            disabled={!accepted || !selectedRuleId || isLoading}
+            onClick={() => provider && onConfirm(provider.id, selectedRuleId)}
           >
             {isLoading ? "Subscribing..." : "Confirm"}
           </Button>
