@@ -75,13 +75,16 @@ export function SubscribeSheet({
                 <p className="text-xs text-muted-foreground">
                   No signal routes configured yet.
                 </p>
+                <p className="text-[10px] text-muted-foreground">
+                  You need at least one webhook destination to receive signals.
+                </p>
                 <Button
                   variant="outline"
                   size="sm"
                   className="text-xs"
                   onClick={() => {
                     onOpenChange(false);
-                    navigate("/routing-rules/new");
+                    navigate("/routing-rules/new?redirect=/marketplace");
                   }}
                 >
                   Create a Signal Route

@@ -27,9 +27,13 @@ export function ProviderCard({
   const hasData = wr !== null;
 
   return (
-    <div className="rounded-md border border-border/40 bg-card px-4 py-3 transition-colors hover:bg-accent/5">
+    <div
+      role="article"
+      aria-label={`${provider.name} - ${hasData ? `${wr!.toFixed(1)}%` : "N/A"} win rate`}
+      className="rounded-md border border-border/40 bg-card px-4 py-3 transition-colors hover:bg-accent/5"
+    >
       {/* Row 1: Identity */}
-      <div className="flex items-center justify-between gap-2 mb-2.5">
+      <div className="flex items-center justify-between gap-2 mb-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <h3 className="text-sm font-medium truncate">{provider.name}</h3>
           {provider.track_record_days >= 30 && provider.signal_count >= 20 && (
@@ -40,6 +44,12 @@ export function ProviderCard({
           {ASSET_SHORT[provider.asset_class] ?? provider.asset_class}
         </span>
       </div>
+      {provider.description && (
+        <p className="text-[11px] text-muted-foreground truncate mb-2.5">
+          {provider.description.length > 60 ? `${provider.description.slice(0, 60)}...` : provider.description}
+        </p>
+      )}
+      {!provider.description && <div className="mb-1.5" />}
 
       {/* Row 2: Stats — horizontal, equal weight */}
       <div className="flex items-baseline gap-4 mb-2.5">
@@ -80,9 +90,17 @@ export function ProviderCard({
 
       {/* Row 3: Meta + Action */}
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-muted-foreground tabular-nums">
-          {provider.subscriber_count} followers · {provider.track_record_days}d tracked
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+            {provider.subscriber_count} followers · {provider.track_record_days}d tracked
+          </span>
+          <div className="w-12 h-1 rounded-full bg-primary/20 shrink-0">
+            <div
+              className="h-1 rounded-full bg-primary"
+              style={{ width: `${Math.min(100, Math.round((provider.track_record_days / 90) * 100))}%` }}
+            />
+          </div>
+        </div>
         {isSubscribed ? (
           <Button
             variant="ghost"
