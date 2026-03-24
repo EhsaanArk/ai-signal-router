@@ -24,6 +24,7 @@ from src.adapters.db.models import UserModel
 from src.adapters.db.session import get_async_session_factory
 from src.core.constants import ACCESS_TOKEN_EXPIRE_DAYS as _ACCESS_TOKEN_EXPIRE_DAYS
 from src.core.constants import USER_CACHE_TTL_SECONDS
+from src.core.exceptions import AuthenticationError, AuthorizationError
 from src.core.models import SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
@@ -258,17 +259,9 @@ async def get_current_user(
     Uses Redis cache (5-min TTL) to avoid a DB query on every protected request.
     """
     if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise AuthenticationError("Not authenticated")
 
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    credentials_exception = AuthenticationError("Could not validate credentials")
 
     user_id: UUID | None = None
 
@@ -321,14 +314,11 @@ async def get_current_user(
                     created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
                 )
                 if user.is_disabled:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Account is disabled",
-                    )
+                    raise AuthorizationError("Account is disabled")
                 return user
         except (json.JSONDecodeError, KeyError, ValueError):
             logger.debug("User cache parse error for %s, falling back to DB", user_id)
-        except HTTPException:
+        except AuthorizationError:
             raise
         except Exception:
             logger.debug("User cache read failed for %s, falling back to DB", user_id)
@@ -375,10 +365,7 @@ async def get_current_user(
         raise credentials_exception
 
     if getattr(user_row, "is_disabled", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled",
-        )
+        raise AuthorizationError("Account is disabled")
 
     user = User(
         id=user_row.id,
@@ -418,8 +405,5 @@ async def get_admin_user(
 ) -> User:
     """Require the current user to be an admin."""
     if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
+        raise AuthorizationError("Admin access required")
     return current_user

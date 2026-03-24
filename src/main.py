@@ -235,6 +235,41 @@ def create_app() -> FastAPI:
     )
 
     # ------------------------------------------------------------------
+    # Domain exception handler
+    # ------------------------------------------------------------------
+    from src.core.exceptions import (
+        AuthenticationError,
+        AuthorizationError,
+        ConflictError,
+        ExternalServiceError,
+        InputValidationError,
+        ResourceNotFoundError,
+        SageRadarError,
+    )
+
+    _STATUS_MAP: dict[type, int] = {
+        AuthenticationError: 401,
+        AuthorizationError: 403,   # includes TierLimitError
+        ResourceNotFoundError: 404,
+        ConflictError: 409,
+        InputValidationError: 422,
+        ExternalServiceError: 502,  # includes DispatchError
+    }
+
+    async def _domain_exception_handler(request: Request, exc: SageRadarError) -> JSONResponse:
+        status_code = 500
+        for exc_type, code in _STATUS_MAP.items():
+            if isinstance(exc, exc_type):
+                status_code = code
+                break
+        return JSONResponse(
+            status_code=status_code,
+            content={"error": {"code": type(exc).__name__, "message": exc.message}},
+        )
+
+    application.add_exception_handler(SageRadarError, _domain_exception_handler)
+
+    # ------------------------------------------------------------------
     # Rate limiting
     # ------------------------------------------------------------------
     from src.api.deps import limiter

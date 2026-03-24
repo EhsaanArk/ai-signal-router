@@ -43,6 +43,14 @@ from src.core.constants import (
     CURRENT_TOS_VERSION,
     LEGACY_TOKEN_SCAN_LIMIT,
 )
+from src.core.exceptions import (
+    AuthenticationError,
+    AuthorizationError,
+    ConflictError,
+    InputValidationError,
+    ResourceNotFoundError,
+    TierLimitError,
+)
 from src.core.models import RoutingRule, SubscriptionTier, User, normalize_enabled_actions
 from src.core.security import sha256_hex, validate_outbound_webhook_url
 
@@ -347,17 +355,10 @@ async def login(
     if user_row is None or not user_row.password_hash or user_row.password_hash == "!" or not pwd_context.verify(
         form_data.password, user_row.password_hash
     ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise AuthenticationError("Incorrect email or password")
 
     if getattr(user_row, "is_disabled", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled",
-        )
+        raise AuthorizationError("Account is disabled")
 
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
@@ -382,16 +383,10 @@ async def login_json(
     if user_row is None or not user_row.password_hash or user_row.password_hash == "!" or not pwd_context.verify(
         body.password, user_row.password_hash
     ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-        )
+        raise AuthenticationError("Incorrect email or password")
 
     if getattr(user_row, "is_disabled", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled",
-        )
+        raise AuthorizationError("Account is disabled")
 
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
@@ -437,10 +432,7 @@ async def accept_terms(
     from src.adapters.db.models import TermsAcceptanceLogModel
 
     if not body.tos_accepted or not body.privacy_accepted or not body.risk_waiver_accepted:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="You must accept the Terms of Service, Privacy Policy, and Risk Waiver",
-        )
+        raise InputValidationError("You must accept the Terms of Service, Privacy Policy, and Risk Waiver")
 
     # Extract audit data (uses trusted proxy validation for accurate IP)
     ip = _get_real_ip(request)
@@ -493,10 +485,7 @@ async def register(
     """Register a new user and return a JWT."""
     # Require terms acceptance
     if not body.terms_accepted:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="You must accept the Terms of Service and Privacy Policy",
-        )
+        raise InputValidationError("You must accept the Terms of Service and Privacy Policy")
 
     # Check email uniqueness (case-insensitive)
     normalised_email = str(body.email).lower()
@@ -504,10 +493,7 @@ async def register(
         select(UserModel).where(UserModel.email == normalised_email)
     )
     if result.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A user with this email already exists",
-        )
+        raise ConflictError("A user with this email already exists")
 
     hashed = pwd_context.hash(body.password)
     new_user = UserModel(
@@ -638,10 +624,7 @@ async def reset_password(
     )
 
     if matched_token is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
+        raise InputValidationError("Invalid or expired reset token")
 
     # Update user password
     user_result = await db.execute(
@@ -675,10 +658,7 @@ async def verify_email(
     )
 
     if matched_token is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification token",
-        )
+        raise InputValidationError("Invalid or expired verification token")
 
     # Mark user as verified
     user_result = await db.execute(
@@ -733,16 +713,12 @@ async def resend_verification(
         except Exception as exc:
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to send verification email. Please try again later.",
-            )
+            from src.core.exceptions import ExternalServiceError
+            raise ExternalServiceError("Failed to send verification email. Please try again later.")
     else:
         logger.warning("RESEND_API_KEY not set — verification email not sent")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Email service is not configured. Please contact support.",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Email service is not configured. Please contact support.")
 
     return MessageResponse(message="Verification email sent.")
 
@@ -767,22 +743,13 @@ async def change_password(
     user_row = result.scalar_one()
 
     if not user_row.password_hash or user_row.password_hash == "!":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password changes are managed through your sign-in provider (Google or Magic Link). Use Forgot Password to set a new password.",
-        )
+        raise InputValidationError("Password changes are managed through your sign-in provider (Google or Magic Link). Use Forgot Password to set a new password.")
 
     if not pwd_context.verify(body.current_password, user_row.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Current password is incorrect",
-        )
+        raise AuthenticationError("Current password is incorrect")
 
     if len(body.new_password) < 8:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be at least 8 characters",
-        )
+        raise InputValidationError("New password must be at least 8 characters")
 
     user_row.password_hash = pwd_context.hash(body.new_password)
     return MessageResponse(message="Password changed successfully.")
@@ -803,16 +770,10 @@ async def delete_account(
     user_row = result.scalar_one()
 
     if not user_row.password_hash or user_row.password_hash == "!":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Account deletion for OAuth users is not yet supported. Contact support@sagemaster.com.",
-        )
+        raise InputValidationError("Account deletion for OAuth users is not yet supported. Contact support@sagemaster.com.")
 
     if not pwd_context.verify(body.current_password, user_row.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password is incorrect",
-        )
+        raise AuthenticationError("Password is incorrect")
 
     await db.delete(user_row)
     logger.info("User %s deleted their account", current_user.id)
@@ -931,22 +892,13 @@ async def telegram_send_code(
     try:
         result = await auth.send_code(body.phone_number)
     except PhoneNumberInvalidError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid phone number format.",
-        )
+        raise InputValidationError("Invalid phone number format.")
     except FloodWaitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limited by Telegram. Retry after {exc.seconds} seconds.",
-            headers={"Retry-After": str(exc.seconds)},
-        )
+        raise InputValidationError(f"Rate limited by Telegram. Retry after {exc.seconds} seconds.")
     except Exception:
         logger.exception("Telegram send_code failed")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Telegram service unavailable. Please try again later.",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Telegram service unavailable. Please try again later.")
     return SendCodeResponse(phone_code_hash=result["phone_code_hash"])
 
 
@@ -978,49 +930,30 @@ async def telegram_verify_code(
     except (SessionPasswordNeededError, ValueError) as exc:
         if "password" in str(exc).lower() or isinstance(exc, SessionPasswordNeededError):
             return VerifyCodeResponse(status="2fa_required", requires_2fa=True)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
+        raise InputValidationError(str(exc))
     except PhoneCodeInvalidError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid verification code.",
-        )
+        raise InputValidationError("Invalid verification code.")
     except PhoneCodeExpiredError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Verification code has expired. Please request a new one.",
-        )
+        raise InputValidationError("Verification code has expired. Please request a new one.")
     except FloodWaitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limited by Telegram. Retry after {exc.seconds} seconds.",
-            headers={"Retry-After": str(exc.seconds)},
-        )
+        raise InputValidationError(f"Rate limited by Telegram. Retry after {exc.seconds} seconds.")
     except Exception:
         logger.exception("Telegram verify_code failed")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Telegram verification failed. Please try again.",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Telegram verification failed. Please try again.")
 
     # Encrypt the session string before storing
     from src.core.security import encrypt_session
 
     if not settings.ENCRYPTION_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="ENCRYPTION_KEY not configured",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("ENCRYPTION_KEY not configured")
     try:
         encrypted = encrypt_session(session_string, settings.ENCRYPTION_KEY.encode())
     except Exception:
         logger.exception("Failed to encrypt Telegram session")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to encrypt session. Check ENCRYPTION_KEY configuration.",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Failed to encrypt session. Check ENCRYPTION_KEY configuration.")
 
     # Cross-user phone uniqueness check — prevent two different users from
     # connecting the same Telegram account (Telegram kills competing sessions).
@@ -1032,10 +965,7 @@ async def telegram_verify_code(
         ).limit(1)
     )).scalar_one_or_none()
     if conflict is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This phone number is already connected to another account.",
-        )
+        raise ConflictError("This phone number is already connected to another account.")
 
     # Upsert the telegram session record
     result = await db.execute(
@@ -1170,10 +1100,7 @@ async def telegram_disconnect(
     )
     sessions = result.scalars().all()
     if not sessions:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active Telegram session found.",
-        )
+        raise InputValidationError("No active Telegram session found.")
 
     for session in sessions:
         session.is_active = False
@@ -1259,29 +1186,21 @@ async def list_channels(
         )
         session_row = result.scalar_one_or_none()
         if session_row is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No active Telegram session. Please connect Telegram first.",
-            )
+            raise InputValidationError("No active Telegram session. Please connect Telegram first.")
         session_encrypted = session_row.session_string_encrypted
 
     # Decrypt
     from src.core.security import decrypt_session_auto
 
     if not settings.ENCRYPTION_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="ENCRYPTION_KEY not configured",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("ENCRYPTION_KEY not configured")
     try:
         session_string = decrypt_session_auto(session_encrypted, settings.ENCRYPTION_KEY.encode())
     except Exception:
         logger.exception("Failed to decrypt Telegram session for user %s", current_user.id)
         await _deactivate_stale_session(db, session_store, cache, current_user.id)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram session is corrupted. Please reconnect your Telegram account.",
-        )
+        raise InputValidationError("Telegram session is corrupted. Please reconnect your Telegram account.")
 
     # Fetch channels via adapter
     import os
@@ -1304,27 +1223,18 @@ async def list_channels(
             proxy=proxy,
         )
     except FloodWaitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limited by Telegram. Retry after {exc.seconds} seconds.",
-            headers={"Retry-After": str(exc.seconds)},
-        )
+        raise InputValidationError(f"Rate limited by Telegram. Retry after {exc.seconds} seconds.")
     except RuntimeError as exc:
         logger.warning(
             "Telegram session expired for user %s: %s", current_user.id, exc
         )
         # Auto-deactivate the stale session so the frontend reflects reality
         await _deactivate_stale_session(db, session_store, cache, current_user.id)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Telegram session has expired. Please reconnect your Telegram account.",
-        )
+        raise AuthenticationError("Telegram session has expired. Please reconnect your Telegram account.")
     except Exception:
         logger.exception("Failed to fetch Telegram channels for user %s", current_user.id)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to fetch channels from Telegram. Please try again.",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Failed to fetch channels from Telegram. Please try again.")
 
     logger.info(
         "Fetched %d channels for user %s", len(raw_channels), current_user.id
@@ -1368,15 +1278,12 @@ def _check_tier_limit(
     tier: SubscriptionTier,
     current_rule_count: int,
 ) -> None:
-    """Raise 403 if the user has reached their destination limit."""
+    """Raise if the user has reached their destination limit."""
     if current_rule_count >= tier.max_destinations:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"Your {tier.value} plan allows up to "
-                f"{tier.max_destinations} route(s). "
-                "Please upgrade to add more."
-            ),
+        raise TierLimitError(
+            f"Your {tier.value} plan allows up to "
+            f"{tier.max_destinations} route(s). "
+            "Please upgrade to add more."
         )
 
 
@@ -1427,10 +1334,7 @@ async def create_routing_rule(
         local_mode=settings.LOCAL_MODE,
     )
     if not allowed_url:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid destination webhook URL: {reason}",
-        )
+        raise InputValidationError(f"Invalid destination webhook URL: {reason}")
 
     # Count existing active rules
     count_result = await db.execute(
@@ -1456,21 +1360,17 @@ async def create_routing_rule(
         .limit(1)
     )
     if dup_result.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This webhook URL is already in use by another account. "
-            "Each SageMaster Assist can only be connected to one Sage Radar account.",
+        raise ConflictError(
+            "This webhook URL is already in use by another account. "
+            "Each SageMaster Assist can only be connected to one Sage Radar account."
         )
 
     # Template is required for SageMaster destinations (contains assistId)
     if body.destination_type in ("sagemaster_forex", "sagemaster_crypto") and not body.webhook_body_template:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "Webhook body template is required for SageMaster destinations. "
-                "Copy the JSON from your SageMaster Assists overview page > "
-                "alert configuration in SageMaster."
-            ),
+        raise InputValidationError(
+            "Webhook body template is required for SageMaster destinations. "
+            "Copy the JSON from your SageMaster Assists overview page > "
+            "alert configuration in SageMaster."
         )
 
     new_rule = RoutingRuleModel(
@@ -1512,7 +1412,7 @@ async def get_routing_rule(
     )
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routing rule not found")
+        raise ResourceNotFoundError("Routing rule not found")
     return _rule_to_response(row)
 
 
@@ -1534,7 +1434,7 @@ async def update_routing_rule(
     )
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routing rule not found")
+        raise ResourceNotFoundError("Routing rule not found")
 
     update_data = body.model_dump(exclude_unset=True)
 
@@ -1544,10 +1444,7 @@ async def update_routing_rule(
         local_mode=settings.LOCAL_MODE,
     )
     if not allowed_url:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid destination webhook URL: {reason}",
-        )
+        raise InputValidationError(f"Invalid destination webhook URL: {reason}")
 
     # Prevent duplicate webhook URLs across accounts:
     # - when URL is changed to one already used by another account
@@ -1566,23 +1463,19 @@ async def update_routing_rule(
             .limit(1)
         )
         if dup_result.scalar_one_or_none() is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This webhook URL is already in use by another account. "
-                "Each SageMaster Assist can only be connected to one Sage Radar account.",
+            raise ConflictError(
+                "This webhook URL is already in use by another account. "
+                "Each SageMaster Assist can only be connected to one Sage Radar account."
             )
 
     # Determine the effective destination_type and template after update
     effective_type = update_data.get("destination_type", row.destination_type)
     effective_template = update_data.get("webhook_body_template", row.webhook_body_template)
     if effective_type in ("sagemaster_forex", "sagemaster_crypto") and not effective_template:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "Webhook body template is required for SageMaster destinations. "
-                "Copy the JSON from your SageMaster Assists overview page > "
-                "alert configuration in SageMaster."
-            ),
+        raise InputValidationError(
+            "Webhook body template is required for SageMaster destinations. "
+            "Copy the JSON from your SageMaster Assists overview page > "
+            "alert configuration in SageMaster."
         )
 
     if "enabled_actions" in update_data:
@@ -1617,7 +1510,7 @@ async def delete_routing_rule(
     )
     row = result.scalar_one_or_none()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routing rule not found")
+        raise ResourceNotFoundError("Routing rule not found")
     await db.delete(row)
     await cache.delete(f"rules:{current_user.id}")
 
@@ -1666,10 +1559,8 @@ async def parse_preview(
 
     settings = get_settings()
     if not settings.OPENAI_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Parser not available — OpenAI API key not configured.",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Parser not available — OpenAI API key not configured.")
 
     parser = OpenAISignalParser(api_key=settings.OPENAI_API_KEY)
 
@@ -1687,16 +1578,11 @@ async def parse_preview(
             timeout=10.0,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Parser timed out. Try again.",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Parser timed out. Try again.")
     except Exception as exc:
         logger.warning("Parse preview failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Couldn't parse this message. Try different wording.",
-        )
+        raise InputValidationError("Couldn't parse this message. Try different wording.")
 
     # Compute forwarding verdict against supplied enabled_actions
     display_label: str | None = None
@@ -1753,10 +1639,7 @@ async def test_webhook(
             local_mode=settings.LOCAL_MODE,
         )
         if not allowed:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid webhook URL: {reason}",
-            )
+            raise InputValidationError(f"Invalid webhook URL: {reason}")
 
         test_payload = {
             "type": "test",
@@ -1773,7 +1656,7 @@ async def test_webhook(
             )
     except httpx.TimeoutException:
         return TestWebhookResponse(success=False, error="Request timed out")
-    except HTTPException:
+    except InputValidationError:
         raise
     except Exception as exc:
         return TestWebhookResponse(success=False, error=str(exc))
@@ -1946,10 +1829,8 @@ class TelegramBotLinkResponse(BaseModel):
 def _create_telegram_bot_link_token(user_id: UUID, settings: Settings) -> str:
     """Create a signed short-lived token for Telegram bot linking."""
     if not settings.TELEGRAM_BOT_LINK_SECRET:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Telegram bot link signing is not configured",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Telegram bot link signing is not configured")
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
@@ -1993,10 +1874,8 @@ async def get_telegram_bot_link(
     Telegram ``chat_id`` with their account.
     """
     if not settings.TELEGRAM_BOT_TOKEN:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Telegram bot notifications are not configured",
-        )
+        from src.core.exceptions import ExternalServiceError
+        raise ExternalServiceError("Telegram bot notifications are not configured")
     token = _create_telegram_bot_link_token(current_user.id, settings)
     bot_username = await _resolve_bot_username(settings.TELEGRAM_BOT_TOKEN)
     return TelegramBotLinkResponse(
@@ -2049,16 +1928,11 @@ async def telegram_bot_webhook(
         required_secret = settings.TELEGRAM_BOT_WEBHOOK_SECRET
         if not required_secret:
             logger.error("Telegram bot webhook secret not configured in production mode")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Telegram bot webhook secret is not configured",
-            )
+            from src.core.exceptions import ExternalServiceError
+            raise ExternalServiceError("Telegram bot webhook secret is not configured")
         provided_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if not provided_secret or not hmac.compare_digest(provided_secret, required_secret):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid Telegram webhook secret",
-            )
+            raise AuthenticationError("Invalid Telegram webhook secret")
 
     text = message.get("text", "")
     chat_id = message.get("chat", {}).get("id")
