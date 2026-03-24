@@ -122,6 +122,12 @@ class ResendNotifier:
             "This can happen after a server-side encryption key rotation. "
             "Please reconnect your Telegram account to create a new session.",
         ),
+        "auth_key_duplicated_permanent": (
+            "Your Telegram session had a connection conflict",
+            "Multiple connections tried to use the same session simultaneously "
+            "and recovery attempts were unsuccessful. "
+            "Please reconnect your Telegram account to create a fresh session.",
+        ),
     }
 
     async def send_disconnect_alert(
