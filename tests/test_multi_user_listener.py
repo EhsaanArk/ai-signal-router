@@ -49,6 +49,7 @@ def _make_manager(**overrides) -> MultiUserListenerManager:
     manager._repo.load_monitored_channels = AsyncMock(return_value=set())
     manager._repo.load_session_for_user = AsyncMock(return_value=None)
     manager._repo.deactivate_session = AsyncMock()
+    manager._repo.log_connection_event = AsyncMock()
     manager._repo.get_user_notification_prefs = AsyncMock(return_value=(None, MagicMock(email_on_disconnect=False)))
     return manager
 
@@ -508,14 +509,14 @@ class TestProactiveAuthCheck:
 
     @pytest.mark.asyncio
     async def test_handles_auth_key_error(self):
-        """AuthKeyError during proactive auth check should deactivate."""
-        from telethon.errors import AuthKeyDuplicatedError
+        """Permanent AuthKeyError during proactive auth check should deactivate."""
+        from telethon.errors import AuthKeyUnregisteredError
 
         manager = _make_manager()
 
         mock_listener = _mock_listener(connected=True)
         mock_listener._client.is_user_authorized = AsyncMock(
-            side_effect=AuthKeyDuplicatedError(request=None),
+            side_effect=AuthKeyUnregisteredError(request=None),
         )
         manager._listeners = {USER_A: mock_listener}
         manager._failure_counts = {USER_A: 0}
@@ -777,9 +778,9 @@ class TestExpiredSessionDeactivation:
 
     @pytest.mark.asyncio
     @patch("src.adapters.telegram.manager.TelegramListener")
-    async def test_auth_key_duplicated_error_deactivates_session(self, MockListener):
-        """AuthKeyDuplicatedError (e.g., two containers using same session)
-        should trigger session deactivation, not silent retry."""
+    async def test_auth_key_duplicated_error_does_not_deactivate(self, MockListener):
+        """AuthKeyDuplicatedError is transient — should NOT deactivate.
+        It increments startup_failures for backoff retry, not permanent kill."""
         from telethon.errors import AuthKeyDuplicatedError
 
         mock_listener = _mock_listener()
@@ -795,7 +796,8 @@ class TestExpiredSessionDeactivation:
         )
 
         assert result is False
-        manager._repo.deactivate_session.assert_awaited_once_with(USER_A, "session_expired")
+        # Should NOT deactivate — AuthKeyDuplicatedError is transient
+        manager._repo.deactivate_session.assert_not_awaited()
         assert USER_A not in manager._listeners
 
 
@@ -807,12 +809,12 @@ class TestExpiredSessionDeactivation:
 class TestIsSessionDead:
     """Tests for the _is_session_dead() helper function."""
 
-    def test_auth_key_error_is_dead(self):
-        """Any AuthKeyError subclass should be treated as a dead session."""
+    def test_auth_key_duplicated_is_transient(self):
+        """AuthKeyDuplicatedError is transient — NOT a dead session."""
         from telethon.errors import AuthKeyDuplicatedError
         from src.adapters.telegram.manager import _is_session_dead
 
-        assert _is_session_dead(AuthKeyDuplicatedError(request=None)) is True
+        assert _is_session_dead(AuthKeyDuplicatedError(request=None)) is False
 
     def test_not_authorised_runtime_error_is_dead(self):
         """RuntimeError with 'not authorised' message should be dead."""
