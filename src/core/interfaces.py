@@ -11,6 +11,7 @@ from typing import Protocol
 from uuid import UUID
 
 from src.core.models import (
+    DispatchJob,
     DispatchResult,
     ParsedSignal,
     RawSignal,
@@ -78,6 +79,14 @@ class QueuePort(Protocol):
 
     async def enqueue(self, signal: RawSignal) -> None:
         """Place *signal* onto the processing queue."""
+        ...
+
+
+class DispatchQueuePort(Protocol):
+    """Abstraction over the Stage 2 dispatch queue (QStash or local)."""
+
+    async def enqueue_dispatch_job(self, job: DispatchJob) -> None:
+        """Place a per-rule dispatch *job* onto the dispatch queue."""
         ...
 
 

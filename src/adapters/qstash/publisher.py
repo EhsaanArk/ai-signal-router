@@ -16,7 +16,7 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from src.core.models import RawSignal
+from src.core.models import DispatchJob, RawSignal
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,10 @@ class QStashPublisher:
     DEFAULT_QSTASH_URL = "https://qstash.upstash.io"
     QSTASH_PUBLISH_URL = f"{DEFAULT_QSTASH_URL}/v2/publish/"
 
-    def __init__(self, qstash_token: str, workflow_url: str, qstash_url: str = "") -> None:
+    def __init__(self, qstash_token: str, workflow_url: str, qstash_url: str = "", dispatch_url: str = "") -> None:
         self._token = qstash_token
         self._workflow_url = workflow_url
+        self._dispatch_url = dispatch_url
         base = (qstash_url or self.DEFAULT_QSTASH_URL).rstrip("/")
         self._publish_url = f"{base}/v2/publish/"
         self._client = httpx.AsyncClient(
@@ -73,6 +74,29 @@ class QStashPublisher:
             )
             response.raise_for_status()
 
+    async def enqueue_dispatch_job(self, job: DispatchJob) -> None:
+        """Publish a Stage 2 dispatch job to QStash."""
+        if not self._dispatch_url:
+            raise RuntimeError("dispatch_url not configured on QStashPublisher")
+        url = f"{self._publish_url}{self._dispatch_url}"
+        payload = job.model_dump_json()
+
+        response = await self._client.post(url, content=payload)
+
+        if response.is_success:
+            logger.info(
+                "Published dispatch job (rule %s, msg %d) to QStash",
+                job.routing_rule_id,
+                job.raw_signal_meta.message_id,
+            )
+        else:
+            logger.error(
+                "QStash dispatch publish failed — HTTP %d: %s",
+                response.status_code,
+                response.text[:500],
+            )
+            response.raise_for_status()
+
     async def close(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()
@@ -92,8 +116,23 @@ class LocalQueueAdapter:
         (e.g. parses, routes, and dispatches).
     """
 
-    def __init__(self, callback: Callable[[RawSignal], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        callback: Callable[[RawSignal], Awaitable[None]],
+        dispatch_callback: Callable[[DispatchJob], Awaitable[None]] | None = None,
+    ) -> None:
         self._callback = callback
+        self._dispatch_callback = dispatch_callback
+
+    async def enqueue_dispatch_job(self, job: DispatchJob) -> None:
+        """Process a dispatch job via the registered dispatch callback."""
+        if self._dispatch_callback is None:
+            raise RuntimeError("dispatch_callback not configured on LocalQueueAdapter")
+        logger.debug(
+            "LocalQueueAdapter: processing dispatch job (rule %s) in-process",
+            job.routing_rule_id,
+        )
+        await self._dispatch_callback(job)
 
     async def enqueue(self, raw_signal: RawSignal) -> None:
         """Process *raw_signal* synchronously via the registered callback."""

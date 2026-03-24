@@ -145,6 +145,28 @@ def create_app() -> FastAPI:
 
         app.state.dispatcher = WebhookDispatcher(timeout=15.0)
 
+        # Initialise two-stage dispatch queue (when enabled)
+        if settings_local.TWO_STAGE_DISPATCH:
+            if local_mode:
+                from src.adapters.qstash.publisher import LocalQueueAdapter
+
+                app.state.dispatch_queue = LocalQueueAdapter(
+                    callback=lambda sig: None,  # unused for dispatch queue
+                    dispatch_callback=None,  # set up after workflow import
+                )
+                logger.info("Two-stage dispatch enabled (local mode — in-process)")
+            else:
+                from src.adapters.qstash.publisher import QStashPublisher
+
+                dispatch_url = f"{settings_local.BACKEND_URL}/api/workflow/dispatch-signal"
+                app.state.dispatch_queue = QStashPublisher(
+                    qstash_token=settings_local.QSTASH_TOKEN,
+                    workflow_url=settings_local.BACKEND_URL + "/api/workflow/process-signal",
+                    dispatch_url=dispatch_url,
+                    qstash_url=settings_local.QSTASH_URL,
+                )
+                logger.info("Two-stage dispatch enabled (QStash → %s)", dispatch_url)
+
         # LOCAL_MODE: auto-create tables
         if local_mode:
             if not os.environ.get("DATABASE_URL"):
