@@ -38,7 +38,7 @@ export function SubscribeSheet({
   const navigate = useNavigate();
   const [accepted, setAccepted] = useState(false);
   const [selectedRuleId, setSelectedRuleId] = useState<string>("");
-  const { data: rules } = useRoutingRules();
+  const { data: rules } = useRoutingRules(open);
 
   // Only show active rules with a webhook URL configured
   const availableRules = rules?.filter((r) => r.is_active && r.destination_webhook_url) ?? [];
