@@ -518,25 +518,22 @@ async def register(
     verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_verify_token}"
     email_sent = False
     if settings.RESEND_API_KEY:
+        from src.adapters.email import ResendNotifier
+        notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
         try:
-            import resend
-            resend.api_key = settings.RESEND_API_KEY
-            await asyncio.to_thread(resend.Emails.send, {
-                "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
-                "to": [body.email],
-                "subject": "Verify your email",
-                "html": _build_verification_email_html(
+            await notifier.send_raw_email(
+                to=str(body.email),
+                subject="Verify your email",
+                html=_build_verification_email_html(
                     verify_link, "Welcome to Sage Radar AI!"
                 ),
-            })
+            )
             email_sent = True
         except Exception as exc:
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
         # Send welcome email (separate from verification)
         try:
-            from src.adapters.email import ResendNotifier
-            notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
             await notifier.send_welcome(str(body.email), settings.FRONTEND_URL)
         except Exception as exc:
             logger.error("Welcome email failed (non-blocking): %s", exc)
@@ -585,19 +582,17 @@ async def forgot_password(
 
         if settings.RESEND_API_KEY:
             try:
-                import resend
-
-                resend.api_key = settings.RESEND_API_KEY
-                await asyncio.to_thread(resend.Emails.send, {
-                    "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
-                    "to": [body.email],
-                    "subject": "Reset your password",
-                    "html": (
+                from src.adapters.email import ResendNotifier
+                notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+                await notifier.send_raw_email(
+                    to=body.email,
+                    subject="Reset your password",
+                    html=(
                         "<p>Click the link below to reset your password. "
                         "This link expires in 1 hour.</p>"
                         f'<p><a href="{reset_link}">Reset Password</a></p>'
                     ),
-                })
+                )
             except Exception as exc:
                 logger.exception("Failed to send password reset email")
                 sentry_sdk.capture_exception(exc)
@@ -702,14 +697,13 @@ async def resend_verification(
     verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_token}"
     if settings.RESEND_API_KEY:
         try:
-            import resend
-            resend.api_key = settings.RESEND_API_KEY
-            await asyncio.to_thread(resend.Emails.send, {
-                "from": "Sage Radar AI <noreply@radar.sagemaster.com>",
-                "to": [current_user.email],
-                "subject": "Verify your email",
-                "html": _build_verification_email_html(verify_link),
-            })
+            from src.adapters.email import ResendNotifier
+            notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+            await notifier.send_raw_email(
+                to=current_user.email,
+                subject="Verify your email",
+                html=_build_verification_email_html(verify_link),
+            )
         except Exception as exc:
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
