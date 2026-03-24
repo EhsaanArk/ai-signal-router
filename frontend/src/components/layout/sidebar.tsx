@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
+  Bookmark,
   BookOpen,
   Brain,
   ChevronLeft,
@@ -38,7 +39,8 @@ const routePrefetchMap: Record<string, () => Promise<unknown>> = {
   "/admin/system-rules": () => import("../../pages/admin/system-rules"),
   "/admin/parser": () => import("../../pages/admin/parser"),
   "/admin/settings": () => import("../../pages/admin/settings"),
-  "/marketplace": () => import("../../pages/marketplace-subscriptions"),
+  "/marketplace": () => import("../../pages/marketplace"),
+  "/dashboard/subscriptions": () => import("../../pages/marketplace-subscriptions"),
   "/admin/marketplace": () => import("../../pages/admin/marketplace"),
 };
 
@@ -52,6 +54,7 @@ const navItems = [
   { path: "/telegram", label: "Telegram", icon: MessageSquare },
   { path: "/routing-rules", label: "Signal Routes", icon: Route },
   { path: "/marketplace", label: "Marketplace", icon: Store },
+  { path: "/dashboard/subscriptions", label: "My Subs", icon: Bookmark },
   { path: "/logs", label: "Signal Logs", icon: ScrollText },
   { path: "/settings", label: "Settings", icon: Settings },
 ];

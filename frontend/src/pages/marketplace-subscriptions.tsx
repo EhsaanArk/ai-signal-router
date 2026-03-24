@@ -24,45 +24,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { usePageTitle } from "@/hooks/use-page-title";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiFetch } from "@/lib/api";
+import { useMySubscriptions, useUnsubscribe } from "@/hooks/use-marketplace";
 import { toast } from "sonner";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface Subscription {
-  id: string;
-  provider_name: string;
-  asset_class: string;
-  status: "active" | "paused";
-  subscribed_at: string;
-}
-
-// ---------------------------------------------------------------------------
-// Hooks (co-located — user-facing, not admin)
-// ---------------------------------------------------------------------------
-
-function useMySubscriptions() {
-  return useQuery({
-    queryKey: ["marketplace-subscriptions"],
-    queryFn: () => apiFetch<Subscription[]>("/marketplace/subscriptions"),
-  });
-}
-
-function useUnsubscribe() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (subscriptionId: string) =>
-      apiFetch<void>(`/marketplace/subscriptions/${subscriptionId}`, {
-        method: "DELETE",
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["marketplace-subscriptions"] });
-    },
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Page
@@ -150,23 +113,23 @@ export function MarketplaceSubscriptionsPage() {
             </TableHeader>
             <TableBody>
               {subscriptions.map((sub) => (
-                <TableRow key={sub.id}>
+                <TableRow key={sub.subscription_id}>
                   <TableCell className="text-xs font-medium">
                     {sub.provider_name}
                   </TableCell>
                   <TableCell className="text-xs capitalize">
-                    {sub.asset_class}
+                    {sub.provider_asset_class}
                   </TableCell>
                   <TableCell>
                     <Badge
-                      variant={sub.status === "active" ? "default" : "secondary"}
+                      variant={sub.is_active ? "default" : "secondary"}
                       className="text-[10px]"
                     >
-                      {sub.status}
+                      {sub.is_active ? "active" : "paused"}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    {new Date(sub.subscribed_at).toLocaleDateString("en-US", {
+                    {new Date(sub.created_at).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
                       year: "numeric",
@@ -177,7 +140,7 @@ export function MarketplaceSubscriptionsPage() {
                       variant="outline"
                       size="sm"
                       className="h-7 text-xs text-destructive hover:text-destructive"
-                      onClick={() => setUnsubId(sub.id)}
+                      onClick={() => setUnsubId(sub.provider_id)}
                     >
                       Unsubscribe
                     </Button>
