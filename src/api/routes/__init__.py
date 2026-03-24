@@ -29,7 +29,40 @@ from src.api.routes.routing_rules import (  # noqa: F401
     _rule_to_response,
     parse_preview,
 )
-from src.api.routes.schemas import *  # noqa: F401, F403
+from src.api.routes.schemas import (  # noqa: F401
+    AcceptTermsRequest,
+    ChangePasswordRequest,
+    ChannelInfo,
+    DeleteAccountRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    LoginResponse,
+    LogStatsResponse,
+    MessageResponse,
+    NotificationPreferencesResponse,
+    NotificationPreferencesUpdate,
+    PaginatedLogs,
+    ParsePreviewRequest,
+    ParsePreviewResponse,
+    RegisterRequest,
+    ResetPasswordRequest,
+    RoutingRuleCreate,
+    RoutingRuleResponse,
+    RoutingRuleUpdate,
+    SendCodeRequest,
+    SendCodeResponse,
+    SignalLogResponse,
+    TelegramBotLinkResponse,
+    TelegramBotUpdate,
+    TelegramStatusResponse,
+    TestWebhookRequest,
+    TestWebhookResponse,
+    TokenResponse,
+    UserMeResponse,
+    VerifyCodeRequest,
+    VerifyCodeResponse,
+    VerifyEmailRequest,
+)
 
 router = APIRouter()
 router.include_router(auth_router)

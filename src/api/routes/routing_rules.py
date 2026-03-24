@@ -20,6 +20,7 @@ from src.api.deps import (
 )
 from src.core.exceptions import (
     ConflictError,
+    ExternalServiceError,
     InputValidationError,
     ResourceNotFoundError,
     TierLimitError,
@@ -329,7 +330,6 @@ async def parse_preview(
 
     settings = get_settings()
     if not settings.OPENAI_API_KEY:
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Parser not available — OpenAI API key not configured.")
 
     parser = OpenAISignalParser(api_key=settings.OPENAI_API_KEY)
@@ -348,7 +348,6 @@ async def parse_preview(
             timeout=10.0,
         )
     except asyncio.TimeoutError:
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Parser timed out. Try again.")
     except Exception as exc:
         logger.warning("Parse preview failed: %s", exc)

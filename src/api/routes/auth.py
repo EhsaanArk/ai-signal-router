@@ -35,6 +35,7 @@ from src.core.exceptions import (
     AuthenticationError,
     AuthorizationError,
     ConflictError,
+    ExternalServiceError,
     InputValidationError,
 )
 from src.core.models import User
@@ -303,8 +304,7 @@ async def register(
     verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_verify_token}"
     email_sent = False
     if settings.RESEND_API_KEY:
-        from src.adapters.email import ResendNotifier
-        notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+        notifier = request.app.state.notifier
         try:
             await notifier.send_raw_email(
                 to=str(body.email),
@@ -367,8 +367,7 @@ async def forgot_password(
 
         if settings.RESEND_API_KEY:
             try:
-                from src.adapters.email import ResendNotifier
-                notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+                notifier = request.app.state.notifier
                 await notifier.send_raw_email(
                     to=body.email,
                     subject="Reset your password",
@@ -478,8 +477,7 @@ async def resend_verification(
     verify_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_token}"
     if settings.RESEND_API_KEY:
         try:
-            from src.adapters.email import ResendNotifier
-            notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+            notifier = request.app.state.notifier
             await notifier.send_raw_email(
                 to=current_user.email,
                 subject="Verify your email",
@@ -488,11 +486,9 @@ async def resend_verification(
         except Exception as exc:
             logger.exception("Failed to send verification email")
             sentry_sdk.capture_exception(exc)
-            from src.core.exceptions import ExternalServiceError
             raise ExternalServiceError("Failed to send verification email. Please try again later.")
     else:
         logger.warning("RESEND_API_KEY not set — verification email not sent")
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Email service is not configured. Please contact support.")
 
     return MessageResponse(message="Verification email sent.")

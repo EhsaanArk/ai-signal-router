@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt import InvalidTokenError
@@ -215,6 +215,11 @@ def get_dispatcher(request: Request):
     return request.app.state.dispatcher
 
 
+def get_notifier(request: Request):
+    """Return the shared ResendNotifier instance from app state."""
+    return request.app.state.notifier
+
+
 # ---------------------------------------------------------------------------
 # JWT helpers
 # ---------------------------------------------------------------------------
@@ -249,6 +254,7 @@ async def get_current_user(
     token: Annotated[str | None, Depends(oauth2_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    background_tasks: BackgroundTasks = None,
 ) -> User:
     """Decode the bearer token and return the corresponding :class:`User`.
 
@@ -350,10 +356,8 @@ async def get_current_user(
             logger.info("Auto-created user %s (%s) from Supabase", user_id, email)
 
             # Fire welcome email as a background task so it doesn't block
-            # the auth dependency (avoids 3 I/O ops in the request path).
-            if settings.RESEND_API_KEY:
-                import asyncio
-
+            # the auth dependency (avoids I/O in the request path).
+            if settings.RESEND_API_KEY and background_tasks is not None:
                 async def _send_welcome_bg(api_key: str, to: str, url: str) -> None:
                     try:
                         from src.adapters.email import ResendNotifier
@@ -362,8 +366,8 @@ async def get_current_user(
                     except Exception:
                         logger.debug("Welcome email failed for new user (bg)")
 
-                asyncio.create_task(
-                    _send_welcome_bg(settings.RESEND_API_KEY, email, settings.FRONTEND_URL)
+                background_tasks.add_task(
+                    _send_welcome_bg, settings.RESEND_API_KEY, email, settings.FRONTEND_URL
                 )
         except Exception as exc:
             logger.error("Failed to auto-create user %s: %s", user_id, exc)

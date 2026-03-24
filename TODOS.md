@@ -308,7 +308,7 @@ All 4 actions (close_all, close_all_stop, start_assist, stop_assist) implemented
 - PR #96 adds `token_lookup_hash` column + migration 023 + the legacy fallback
 - New tokens always get a hash. Legacy tokens expire within 24h.
 - Safe to remove after PR #96 has been deployed to production for 48+ hours
-- Files to modify: `src/api/routes.py` (remove legacy branch from `_find_valid_token_row`)
+- Files to modify: `src/api/routes/auth.py` (remove legacy branch from `_find_valid_token_row`)
 
 **Effort:** S (human) → S (CC)
 **Priority:** P2

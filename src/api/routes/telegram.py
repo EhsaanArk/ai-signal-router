@@ -32,6 +32,7 @@ from src.api.deps import (
 from src.core.exceptions import (
     AuthenticationError,
     ConflictError,
+    ExternalServiceError,
     InputValidationError,
 )
 from src.core.models import User
@@ -103,13 +104,13 @@ async def telegram_send_code(
         raise InputValidationError(f"Rate limited by Telegram. Retry after {exc.seconds} seconds.")
     except Exception:
         logger.exception("Telegram send_code failed")
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Telegram service unavailable. Please try again later.")
     return SendCodeResponse(phone_code_hash=result["phone_code_hash"])
 
 
 @router.post("/telegram/verify-code", response_model=VerifyCodeResponse)
 async def telegram_verify_code(
+    request: Request,
     body: VerifyCodeRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -145,20 +146,17 @@ async def telegram_verify_code(
         raise InputValidationError(f"Rate limited by Telegram. Retry after {exc.seconds} seconds.")
     except Exception:
         logger.exception("Telegram verify_code failed")
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Telegram verification failed. Please try again.")
 
     # Encrypt the session string before storing
     from src.core.security import encrypt_session
 
     if not settings.ENCRYPTION_KEY:
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("ENCRYPTION_KEY not configured")
     try:
         encrypted = encrypt_session(session_string, settings.ENCRYPTION_KEY.encode())
     except Exception:
         logger.exception("Failed to encrypt Telegram session")
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Failed to encrypt session. Check ENCRYPTION_KEY configuration.")
 
     # Cross-user phone uniqueness check — prevent two different users from
@@ -209,8 +207,7 @@ async def telegram_verify_code(
     # Send "Telegram connected" milestone email (non-blocking)
     if settings.RESEND_API_KEY:
         try:
-            from src.adapters.email import ResendNotifier
-            notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
+            notifier = request.app.state.notifier
             await notifier.send_telegram_connected(
                 current_user.email, settings.FRONTEND_URL,
             )
@@ -399,7 +396,6 @@ async def list_channels(
     from src.core.security import decrypt_session_auto
 
     if not settings.ENCRYPTION_KEY:
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("ENCRYPTION_KEY not configured")
     try:
         session_string = decrypt_session_auto(session_encrypted, settings.ENCRYPTION_KEY.encode())
@@ -439,7 +435,6 @@ async def list_channels(
         raise AuthenticationError("Telegram session has expired. Please reconnect your Telegram account.")
     except Exception:
         logger.exception("Failed to fetch Telegram channels for user %s", current_user.id)
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Failed to fetch channels from Telegram. Please try again.")
 
     logger.info(
@@ -459,7 +454,6 @@ async def list_channels(
 def _create_telegram_bot_link_token(user_id: UUID, settings: Settings) -> str:
     """Create a signed short-lived token for Telegram bot linking."""
     if not settings.TELEGRAM_BOT_LINK_SECRET:
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Telegram bot link signing is not configured")
     now = datetime.now(timezone.utc)
     payload = {
@@ -523,7 +517,6 @@ async def get_telegram_bot_link(
     Telegram ``chat_id`` with their account.
     """
     if not settings.TELEGRAM_BOT_TOKEN:
-        from src.core.exceptions import ExternalServiceError
         raise ExternalServiceError("Telegram bot notifications are not configured")
     token = _create_telegram_bot_link_token(current_user.id, settings)
     bot_username = await _resolve_bot_username(settings.TELEGRAM_BOT_TOKEN)
@@ -552,7 +545,6 @@ async def telegram_bot_webhook(
         required_secret = settings.TELEGRAM_BOT_WEBHOOK_SECRET
         if not required_secret:
             logger.error("Telegram bot webhook secret not configured in production mode")
-            from src.core.exceptions import ExternalServiceError
             raise ExternalServiceError("Telegram bot webhook secret is not configured")
         provided_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if not provided_secret or not hmac.compare_digest(provided_secret, required_secret):

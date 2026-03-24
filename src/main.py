@@ -149,6 +149,12 @@ def create_app() -> FastAPI:
 
         app.state.dispatcher = WebhookDispatcher(timeout=15.0)
 
+        # Initialise shared email notifier (singleton — avoids setting
+        # the resend.api_key module-global on every call).
+        from src.adapters.email import ResendNotifier
+
+        app.state.notifier = ResendNotifier(api_key=settings_local.RESEND_API_KEY or "")
+
         # Initialise two-stage dispatch queue (when enabled)
         if settings_local.TWO_STAGE_DISPATCH:
             if local_mode:
@@ -262,9 +268,13 @@ def create_app() -> FastAPI:
             if isinstance(exc, exc_type):
                 status_code = code
                 break
+        headers: dict[str, str] | None = None
+        if status_code == 401:
+            headers = {"WWW-Authenticate": "Bearer"}
         return JSONResponse(
             status_code=status_code,
             content={"error": {"code": type(exc).__name__, "message": exc.message}},
+            headers=headers,
         )
 
     application.add_exception_handler(SageRadarError, _domain_exception_handler)
