@@ -1017,7 +1017,7 @@ class TestLoginReturnsUser:
     async def test_register_includes_user_profile(self, client: AsyncClient):
         resp = await client.post(
             "/api/v1/auth/register",
-            json={"email": "newuser@example.com", "password": "newpass123"},
+            json={"email": "newuser@example.com", "password": "newpass123", "terms_accepted": True},
         )
         assert resp.status_code == 201
         data = resp.json()

@@ -215,7 +215,7 @@ class TestParsePreviewEndpoint:
         assert result.symbol is None  # "UNKNOWN" stripped
 
     async def test_timeout_returns_504(self):
-        """When parser takes >10s, endpoint returns 504."""
+        """When parser takes >10s, endpoint raises ExternalServiceError."""
         mock_parser = AsyncMock()
 
         async def slow_parse(*args, **kwargs):
@@ -225,41 +225,37 @@ class TestParsePreviewEndpoint:
         mock_parser.parse.side_effect = slow_parse
 
         with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
-            from fastapi import HTTPException
-            with pytest.raises(HTTPException) as exc_info:
+            from src.core.exceptions import ExternalServiceError
+            with pytest.raises(ExternalServiceError, match="(?i)timed out"):
                 await parse_preview(
                     request=_mock_request(),
                     body=ParsePreviewRequest(message="Buy XAUUSD"),
                     current_user=_mock_user(),
                 )
-            assert exc_info.value.status_code == 504
-            assert "timed out" in exc_info.value.detail.lower()
 
     async def test_parser_exception_returns_422(self):
-        """When parser raises an unexpected error, endpoint returns 422."""
+        """When parser raises an unexpected error, endpoint raises InputValidationError."""
         mock_parser = AsyncMock()
         mock_parser.parse.side_effect = RuntimeError("OpenAI down")
 
         with patch("src.adapters.openai.OpenAISignalParser", return_value=mock_parser):
-            from fastapi import HTTPException
-            with pytest.raises(HTTPException) as exc_info:
+            from src.core.exceptions import InputValidationError
+            with pytest.raises(InputValidationError):
                 await parse_preview(
                     request=_mock_request(),
                     body=ParsePreviewRequest(message="Buy XAUUSD"),
                     current_user=_mock_user(),
                 )
-            assert exc_info.value.status_code == 422
 
     async def test_no_api_key_returns_503(self, _patch_no_api_key):
-        """When OPENAI_API_KEY is not set, endpoint returns 503."""
-        from fastapi import HTTPException
-        with pytest.raises(HTTPException) as exc_info:
+        """When OPENAI_API_KEY is not set, endpoint raises ExternalServiceError."""
+        from src.core.exceptions import ExternalServiceError
+        with pytest.raises(ExternalServiceError):
             await parse_preview(
                 request=_mock_request(),
                 body=ParsePreviewRequest(message="Buy XAUUSD"),
                 current_user=_mock_user(),
             )
-        assert exc_info.value.status_code == 503
 
     async def test_stub_signal_uses_preview_channel(self):
         """Verify the stub RawSignal uses 'preview' as channel_id."""
