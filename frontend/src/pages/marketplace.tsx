@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Radio, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import type { MarketplaceSort, MarketplaceFilter } from "@/types/marketplace";
 export function MarketplacePage() {
   usePageTitle("Signal Marketplace");
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const sort = (searchParams.get("sort") as MarketplaceSort) || "win_rate";
@@ -60,6 +61,10 @@ export function MarketplacePage() {
   );
 
   function handleSubscribeClick(provider: MarketplaceProvider) {
+    if (!user) {
+      navigate("/login?redirect=/marketplace");
+      return;
+    }
     setSheetProvider(provider);
     setSheetOpen(true);
   }

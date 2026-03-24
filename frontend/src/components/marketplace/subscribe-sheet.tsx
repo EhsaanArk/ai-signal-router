@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Sheet,
   SheetContent,
@@ -34,6 +35,7 @@ export function SubscribeSheet({
   onConfirm,
   isLoading,
 }: SubscribeSheetProps) {
+  const navigate = useNavigate();
   const [accepted, setAccepted] = useState(false);
   const [selectedRuleId, setSelectedRuleId] = useState<string>("");
   const { data: rules } = useRoutingRules();
@@ -69,9 +71,22 @@ export function SubscribeSheet({
               Webhook Destination
             </label>
             {availableRules.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                No signal routes configured. Create a signal route first to subscribe.
-              </p>
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  No signal routes configured yet.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => {
+                    onOpenChange(false);
+                    navigate("/routing-rules/new");
+                  }}
+                >
+                  Create a Signal Route
+                </Button>
+              </div>
             ) : (
               <Select value={selectedRuleId} onValueChange={setSelectedRuleId}>
                 <SelectTrigger className="h-8 text-xs">

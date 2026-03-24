@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import {
   Activity,
+  Bookmark,
   BookOpen,
   Brain,
   LayoutDashboard,
@@ -28,6 +29,7 @@ const navItems = [
   { path: "/telegram", label: "Telegram", icon: MessageSquare },
   { path: "/routing-rules", label: "Signal Routes", icon: Route },
   { path: "/marketplace", label: "Marketplace", icon: Store },
+  { path: "/dashboard/subscriptions", label: "My Subs", icon: Bookmark },
   { path: "/logs", label: "Signal Logs", icon: ScrollText },
   { path: "/settings", label: "Settings", icon: Settings },
 ];

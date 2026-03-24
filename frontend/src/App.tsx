@@ -33,6 +33,7 @@ const AdminSettingsPage = lazyRetry(() => import("./pages/admin/settings"));
 const MarketplacePage = lazyRetry(() => import("./pages/marketplace"));
 const MarketplaceSubscriptionsPage = lazyRetry(() => import("./pages/marketplace-subscriptions"));
 const AdminMarketplacePage = lazyRetry(() => import("./pages/admin/marketplace"));
+const PublicLayout = lazyRetry(() => import("./components/layout/public-layout"));
 
 function AdminRoute({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -62,7 +63,6 @@ const router = createBrowserRouter([
           { path: "/routing-rules", element: <RoutingRulesPage /> },
           { path: "/routing-rules/new", element: <RoutingRulesNewPage /> },
           { path: "/routing-rules/:id/edit", element: <RoutingRulesEditPage /> },
-          { path: "/marketplace", element: <MarketplacePage /> },
           { path: "/logs", element: <LogsPage /> },
           { path: "/settings", element: <SettingsPage /> },
           { path: "/admin/health", element: <AdminRoute><AdminHealthPage /></AdminRoute> },
@@ -76,6 +76,12 @@ const router = createBrowserRouter([
           { path: "/dashboard/subscriptions", element: <MarketplaceSubscriptionsPage /> },
         ],
       },
+    ],
+  },
+  {
+    element: <PublicLayout />,
+    children: [
+      { path: "/marketplace", element: <MarketplacePage /> },
     ],
   },
   { path: "*", element: <NotFound /> },
