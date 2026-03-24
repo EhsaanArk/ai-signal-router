@@ -29,3 +29,4 @@ protobuf==5.29.6
 sentry-sdk[fastapi]==2.19.2
 pysocks>=1.7.1
 supabase==2.15.2
+pytest-cov>=4.0.0
