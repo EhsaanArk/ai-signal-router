@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt import InvalidTokenError
@@ -22,6 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import UserModel
 from src.adapters.db.session import get_async_session_factory
+from src.core.constants import ACCESS_TOKEN_EXPIRE_DAYS as _ACCESS_TOKEN_EXPIRE_DAYS
+from src.core.constants import USER_CACHE_TTL_SECONDS
+from src.core.exceptions import AuthenticationError, AuthorizationError
 from src.core.models import SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
@@ -104,7 +107,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=F
 # ---------------------------------------------------------------------------
 
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_DAYS = 7
+ACCESS_TOKEN_EXPIRE_DAYS = _ACCESS_TOKEN_EXPIRE_DAYS
 
 
 class Settings(BaseSettings):
@@ -212,6 +215,11 @@ def get_dispatcher(request: Request):
     return request.app.state.dispatcher
 
 
+def get_notifier(request: Request):
+    """Return the shared ResendNotifier instance from app state."""
+    return request.app.state.notifier
+
+
 # ---------------------------------------------------------------------------
 # JWT helpers
 # ---------------------------------------------------------------------------
@@ -238,7 +246,7 @@ def create_access_token(data: dict, settings: Settings) -> str:
 # ---------------------------------------------------------------------------
 
 
-_USER_CACHE_TTL = 300  # 5 minutes
+_USER_CACHE_TTL = USER_CACHE_TTL_SECONDS
 
 
 async def get_current_user(
@@ -246,6 +254,7 @@ async def get_current_user(
     token: Annotated[str | None, Depends(oauth2_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
+    background_tasks: BackgroundTasks = None,
 ) -> User:
     """Decode the bearer token and return the corresponding :class:`User`.
 
@@ -256,17 +265,9 @@ async def get_current_user(
     Uses Redis cache (5-min TTL) to avoid a DB query on every protected request.
     """
     if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise AuthenticationError("Not authenticated")
 
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    credentials_exception = AuthenticationError("Could not validate credentials")
 
     user_id: UUID | None = None
 
@@ -319,14 +320,11 @@ async def get_current_user(
                     created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
                 )
                 if user.is_disabled:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Account is disabled",
-                    )
+                    raise AuthorizationError("Account is disabled")
                 return user
         except (json.JSONDecodeError, KeyError, ValueError):
             logger.debug("User cache parse error for %s, falling back to DB", user_id)
-        except HTTPException:
+        except AuthorizationError:
             raise
         except Exception:
             logger.debug("User cache read failed for %s, falling back to DB", user_id)
@@ -357,14 +355,20 @@ async def get_current_user(
             await db.flush()
             logger.info("Auto-created user %s (%s) from Supabase", user_id, email)
 
-            # Send welcome email
-            if settings.RESEND_API_KEY:
-                try:
-                    from src.adapters.email import ResendNotifier
-                    notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
-                    await notifier.send_welcome(email, settings.FRONTEND_URL)
-                except Exception:
-                    logger.debug("Welcome email failed for new user %s", user_id)
+            # Fire welcome email as a background task so it doesn't block
+            # the auth dependency (avoids I/O in the request path).
+            if settings.RESEND_API_KEY and background_tasks is not None:
+                async def _send_welcome_bg(api_key: str, to: str, url: str) -> None:
+                    try:
+                        from src.adapters.email import ResendNotifier
+                        notifier = ResendNotifier(api_key=api_key)
+                        await notifier.send_welcome(to, url)
+                    except Exception:
+                        logger.debug("Welcome email failed for new user (bg)")
+
+                background_tasks.add_task(
+                    _send_welcome_bg, settings.RESEND_API_KEY, email, settings.FRONTEND_URL
+                )
         except Exception as exc:
             logger.error("Failed to auto-create user %s: %s", user_id, exc)
             raise credentials_exception from exc
@@ -373,10 +377,7 @@ async def get_current_user(
         raise credentials_exception
 
     if getattr(user_row, "is_disabled", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled",
-        )
+        raise AuthorizationError("Account is disabled")
 
     user = User(
         id=user_row.id,
@@ -416,8 +417,5 @@ async def get_admin_user(
 ) -> User:
     """Require the current user to be an admin."""
     if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
+        raise AuthorizationError("Admin access required")
     return current_user

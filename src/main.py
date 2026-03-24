@@ -83,6 +83,10 @@ def create_app() -> FastAPI:
     * **LOCAL_MODE=false** — production mode; only public + workflow routers are
       mounted.  Database migrations are expected to be handled by Alembic.
     """
+    from src.core.logging_config import configure_logging
+
+    configure_logging()
+
     local_mode = os.environ.get("LOCAL_MODE", "true").lower() in ("true", "1", "yes")
 
     @asynccontextmanager
@@ -144,6 +148,12 @@ def create_app() -> FastAPI:
         from src.adapters.webhook import WebhookDispatcher
 
         app.state.dispatcher = WebhookDispatcher(timeout=15.0)
+
+        # Initialise shared email notifier (singleton — avoids setting
+        # the resend.api_key module-global on every call).
+        from src.adapters.email import ResendNotifier
+
+        app.state.notifier = ResendNotifier(api_key=settings_local.RESEND_API_KEY or "")
 
         # Initialise two-stage dispatch queue (when enabled)
         if settings_local.TWO_STAGE_DISPATCH:
@@ -229,6 +239,45 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    # ------------------------------------------------------------------
+    # Domain exception handler
+    # ------------------------------------------------------------------
+    from src.core.exceptions import (
+        AuthenticationError,
+        AuthorizationError,
+        ConflictError,
+        ExternalServiceError,
+        InputValidationError,
+        ResourceNotFoundError,
+        SageRadarError,
+    )
+
+    _STATUS_MAP: dict[type, int] = {
+        AuthenticationError: 401,
+        AuthorizationError: 403,   # includes TierLimitError
+        ResourceNotFoundError: 404,
+        ConflictError: 409,
+        InputValidationError: 422,
+        ExternalServiceError: 502,  # includes DispatchError
+    }
+
+    async def _domain_exception_handler(request: Request, exc: SageRadarError) -> JSONResponse:
+        status_code = 500
+        for exc_type, code in _STATUS_MAP.items():
+            if isinstance(exc, exc_type):
+                status_code = code
+                break
+        headers: dict[str, str] | None = None
+        if status_code == 401:
+            headers = {"WWW-Authenticate": "Bearer"}
+        return JSONResponse(
+            status_code=status_code,
+            content={"error": {"code": type(exc).__name__, "message": exc.message}},
+            headers=headers,
+        )
+
+    application.add_exception_handler(SageRadarError, _domain_exception_handler)
 
     # ------------------------------------------------------------------
     # Rate limiting

@@ -33,8 +33,12 @@ _BLOCKED_METADATA_IPS = {
     ipaddress.ip_address("169.254.169.254"),
     ipaddress.ip_address("100.100.100.200"),
 }
-_DNS_TIMEOUT_SECONDS = 2.0
-_DNS_RESOLVER_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="webhook-dns")
+from src.core.constants import DNS_RESOLVER_POOL_MAX_WORKERS, DNS_TIMEOUT_SECONDS
+
+_DNS_TIMEOUT_SECONDS = DNS_TIMEOUT_SECONDS
+_DNS_RESOLVER_POOL = ThreadPoolExecutor(
+    max_workers=DNS_RESOLVER_POOL_MAX_WORKERS, thread_name_prefix="webhook-dns"
+)
 
 
 def generate_key() -> bytes:

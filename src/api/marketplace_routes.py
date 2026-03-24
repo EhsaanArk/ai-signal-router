@@ -4,7 +4,7 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,11 @@ from src.api.deps import (
     get_current_user,
     get_db,
     limiter,
+)
+from src.core.exceptions import (
+    ConflictError,
+    InputValidationError,
+    ResourceNotFoundError,
 )
 from src.core.marketplace import (
     compute_provider_stats,
@@ -210,7 +215,7 @@ async def get_provider_stats(
     try:
         stats = await compute_provider_stats(provider_id, db)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise ResourceNotFoundError(str(exc))
 
     return ProviderStatsResponse(**stats)
 
@@ -231,9 +236,8 @@ async def subscribe(
 ) -> SubscriptionResponse:
     """Subscribe to a marketplace provider. Requires explicit consent."""
     if not body.consent:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You must consent to the risk disclaimer to subscribe",
+        raise InputValidationError(
+            "You must consent to the risk disclaimer to subscribe",
         )
 
     try:
@@ -244,10 +248,7 @@ async def subscribe(
             db_session=db,
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
+        raise InputValidationError(str(exc))
 
     return SubscriptionResponse(**result)
 
@@ -268,10 +269,7 @@ async def unsubscribe(
             db_session=db,
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
+        raise InputValidationError(str(exc))
 
     return {"status": "unsubscribed", "provider_id": str(provider_id)}
 
@@ -331,9 +329,8 @@ async def admin_create_provider(
         )
     )
     if existing.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A provider with this Telegram channel already exists",
+        raise ConflictError(
+            "A provider with this Telegram channel already exists",
         )
 
     provider = MarketplaceProviderModel(
@@ -385,14 +382,11 @@ async def admin_update_provider(
     )
     provider = result.scalar_one_or_none()
     if provider is None:
-        raise HTTPException(status_code=404, detail="Provider not found")
+        raise ResourceNotFoundError("Provider not found")
 
     update_data = body.model_dump(exclude_unset=True)
     if not update_data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No fields to update",
-        )
+        raise InputValidationError("No fields to update")
 
     # Check channel uniqueness if changing it
     if "telegram_channel_id" in update_data:
@@ -403,9 +397,8 @@ async def admin_update_provider(
             )
         )
         if existing.scalar_one_or_none() is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Another provider already uses this Telegram channel",
+            raise ConflictError(
+                "Another provider already uses this Telegram channel",
             )
 
     for field, value in update_data.items():
@@ -431,7 +424,7 @@ async def admin_delete_provider(
     )
     provider = result.scalar_one_or_none()
     if provider is None:
-        raise HTTPException(status_code=404, detail="Provider not found")
+        raise ResourceNotFoundError("Provider not found")
 
     provider.is_active = False
 

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from src.adapters.db.models import (
     UserModel,
 )
 from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings, limiter
+from src.core.exceptions import InputValidationError, ResourceNotFoundError
 from src.core.models import User
 
 logger = logging.getLogger(__name__)
@@ -223,7 +224,7 @@ async def admin_get_user(
     """Get detailed user info including their rules and recent signals."""
     user_row = (await db.execute(select(UserModel).where(UserModel.id == user_id))).scalar_one_or_none()
     if user_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise ResourceNotFoundError("User not found")
 
     # Routing rules
     rules_result = await db.execute(
@@ -312,14 +313,13 @@ async def admin_update_user(
     """Update a user's tier or disabled status."""
     user_row = (await db.execute(select(UserModel).where(UserModel.id == user_id))).scalar_one_or_none()
     if user_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise ResourceNotFoundError("User not found")
 
     if body.subscription_tier is not None:
         valid_tiers = {"free", "starter", "pro", "elite"}
         if body.subscription_tier not in valid_tiers:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid tier. Must be one of: {', '.join(sorted(valid_tiers))}",
+            raise InputValidationError(
+                f"Invalid tier. Must be one of: {', '.join(sorted(valid_tiers))}",
             )
         user_row.subscription_tier = body.subscription_tier
 
@@ -975,10 +975,7 @@ async def revert_parser_prompt(
     )).scalar_one_or_none()
 
     if old_row is None or old_row.config_key != "system_prompt":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Version not found",
-        )
+        raise ResourceNotFoundError("Version not found")
 
     new_row = await _save_config_version(
         db, cache, "system_prompt", admin.email,
@@ -1092,10 +1089,7 @@ async def test_parse_signal(
             )).scalar_one_or_none()
 
             if rule_row is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Routing rule not found for mapping dry-run",
-                )
+                raise ResourceNotFoundError("Routing rule not found for mapping dry-run")
 
             rule = RoutingRule(
                 id=rule_row.id,
@@ -1298,10 +1292,7 @@ async def replay_signal(
     )).scalar_one_or_none()
 
     if signal_log is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Signal log not found",
-        )
+        raise ResourceNotFoundError("Signal log not found")
 
     system_prompt, model_name, temperature = await _load_active_parser_config(db)
 
@@ -1351,10 +1342,7 @@ async def test_dispatch_signal(
     )).scalar_one_or_none()
 
     if rule_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Routing rule not found",
-        )
+        raise ResourceNotFoundError("Routing rule not found")
 
     system_prompt, model_name, temperature = await _load_active_parser_config(db)
 
@@ -1377,9 +1365,8 @@ async def test_dispatch_signal(
     )
 
     if not parsed.is_valid_signal:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Signal is not valid: {parsed.ignore_reason}",
+        raise InputValidationError(
+            f"Signal is not valid: {parsed.ignore_reason}",
         )
 
     # Build routing rule domain object
@@ -1480,7 +1467,7 @@ async def update_global_settings(
                 continue
 
     if errors:
-        raise HTTPException(status_code=422, detail="; ".join(errors))
+        raise InputValidationError("; ".join(errors))
 
     for key, value in body.settings.items():
         result = await db.execute(
