@@ -349,14 +349,22 @@ async def get_current_user(
             await db.flush()
             logger.info("Auto-created user %s (%s) from Supabase", user_id, email)
 
-            # Send welcome email
+            # Fire welcome email as a background task so it doesn't block
+            # the auth dependency (avoids 3 I/O ops in the request path).
             if settings.RESEND_API_KEY:
-                try:
-                    from src.adapters.email import ResendNotifier
-                    notifier = ResendNotifier(api_key=settings.RESEND_API_KEY)
-                    await notifier.send_welcome(email, settings.FRONTEND_URL)
-                except Exception:
-                    logger.debug("Welcome email failed for new user %s", user_id)
+                import asyncio
+
+                async def _send_welcome_bg(api_key: str, to: str, url: str) -> None:
+                    try:
+                        from src.adapters.email import ResendNotifier
+                        notifier = ResendNotifier(api_key=api_key)
+                        await notifier.send_welcome(to, url)
+                    except Exception:
+                        logger.debug("Welcome email failed for new user (bg)")
+
+                asyncio.create_task(
+                    _send_welcome_bg(settings.RESEND_API_KEY, email, settings.FRONTEND_URL)
+                )
         except Exception as exc:
             logger.error("Failed to auto-create user %s: %s", user_id, exc)
             raise credentials_exception from exc
