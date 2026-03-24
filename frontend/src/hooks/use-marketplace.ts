@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/lib/supabase";
 import type {
   MarketplaceProvider,
-  MarketplaceSubscription,
   MarketplaceSort,
   MarketplaceFilter,
 } from "@/types/marketplace";
@@ -14,9 +14,35 @@ interface ProviderListResponse {
   items: MarketplaceProvider[];
 }
 
+interface MySubscriptionItem {
+  subscription_id: string;
+  provider_id: string;
+  provider_name: string;
+  provider_asset_class: string;
+  routing_rule_id: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+interface SubscriptionResponse {
+  subscription_id: string;
+  provider_id: string;
+  provider_name: string;
+  routing_rule_id: string;
+  is_active: boolean;
+}
+
+/** Get auth headers from Supabase session (same as apiFetch). */
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.access_token) {
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
+  return {};
+}
+
 /**
  * Fetch marketplace providers — public endpoint, no auth required.
- * Uses raw fetch instead of apiFetch to avoid auth header injection.
  */
 export function useMarketplaceProviders(
   sort: MarketplaceSort = "win_rate",
@@ -45,7 +71,6 @@ export function useMarketplaceProviders(
 
 /**
  * Subscribe to a marketplace provider — requires auth.
- * Uses raw fetch with auth token to hit /api/marketplace/ (not /api/v1/).
  */
 export function useSubscribe() {
   const queryClient = useQueryClient();
@@ -57,14 +82,17 @@ export function useSubscribe() {
       providerId: string;
       webhookDestinationId: string;
     }) => {
-      const token = localStorage.getItem("access_token");
+      const authHeaders = await getAuthHeaders();
+      if (!authHeaders.Authorization) {
+        throw new Error("Please sign in to subscribe");
+      }
       const res = await fetch(
         `${MARKETPLACE_API_BASE}/marketplace/subscribe/${providerId}`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...authHeaders,
           },
           body: JSON.stringify({
             webhook_destination_id: webhookDestinationId,
@@ -76,7 +104,7 @@ export function useSubscribe() {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.detail || `Subscribe failed: ${res.status}`);
       }
-      return res.json() as Promise<MarketplaceSubscription>;
+      return res.json() as Promise<SubscriptionResponse>;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["marketplace-subscriptions"] });
@@ -92,14 +120,15 @@ export function useUnsubscribe() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (providerId: string) => {
-      const token = localStorage.getItem("access_token");
+      const authHeaders = await getAuthHeaders();
+      if (!authHeaders.Authorization) {
+        throw new Error("Please sign in to unsubscribe");
+      }
       const res = await fetch(
         `${MARKETPLACE_API_BASE}/marketplace/unsubscribe/${providerId}`,
         {
           method: "DELETE",
-          headers: {
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
+          headers: authHeaders,
         },
       );
       if (!res.ok) {
@@ -121,20 +150,16 @@ export function useMySubscriptions(enabled = true) {
   return useQuery({
     queryKey: ["marketplace-subscriptions"],
     queryFn: async () => {
-      const token = localStorage.getItem("access_token");
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(
         `${MARKETPLACE_API_BASE}/marketplace/my-subscriptions`,
-        {
-          headers: {
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        },
+        { headers: authHeaders },
       );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.detail || `Failed to load subscriptions: ${res.status}`);
       }
-      return res.json() as Promise<MarketplaceSubscription[]>;
+      return res.json() as Promise<MySubscriptionItem[]>;
     },
     enabled,
   });
