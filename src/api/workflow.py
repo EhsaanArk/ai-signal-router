@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.adapters.db.models import MarketplaceProviderModel, ParserConfigModel, RoutingRuleModel, SignalLogModel
+from src.adapters.db.models import MarketplaceProviderModel, ParserConfigModel, RoutingRuleModel, SignalLogModel, UserModel
 from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
@@ -37,6 +37,13 @@ workflow_router = APIRouter(tags=["workflow"])
 
 def _message_lock_key(raw_signal: RawSignal) -> int:
     material = f"{raw_signal.user_id}:{raw_signal.channel_id}:{raw_signal.message_id}".encode("utf-8")
+    digest = hashlib.blake2b(material, digest_size=8).digest()
+    return int.from_bytes(digest, byteorder="big", signed=True)
+
+
+def _dispatch_lock_key(channel_id: str, message_id: int | None, routing_rule_id) -> int:
+    """Lock key for Stage-2 dispatch dedup — scoped to (message_id, routing_rule_id)."""
+    material = f"dispatch:{channel_id}:{message_id}:{routing_rule_id}".encode("utf-8")
     digest = hashlib.blake2b(material, digest_size=8).digest()
     return int.from_bytes(digest, byteorder="big", signed=True)
 
@@ -243,14 +250,18 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
     except Exception:
         pass
 
-    # Marketplace fan-out
+    # Marketplace fan-out — only for admin account signals (design doc: "signal came from the admin listener account")
     if os.getenv("MARKETPLACE_ENABLED", "false").lower() in ("true", "1", "yes"):
         try:
-            mp_result = await db.execute(select(MarketplaceProviderModel.id).where(MarketplaceProviderModel.telegram_channel_id == raw_signal.channel_id, MarketplaceProviderModel.is_active.is_(True)).limit(1))
-            if mp_result.scalar_one_or_none() is not None:
-                from src.core.marketplace import marketplace_fanout
-                fanout_results = await marketplace_fanout(parsed_signal=parsed, channel_id=raw_signal.channel_id, raw_message=raw_signal.raw_message, message_id=raw_signal.message_id, reply_to_msg_id=raw_signal.reply_to_msg_id, dispatcher=dispatcher, db_session=db)
-                logger.info("Marketplace fan-out for channel %s: %d dispatches", raw_signal.channel_id, len(fanout_results))
+            # Check if the signal originated from an admin user's listener
+            admin_check = await db.execute(select(UserModel.is_admin).where(UserModel.id == raw_signal.user_id))
+            is_admin_signal = admin_check.scalar_one_or_none() or False
+            if is_admin_signal:
+                mp_result = await db.execute(select(MarketplaceProviderModel.id).where(MarketplaceProviderModel.telegram_channel_id == raw_signal.channel_id, MarketplaceProviderModel.is_active.is_(True)).limit(1))
+                if mp_result.scalar_one_or_none() is not None:
+                    from src.core.marketplace import marketplace_fanout
+                    fanout_results = await marketplace_fanout(parsed_signal=parsed, channel_id=raw_signal.channel_id, raw_message=raw_signal.raw_message, message_id=raw_signal.message_id, reply_to_msg_id=raw_signal.reply_to_msg_id, dispatcher=dispatcher, db_session=db)
+                    logger.info("Marketplace fan-out for channel %s: %d dispatches", raw_signal.channel_id, len(fanout_results))
         except Exception as exc:
             logger.error("Marketplace fan-out failed for channel %s: %s", raw_signal.channel_id, exc)
             sentry_sdk.capture_exception(exc)
@@ -262,6 +273,15 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
 @workflow_router.post("/api/workflow/dispatch-signal", response_model=DispatchResult, dependencies=[Depends(verify_qstash_signature)])
 async def dispatch_signal(job: DispatchJob, request: Request, db: Annotated[AsyncSession, Depends(get_db)], settings: Annotated[Settings, Depends(get_settings)], dispatcher: Annotated[WebhookDispatcher, Depends(get_dispatcher)]) -> DispatchResult:
     meta = job.raw_signal_meta
+    # Advisory lock to prevent duplicate dispatch under QStash retry concurrency
+    if meta.message_id:
+        lock_key = _dispatch_lock_key(meta.channel_id, meta.message_id, job.routing_rule_id)
+        try:
+            lock_result = await db.execute(text("SELECT pg_try_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
+            if not bool(lock_result.scalar_one()):
+                return DispatchResult(routing_rule_id=job.routing_rule_id, status="ignored", error_message="Concurrent dispatch in progress (advisory lock)")
+        except Exception:
+            pass  # Non-PostgreSQL or lock unavailable — fall through to dedup check
     existing = await db.execute(select(SignalLogModel.id).where(SignalLogModel.channel_id == meta.channel_id, SignalLogModel.message_id == meta.message_id, SignalLogModel.routing_rule_id == job.routing_rule_id, SignalLogModel.status.in_(["success", "ignored"])).limit(1))
     if existing.scalar_one_or_none() is not None:
         return DispatchResult(routing_rule_id=job.routing_rule_id, status="ignored", error_message="Already processed (Stage 2 dedup)")

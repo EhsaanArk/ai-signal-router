@@ -877,8 +877,14 @@ async def test_dispatch_signal_stage2_dedup(
 async def test_marketplace_fanout_integration(
     client, session_factory, test_dispatcher,
 ):
-    """When a signal arrives from a marketplace provider's channel,
-    the workflow should fan out to all marketplace subscribers."""
+    """When a signal arrives from a marketplace provider's channel via an admin
+    listener, the workflow should fan out to all marketplace subscribers."""
+    # Promote the test user to admin (fan-out only triggers for admin listeners)
+    async with session_factory() as session:
+        from sqlalchemy import update as sa_update
+        await session.execute(sa_update(UserModel).where(UserModel.id == SAMPLE_USER_ID).values(is_admin=True))
+        await session.commit()
+
     # Seed the original user's routing rule (their own channel subscription)
     rule_id = await _seed_routing_rule(session_factory, webhook_url=WEBHOOK_URL_1)
 

@@ -21,8 +21,9 @@ from src.adapters.db.models import (
     MarketplaceSubscriptionModel,
     RoutingRuleModel,
     SignalLogModel,
+    UserModel,
 )
-from src.core.models import DispatchResult, ParsedSignal, RoutingRule, normalize_enabled_actions
+from src.core.models import DispatchResult, ParsedSignal, RawSignal, RoutingRule, SubscriptionTier, normalize_enabled_actions
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,16 @@ async def marketplace_fanout(
     )
     rule_rows = {r.id: r for r in result.scalars().all()}
 
+    # Build a synthetic RawSignal for _process_single_rule (needed for safety checks)
+    from src.api.workflow import _process_single_rule
+    synthetic_raw = RawSignal(
+        user_id=subscriptions[0].user_id,  # placeholder — overridden per subscriber below
+        channel_id=channel_id,
+        raw_message=raw_message,
+        message_id=message_id,
+        reply_to_msg_id=reply_to_msg_id,
+    )
+
     dispatch_results: list[dict] = []
 
     for sub in subscriptions:
@@ -95,48 +106,19 @@ async def marketplace_fanout(
         if rule_row is None:
             continue
 
-        rule = RoutingRule(
-            id=rule_row.id,
-            user_id=rule_row.user_id,
-            source_channel_id=rule_row.source_channel_id,
-            source_channel_name=rule_row.source_channel_name,
-            destination_webhook_url=rule_row.destination_webhook_url,
-            payload_version=rule_row.payload_version,
-            symbol_mappings=rule_row.symbol_mappings or {},
-            risk_overrides=rule_row.risk_overrides or {},
-            webhook_body_template=rule_row.webhook_body_template,
-            rule_name=rule_row.rule_name,
-            destination_label=rule_row.destination_label,
-            destination_type=rule_row.destination_type,
-            custom_ai_instructions=rule_row.custom_ai_instructions,
-            is_active=rule_row.is_active,
-            enabled_actions=normalize_enabled_actions(rule_row.enabled_actions),
-            keyword_blacklist=rule_row.keyword_blacklist or [],
-        )
+        # Override user_id per subscriber so logs attribute correctly
+        synthetic_raw.user_id = sub.user_id
 
         try:
-            dispatch_result: DispatchResult = await dispatcher.dispatch(
-                parsed_signal, rule
+            # Use _process_single_rule for full safety checks:
+            # keyword_blacklist, enabled_actions, asset_class, symbol mapping
+            dispatch_result, log_kwargs = await _process_single_rule(
+                rule_row, synthetic_raw, parsed_signal, dispatcher,
             )
 
-            # Build the payload dict for logging (if dispatch returned it)
-            payload_dict = dispatch_result.webhook_payload
-
-            # Log each dispatch as a signal_log with source_type='marketplace'
-            log_entry = SignalLogModel(
-                user_id=sub.user_id,
-                routing_rule_id=rule.id,
-                message_id=message_id,
-                channel_id=channel_id,
-                reply_to_msg_id=reply_to_msg_id,
-                raw_message=raw_message,
-                parsed_data=parsed_signal.model_dump(),
-                webhook_payload=payload_dict,
-                status=dispatch_result.status,
-                error_message=dispatch_result.error_message,
-                source_type="marketplace",
-            )
-            db_session.add(log_entry)
+            # Override source_type to 'marketplace' (default is 'telegram')
+            log_kwargs["source_type"] = "marketplace"
+            db_session.add(SignalLogModel(**log_kwargs))
 
             dispatch_results.append({
                 "subscription_id": str(sub.id),
@@ -150,10 +132,9 @@ async def marketplace_fanout(
                 "Marketplace fanout failed for subscription %s (user %s): %s",
                 sub.id, sub.user_id, exc,
             )
-            # Log the failure
             log_entry = SignalLogModel(
                 user_id=sub.user_id,
-                routing_rule_id=rule.id if rule_row else None,
+                routing_rule_id=rule_row.id,
                 message_id=message_id,
                 channel_id=channel_id,
                 reply_to_msg_id=reply_to_msg_id,
@@ -201,21 +182,25 @@ async def compute_provider_stats(
 
     channel_id = provider.telegram_channel_id
 
-    # Count total signals dispatched for this channel via marketplace
+    # Count DISTINCT provider signals by using source_type='telegram' from admin
+    # listeners for this channel. This counts original signals (one per parse),
+    # not per-subscriber fan-out copies (source_type='marketplace').
+    # Uses COUNT(DISTINCT message_id) to avoid counting the same signal multiple
+    # times if multiple admin routing rules exist for the channel.
     total_signals = await db_session.execute(
-        select(func.count()).select_from(SignalLogModel).where(
+        select(func.count(func.distinct(SignalLogModel.message_id))).select_from(SignalLogModel).where(
             SignalLogModel.channel_id == channel_id,
-            SignalLogModel.source_type == "marketplace",
+            SignalLogModel.source_type == "telegram",
             SignalLogModel.status.in_(["success", "failed"]),
         )
     )
     signal_count = total_signals.scalar_one()
 
-    # Count successful signals
+    # Count successful distinct signals
     success_count_result = await db_session.execute(
-        select(func.count()).select_from(SignalLogModel).where(
+        select(func.count(func.distinct(SignalLogModel.message_id))).select_from(SignalLogModel).where(
             SignalLogModel.channel_id == channel_id,
-            SignalLogModel.source_type == "marketplace",
+            SignalLogModel.source_type == "telegram",
             SignalLogModel.status == "success",
         )
     )
@@ -224,14 +209,14 @@ async def compute_provider_stats(
     # Win rate (success / total, excluding ignored)
     win_rate = (success_count / signal_count * 100.0) if signal_count > 0 else None
 
-    # Track record: days between first and latest signal
+    # Track record: days between first and latest signal (from original source)
     date_range = await db_session.execute(
         select(
             func.min(SignalLogModel.processed_at),
             func.max(SignalLogModel.processed_at),
         ).where(
             SignalLogModel.channel_id == channel_id,
-            SignalLogModel.source_type == "marketplace",
+            SignalLogModel.source_type == "telegram",
         )
     )
     first_signal, last_signal = date_range.one()
@@ -329,7 +314,25 @@ async def subscribe_to_provider(
     if existing_sub is not None and existing_sub.is_active:
         raise ValueError("Already subscribed to this provider")
 
-    # 3. Load the user's existing routing rule (as a webhook destination template)
+    # 3. Enforce tier limit — marketplace subscriptions count toward route limit
+    user_row = (await db_session.execute(
+        select(UserModel.subscription_tier).where(UserModel.id == user_id)
+    )).scalar_one_or_none()
+    user_tier = SubscriptionTier(user_row) if user_row else SubscriptionTier.free
+    active_rule_count = (await db_session.execute(
+        select(func.count()).select_from(RoutingRuleModel).where(
+            RoutingRuleModel.user_id == user_id,
+            RoutingRuleModel.is_active.is_(True),
+        )
+    )).scalar_one()
+    if active_rule_count >= user_tier.max_destinations:
+        raise ValueError(
+            f"Your {user_tier.value} plan allows up to "
+            f"{user_tier.max_destinations} route(s). "
+            "Please upgrade to add more."
+        )
+
+    # 4. Load the user's existing routing rule (as a webhook destination template)
     result = await db_session.execute(
         select(RoutingRuleModel).where(
             RoutingRuleModel.id == webhook_destination_id,
@@ -340,7 +343,7 @@ async def subscribe_to_provider(
     if destination_rule is None:
         raise ValueError("Webhook destination not found or does not belong to user")
 
-    # 4. Create a new routing rule for the marketplace subscription
+    # 5. Create a new routing rule for the marketplace subscription
     marketplace_rule = RoutingRuleModel(
         user_id=user_id,
         source_channel_id=provider.telegram_channel_id,
@@ -360,7 +363,7 @@ async def subscribe_to_provider(
     db_session.add(marketplace_rule)
     await db_session.flush()  # get the rule's ID
 
-    # 5. Create or reactivate subscription
+    # 6. Create or reactivate subscription
     is_resubscribe = existing_sub is not None
     if is_resubscribe:
         # Re-subscribe: deactivate old routing rule, then reactivate subscription
@@ -385,7 +388,7 @@ async def subscribe_to_provider(
         )
         db_session.add(subscription)
 
-    # 6. Create consent log (always — fresh consent required on every subscribe)
+    # 7. Create consent log (always — fresh consent required on every subscribe)
     consent = MarketplaceConsentLogModel(
         user_id=user_id,
         provider_id=provider_id,
@@ -393,7 +396,7 @@ async def subscribe_to_provider(
     )
     db_session.add(consent)
 
-    # 7. Update subscriber count (only for new subs — resubscribes already
+    # 8. Update subscriber count (only for new subs — resubscribes already
     #    had the count decremented on unsubscribe, so increment is correct)
     await db_session.execute(
         update(MarketplaceProviderModel)
