@@ -535,8 +535,10 @@ class TestSubscribeToProvider:
         db = _build_db_session([
             _FakeResult(value=provider),       # 1. provider exists
             _FakeResult(value=None),           # 2. not already subscribed
-            _FakeResult(value=dest_rule),      # 3. destination rule found
-            _FakeResult(value=None),           # 4. UPDATE subscriber_count
+            _FakeResult(value="pro"),          # 3. user tier lookup
+            _FakeResult(value=1),             # 4. active rule count (under limit)
+            _FakeResult(value=dest_rule),      # 5. destination rule found
+            _FakeResult(value=None),           # 6. UPDATE subscriber_count
         ])
         # flush is called twice (after rule add, after subscription+consent)
         db.flush = AsyncMock()
@@ -554,7 +556,7 @@ class TestSubscribeToProvider:
         # Should add: routing_rule, subscription, consent_log = 3 calls
         assert db.add.call_count == 3
         # Should update subscriber_count
-        assert db.execute.await_count == 4  # 3 selects + 1 update
+        assert db.execute.await_count == 6  # 5 selects + 1 update
 
     @pytest.mark.asyncio
     async def test_already_subscribed_raises(self):
@@ -602,6 +604,8 @@ class TestSubscribeToProvider:
         db = _build_db_session([
             _FakeResult(value=provider),       # provider exists
             _FakeResult(value=None),           # not already subscribed
+            _FakeResult(value="pro"),          # user tier lookup
+            _FakeResult(value=1),             # active rule count (under limit)
             _FakeResult(value=None),           # destination rule NOT found
         ])
 
@@ -712,6 +716,8 @@ class TestUnsubscribeFromProvider:
         resub_db = _build_db_session([
             _FakeResult(value=provider),       # provider exists
             _FakeResult(value=None),           # no active subscription
+            _FakeResult(value="pro"),          # user tier lookup
+            _FakeResult(value=1),             # active rule count (under limit)
             _FakeResult(value=dest_rule),      # destination rule found
             _FakeResult(value=None),           # UPDATE subscriber_count
         ])
