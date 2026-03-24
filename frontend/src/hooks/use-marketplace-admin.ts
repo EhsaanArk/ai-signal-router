@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/lib/supabase";
 import type { MarketplaceProvider } from "@/types/marketplace";
 
 // Re-export for consumers that import from this module
@@ -33,13 +34,27 @@ export interface UpdateProviderRequest {
 /** Marketplace admin API — no /v1 prefix */
 const MARKETPLACE_API = (import.meta.env.VITE_API_BASE_URL || "") + "/api";
 
-async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
+/** Get auth headers from Supabase session. */
+async function getAdminAuthHeaders(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.access_token) {
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
+  // Fallback to legacy localStorage token
   const token = localStorage.getItem("access_token");
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
+  }
+  return {};
+}
+
+async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const authHeaders = await getAdminAuthHeaders();
   const res = await fetch(`${MARKETPLACE_API}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...authHeaders,
       ...init?.headers,
     },
   });
