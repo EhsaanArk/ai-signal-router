@@ -64,9 +64,9 @@ export function MarketplacePage() {
     setSheetOpen(true);
   }
 
-  function handleConfirmSubscribe(providerId: string, webhookDestinationId?: string) {
+  function handleConfirmSubscribe(providerId: string, webhookDestinationId: string) {
     subscribeMutation.mutate(
-      { providerId, webhookDestinationId: webhookDestinationId ?? "" },
+      { providerId, webhookDestinationId },
       {
         onSuccess: () => {
           toast.success(`Now following ${sheetProvider?.name ?? "provider"}`);
