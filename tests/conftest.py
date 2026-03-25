@@ -99,6 +99,10 @@ def sample_raw_signal() -> RawSignal:
 @pytest.fixture(autouse=True)
 def reset_limiter_state():
     """Isolate per-test rate-limit counters, route config, and proxy cache."""
+    if get_settings is None:
+        yield
+        return
+
     def _reset() -> None:
         get_settings.cache_clear()
         _trusted_proxy_networks.cache_clear()
