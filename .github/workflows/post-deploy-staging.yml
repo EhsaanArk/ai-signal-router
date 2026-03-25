@@ -8,6 +8,8 @@ on:
         required: false
         type: string
   deployment_status:
+  push:
+    branches: [staging]
 
 concurrency:
   group: post-deploy-staging
@@ -19,11 +21,39 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Step 0: Wait for Railway deploy to finish
+  # ---------------------------------------------------------------------------
+  wait-for-deploy:
+    name: Wait for Railway deploy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Wait for Railway to deploy
+        run: |
+          echo "Waiting 90 seconds for Railway to build and deploy..."
+          sleep 90
+
+      - name: Verify staging is up
+        run: |
+          for i in 1 2 3 4 5; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$STAGING_API_URL/health" || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Staging API is up (attempt $i)"
+              exit 0
+            fi
+            echo "Staging not ready (HTTP $HTTP_CODE), retrying in 30s... (attempt $i/5)"
+            sleep 30
+          done
+          echo "::warning::Staging API not responding after 5 attempts — proceeding anyway"
+
+  # ---------------------------------------------------------------------------
   # Step 1: API health check
   # ---------------------------------------------------------------------------
   health-check:
     name: API health check
     runs-on: ubuntu-latest
+    needs: [wait-for-deploy]
+    if: always()
     outputs:
       health_status: ${{ steps.health.outputs.status }}
       deploy_health: ${{ steps.deploy.outputs.deploy_health }}
