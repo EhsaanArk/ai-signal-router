@@ -373,26 +373,38 @@ async def get_current_user(
         except IntegrityError:
             # Email already exists with a different UUID — this happens when a
             # user registered via /register (local UUID) then logs in via
-            # Supabase (different UUID). Migrate the existing row to the
-            # Supabase UUID so future lookups work.
+            # Supabase (different UUID). Look up the existing row by email
+            # and return it. The UUID mismatch is harmless — the user is the
+            # same person, just with two different IDs across systems.
             await db.rollback()
             result = await db.execute(
-                select(UserModel).where(UserModel.email == sb_user_data.user.email)
+                select(UserModel).where(
+                    UserModel.email == sb_user_data.user.email
+                )
             )
             user_row = result.scalar_one_or_none()
             if user_row is not None:
-                old_id = user_row.id
-                user_row.id = user_id
-                await db.flush()
                 logger.info(
-                    "Migrated user %s → %s (email=%s) to match Supabase UUID",
-                    old_id, user_id, user_row.email,
+                    "Supabase UUID %s matched existing user %s (email=%s) via email fallback",
+                    user_id, user_row.id, user_row.email,
                 )
-                # Bust old cache entry
+                # Cache under BOTH UUIDs so future lookups by either ID hit cache
                 if cache:
-                    await cache.delete(f"user:{old_id}")
+                    user_data = json.dumps({
+                        "id": str(user_row.id),
+                        "email": user_row.email,
+                        "subscription_tier": user_row.subscription_tier,
+                        "is_admin": getattr(user_row, "is_admin", False),
+                        "is_disabled": getattr(user_row, "is_disabled", False),
+                        "email_verified": getattr(user_row, "email_verified", False),
+                        "accepted_tos_version": getattr(user_row, "accepted_tos_version", None),
+                        "accepted_risk_waiver": getattr(user_row, "accepted_risk_waiver", False),
+                        "created_at": user_row.created_at.isoformat() if user_row.created_at else "",
+                    })
+                    await cache.set(f"user:{user_id}", user_data, ex=_USER_CACHE_TTL)
+                    await cache.set(f"user:{user_row.id}", user_data, ex=_USER_CACHE_TTL)
             else:
-                logger.error("Auto-create conflict but no existing row for %s", user_id)
+                logger.error("Auto-create conflict but no existing row for email from Supabase user %s", user_id)
                 raise credentials_exception
         except Exception as exc:
             logger.error("Failed to auto-create user %s: %s", user_id, exc)
