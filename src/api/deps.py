@@ -18,6 +18,7 @@ from jwt import InvalidTokenError
 from pydantic_settings import BaseSettings
 from slowapi import Limiter
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import UserModel
@@ -369,6 +370,30 @@ async def get_current_user(
                 background_tasks.add_task(
                     _send_welcome_bg, settings.RESEND_API_KEY, email, settings.FRONTEND_URL
                 )
+        except IntegrityError:
+            # Email already exists with a different UUID — this happens when a
+            # user registered via /register (local UUID) then logs in via
+            # Supabase (different UUID). Migrate the existing row to the
+            # Supabase UUID so future lookups work.
+            await db.rollback()
+            result = await db.execute(
+                select(UserModel).where(UserModel.email == sb_user_data.user.email)
+            )
+            user_row = result.scalar_one_or_none()
+            if user_row is not None:
+                old_id = user_row.id
+                user_row.id = user_id
+                await db.flush()
+                logger.info(
+                    "Migrated user %s → %s (email=%s) to match Supabase UUID",
+                    old_id, user_id, user_row.email,
+                )
+                # Bust old cache entry
+                if cache:
+                    await cache.delete(f"user:{old_id}")
+            else:
+                logger.error("Auto-create conflict but no existing row for %s", user_id)
+                raise credentials_exception
         except Exception as exc:
             logger.error("Failed to auto-create user %s: %s", user_id, exc)
             raise credentials_exception from exc
