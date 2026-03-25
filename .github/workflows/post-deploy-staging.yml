@@ -118,7 +118,7 @@ jobs:
           TEST_USER_PASSWORD: ${{ secrets.STAGING_TEST_USER_PASSWORD }}
         run: |
           set +e
-          pytest tests/e2e/test_api_smoke.py tests/e2e/test_api_regression.py -v --tb=short --junitxml=smoke-results.xml --override-ini="testpaths=tests/e2e" -o addopts="" 2>&1 | tee smoke-output.txt
+          pytest tests/e2e/test_api_smoke.py tests/e2e/test_api_regression.py -v --tb=short --junitxml=smoke-results.xml --rootdir=tests/e2e -o addopts="" -o asyncio_mode=auto 2>&1 | tee smoke-output.txt
           EXIT_CODE=$?
           set -e
 
@@ -175,7 +175,7 @@ jobs:
           TEST_USER_PASSWORD: ${{ secrets.STAGING_TEST_USER_PASSWORD }}
         run: |
           set +e
-          pytest tests/e2e/test_ui_flows.py tests/e2e/test_ui_interactions.py -v --tb=short --junitxml=e2e-results.xml --override-ini="testpaths=tests/e2e" -o addopts="" 2>&1 | tee e2e-output.txt
+          pytest tests/e2e/test_ui_flows.py tests/e2e/test_ui_interactions.py -v --tb=short --junitxml=e2e-results.xml --rootdir=tests/e2e -o addopts="" -o asyncio_mode=auto 2>&1 | tee e2e-output.txt
           EXIT_CODE=$?
           set -e
 
