@@ -114,7 +114,7 @@ jobs:
           TEST_USER_PASSWORD: ${{ secrets.PRODUCTION_TEST_USER_PASSWORD }}
         run: |
           set +e
-          cd tests/e2e && pytest test_api_smoke.py test_api_regression.py -v --tb=short --junitxml=../../prod-results.xml -o addopts="" -o asyncio_mode=auto 2>&1 | tee ../../prod-output.txt && cd ../..
+          cd tests/e2e && python -m pytest test_api_smoke.py test_api_regression.py -v --tb=short --junitxml=../../prod-results.xml -o addopts="" -o asyncio_mode=auto --rootdir=. -c /dev/null 2>&1 | tee ../../prod-output.txt && cd ../..
           EXIT_CODE=$?
           set -e
 
