@@ -11,4 +11,5 @@ addopts = "--cov=src --cov-report=term-missing --cov-report=html"
 markers = [
     "e2e: end-to-end tests that run against live staging environment",
     "playwright: tests that require Playwright browser automation",
+    "slow: tests with non-deterministic latency (e.g., OpenAI API calls)",
 ]
