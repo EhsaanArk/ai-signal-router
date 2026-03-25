@@ -136,6 +136,7 @@ class MultiUserListenerManager:
         self._failure_counts: dict[UUID, int] = {}
         self._startup_failures: dict[UUID, int] = {}
         self._auth_dup_retries: dict[UUID, int] = {}
+        self._user_locks: dict[UUID, asyncio.Lock] = {}
         self._heartbeat_count: int = 0
         self._refresh_task: asyncio.Task | None = None
         self._running = False
@@ -199,6 +200,7 @@ class MultiUserListenerManager:
             self._failure_counts.clear()
             self._startup_failures.clear()
             self._auth_dup_retries.clear()
+            self._user_locks.clear()
 
         logger.info("Multi-user listener manager stopped.")
 
@@ -227,6 +229,10 @@ class MultiUserListenerManager:
     # Internal: per-user lifecycle
     # ------------------------------------------------------------------
 
+    def _get_user_lock(self, user_id: UUID) -> asyncio.Lock:
+        """Return the per-user lock, creating it atomically if needed."""
+        return self._user_locks.setdefault(user_id, asyncio.Lock())
+
     async def _start_listener_for_user(
         self,
         user_id: UUID,
@@ -235,8 +241,25 @@ class MultiUserListenerManager:
     ) -> bool:
         """Create, start, and register a listener for a single user.
 
+        Acquires a per-user lock to prevent concurrent initialization of the
+        same user's listener, which would cause AuthKeyDuplicatedError when
+        two tasks race past the ``user_id in self._listeners`` check and both
+        attempt to connect to Telegram with the same session string.
+
         Returns True on success, False on failure.
         """
+        async with self._get_user_lock(user_id):
+            return await self._start_listener_for_user_inner(
+                user_id, session_string, channels,
+            )
+
+    async def _start_listener_for_user_inner(
+        self,
+        user_id: UUID,
+        session_string: str,
+        channels: set[str] | None = None,
+    ) -> bool:
+        """Inner implementation — called with per-user lock held."""
         if user_id in self._listeners:
             logger.debug("Listener already active for user %s, skipping", user_id)
             return True
@@ -334,6 +357,11 @@ class MultiUserListenerManager:
 
     async def _stop_listener_for_user(self, user_id: UUID) -> None:
         """Stop and remove the listener for a single user."""
+        async with self._get_user_lock(user_id):
+            await self._stop_listener_for_user_inner(user_id)
+
+    async def _stop_listener_for_user_inner(self, user_id: UUID) -> None:
+        """Inner implementation — called with per-user lock held."""
         listener = self._listeners.pop(user_id, None)
         self._monitored_channels.pop(user_id, None)
         self._failure_counts.pop(user_id, None)
@@ -350,21 +378,28 @@ class MultiUserListenerManager:
         logger.info("Listener stopped for user %s", user_id)
 
     async def _restart_listener_for_user(self, user_id: UUID) -> None:
-        """Stop and restart a listener from scratch (re-reads session from DB)."""
-        logger.warning("Restarting listener for user %s", user_id)
-        await self._stop_listener_for_user(user_id)
+        """Stop and restart a listener from scratch (re-reads session from DB).
 
-        try:
-            session_string = await self._repo.load_session_for_user(user_id)
-            if session_string is None:
-                logger.warning(
-                    "No active session for user %s after restart attempt", user_id,
+        Holds the per-user lock across stop + start to prevent a sync-start
+        racing in between and creating a duplicate listener.
+        """
+        async with self._get_user_lock(user_id):
+            logger.warning("Restarting listener for user %s", user_id)
+            await self._stop_listener_for_user_inner(user_id)
+
+            try:
+                session_string = await self._repo.load_session_for_user(user_id)
+                if session_string is None:
+                    logger.warning(
+                        "No active session for user %s after restart attempt", user_id,
+                    )
+                    return
+                await self._start_listener_for_user_inner(
+                    user_id, session_string,
                 )
-                return
-            await self._start_listener_for_user(user_id, session_string)
-        except Exception as exc:
-            logger.error("Restart failed for user %s: %s", user_id, exc)
-            _capture_user_exception(exc, user_id)
+            except Exception as exc:
+                logger.error("Restart failed for user %s: %s", user_id, exc)
+                _capture_user_exception(exc, user_id)
 
     # ------------------------------------------------------------------
     # Internal: notifications

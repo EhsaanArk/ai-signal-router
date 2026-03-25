@@ -8,6 +8,7 @@ Provides a two-step login flow:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -151,8 +152,28 @@ class TelegramAuth:
         self._pending_timestamps.pop(phone_number, None)
         try:
             await client.disconnect()
-        except Exception:
-            pass
+            logger.debug(
+                "Auth client disconnected for %s — waiting for Telegram to "
+                "release auth key", _phone_id(phone_number),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Auth client disconnect failed for %s: %s — force-dropping",
+                _phone_id(phone_number), exc,
+            )
+            # Even if disconnect() fails, the client object will be GC'd.
+            # Force-drop the internal connection so Telegram doesn't see
+            # two active connections with the same auth key.
+            try:
+                if client._sender:  # noqa: SLF001
+                    client._sender._transport.close()  # noqa: SLF001
+            except Exception:
+                pass
+
+        # Brief pause to let Telegram fully release the auth key server-side.
+        # Without this, the listener manager may start a new connection before
+        # Telegram has processed the disconnect, causing AuthKeyDuplicatedError.
+        await asyncio.sleep(2)
 
         return session_string
 
