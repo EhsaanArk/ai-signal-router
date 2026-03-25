@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PRODUCTION_API_URL: https://ai-signal-router-production.up.railway.app
+  PRODUCTION_API_URL: https://api.radar.sagemaster.com
   PRODUCTION_FRONTEND_URL: https://app.radar.sagemaster.com
 
 jobs:
