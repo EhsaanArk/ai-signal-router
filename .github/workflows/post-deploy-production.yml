@@ -118,17 +118,17 @@ jobs:
           EXIT_CODE=$?
           set -e
 
-          PASSED=$(grep -c "PASSED" prod-output.txt || echo "0")
-          FAILED=$(grep -c "FAILED" prod-output.txt || echo "0")
+          PASSED="$(grep -c 'PASSED' prod-output.txt 2>/dev/null || printf '0')"
+          FAILED="$(grep -c 'FAILED' prod-output.txt 2>/dev/null || printf '0')"
           TOTAL=$((PASSED + FAILED))
 
-          echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
-          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          printf 'passed=%s\n' "$PASSED" >> "$GITHUB_OUTPUT"
+          printf 'total=%s\n' "$TOTAL" >> "$GITHUB_OUTPUT"
 
           if [ "$EXIT_CODE" = "0" ]; then
-            echo "result=pass" >> "$GITHUB_OUTPUT"
+            printf 'result=pass\n' >> "$GITHUB_OUTPUT"
           else
-            echo "result=fail" >> "$GITHUB_OUTPUT"
+            printf 'result=fail\n' >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/upload-artifact@v4
