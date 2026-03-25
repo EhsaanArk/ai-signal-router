@@ -317,10 +317,12 @@ async def test_parse_forex_signal(
         resp = await client.post(
             f"{staging_api_url}/api/v1/parse-preview",
             headers=auth_headers,
-            json={"raw_message": _FOREX_SIGNAL},
+            json={"message": _FOREX_SIGNAL},
         )
     assert resp.status_code == 200
-    parsed = resp.json()["parsed"]
+    data = resp.json()
+    # parse-preview returns parsed fields at top level (no 'parsed' wrapper)
+    parsed = data.get("parsed", data)
     assert parsed["is_valid_signal"] is True
     assert parsed["action"] in (
         "entry", "buy", "sell", "buy_limit", "buy_stop", "sell_limit", "sell_stop",
@@ -337,10 +339,12 @@ async def test_parse_crypto_signal(
         resp = await client.post(
             f"{staging_api_url}/api/v1/parse-preview",
             headers=auth_headers,
-            json={"raw_message": _CRYPTO_SIGNAL},
+            json={"message": _CRYPTO_SIGNAL},
         )
     assert resp.status_code == 200
-    assert resp.json()["parsed"]["is_valid_signal"] is True
+    data = resp.json()
+    parsed = data.get("parsed", data)
+    assert parsed["is_valid_signal"] is True
 
 
 @pytest.mark.asyncio
@@ -353,10 +357,12 @@ async def test_parse_nonsignal(
         resp = await client.post(
             f"{staging_api_url}/api/v1/parse-preview",
             headers=auth_headers,
-            json={"raw_message": _NONSIGNAL},
+            json={"message": _NONSIGNAL},
         )
     assert resp.status_code == 200
-    assert resp.json()["parsed"]["is_valid_signal"] is False
+    data = resp.json()
+    parsed = data.get("parsed", data)
+    assert parsed["is_valid_signal"] is False
 
 
 @pytest.mark.asyncio
@@ -369,10 +375,11 @@ async def test_parse_multiline_signal(
         resp = await client.post(
             f"{staging_api_url}/api/v1/parse-preview",
             headers=auth_headers,
-            json={"raw_message": _MULTILINE_SIGNAL},
+            json={"message": _MULTILINE_SIGNAL},
         )
     assert resp.status_code == 200
-    parsed = resp.json()["parsed"]
+    data = resp.json()
+    parsed = data.get("parsed", data)
     assert parsed["is_valid_signal"] is True
 
 
