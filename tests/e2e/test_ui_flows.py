@@ -79,32 +79,61 @@ _API_URL = os.environ.get(
     "https://ai-signal-router-staging.up.railway.app",
 )
 
-# Cache the auth token across tests to avoid rate-limiting
+# Cache the auth data across tests to avoid rate-limiting (5/min on login)
 _cached_token: str | None = None
+_cached_user: dict | None = None
 
 
-def _get_token() -> str:
-    """Get an auth token via the API (cached to avoid rate-limits)."""
-    global _cached_token
-    if _cached_token:
-        return _cached_token
+def _get_auth_data() -> tuple[str, dict]:
+    """Login via API and return (token, user_dict). Cached per session."""
+    global _cached_token, _cached_user
+    if _cached_token and _cached_user:
+        return _cached_token, _cached_user
     import httpx
 
     resp = httpx.post(
         f"{_API_URL}/api/v1/auth/login-json",
         json={"email": _TEST_EMAIL, "password": _TEST_PASSWORD},
-        timeout=10,
+        timeout=15,
     )
     resp.raise_for_status()
-    _cached_token = resp.json()["access_token"]
-    return _cached_token
+    data = resp.json()
+    _cached_token = data["access_token"]
+    _cached_user = data["user"]
+    return _cached_token, _cached_user
 
 
 def _login(page: Page) -> None:
-    """Inject auth token into localStorage and navigate to dashboard."""
-    token = _get_token()
+    """Inject Supabase auth session into localStorage and navigate to dashboard."""
+    token, user = _get_auth_data()
     page.goto(f"{_FRONTEND_URL}/login", wait_until="networkidle")
-    page.evaluate(f"localStorage.setItem('sgm_token', '{token}')")
+
+    # Inject Supabase-compatible session into localStorage
+    page.evaluate(
+        """([token, user]) => {
+            const keys = Object.keys(localStorage);
+            const sbKey = keys.find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+            const sessionData = JSON.stringify({
+                access_token: token,
+                token_type: 'bearer',
+                expires_in: 3600,
+                expires_at: Math.floor(Date.now() / 1000) + 3600,
+                refresh_token: 'e2e-test-refresh',
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    app_metadata: { provider: 'email' },
+                    user_metadata: {},
+                    aud: 'authenticated',
+                    created_at: user.created_at || new Date().toISOString(),
+                }
+            });
+            if (sbKey) localStorage.setItem(sbKey, sessionData);
+            // Also set legacy token for backward compat
+            localStorage.setItem('sgm_token', token);
+        }""",
+        [token, user],
+    )
     page.goto(f"{_FRONTEND_URL}/", wait_until="networkidle")
 
 
