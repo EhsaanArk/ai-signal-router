@@ -288,6 +288,12 @@ class MultiUserListenerManager:
             await asyncio.sleep(e.seconds + 1)
             try:
                 await listener.start(user_id, session_string, monitored_channels=channels)
+            except AuthKeyDuplicatedError as retry_exc:
+                await self._handle_auth_key_duplicated(
+                    user_id, listener, "startup_flood_retry",
+                )
+                _capture_user_exception(retry_exc, user_id)
+                return False
             except Exception as retry_exc:
                 logger.error(
                     "User %s: retry after flood-wait failed: %s",
@@ -298,6 +304,15 @@ class MultiUserListenerManager:
                 self._startup_failures[user_id] = self._startup_failures.get(user_id, 0) + 1
                 _capture_user_exception(retry_exc, user_id)
                 return False
+        except AuthKeyDuplicatedError as exc:
+            # Route through the retry+escalation handler rather than just
+            # logging and backing off.  After MAX_AUTH_DUP_RETRIES the
+            # session is permanently deactivated.
+            await self._handle_auth_key_duplicated(
+                user_id, listener, "startup",
+            )
+            _capture_user_exception(exc, user_id)
+            return False
         except (RuntimeError, AuthKeyError, UnauthorizedError) as exc:
             if _is_session_dead(exc):
                 logger.warning(
