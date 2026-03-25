@@ -4,8 +4,13 @@ from uuid import UUID
 
 import pytest
 
-from src.api.deps import _trusted_proxy_networks, get_settings, limiter
-from src.core.models import ParsedSignal, RawSignal, RoutingRule
+try:
+    from src.api.deps import _trusted_proxy_networks, get_settings, limiter
+    from src.core.models import ParsedSignal, RawSignal, RoutingRule
+except ImportError:
+    # E2E tests run without the app installed — skip these imports
+    _trusted_proxy_networks = get_settings = limiter = None
+    ParsedSignal = RawSignal = RoutingRule = None
 
 
 SAMPLE_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
