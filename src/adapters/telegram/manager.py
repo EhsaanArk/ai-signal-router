@@ -136,6 +136,7 @@ class MultiUserListenerManager:
         self._failure_counts: dict[UUID, int] = {}
         self._startup_failures: dict[UUID, int] = {}
         self._auth_dup_retries: dict[UUID, int] = {}
+        self._user_start_locks: dict[UUID, asyncio.Lock] = {}
         self._heartbeat_count: int = 0
         self._refresh_task: asyncio.Task | None = None
         self._running = False
@@ -199,6 +200,7 @@ class MultiUserListenerManager:
             self._failure_counts.clear()
             self._startup_failures.clear()
             self._auth_dup_retries.clear()
+            self._user_start_locks.clear()
 
         logger.info("Multi-user listener manager stopped.")
 
@@ -237,6 +239,24 @@ class MultiUserListenerManager:
 
         Returns True on success, False on failure.
         """
+        # Acquire a per-user lock to prevent concurrent initialization of the
+        # same user's listener, which would cause AuthKeyDuplicatedError when
+        # two tasks race past the `user_id in self._listeners` check and both
+        # attempt to connect to Telegram with the same session string.
+        if user_id not in self._user_start_locks:
+            self._user_start_locks[user_id] = asyncio.Lock()
+        async with self._user_start_locks[user_id]:
+            return await self._start_listener_for_user_locked(
+                user_id, session_string, channels
+            )
+
+    async def _start_listener_for_user_locked(
+        self,
+        user_id: UUID,
+        session_string: str,
+        channels: set[str] | None = None,
+    ) -> bool:
+        """Inner implementation of listener startup — called with per-user lock held."""
         if user_id in self._listeners:
             logger.debug("Listener already active for user %s, skipping", user_id)
             return True
