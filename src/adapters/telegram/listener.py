@@ -149,10 +149,6 @@ class TelegramListener:
             self._on_new_message,
             events.NewMessage(),
         )
-        self._client.add_event_handler(
-            self._on_new_message,
-            events.MessageEdited(),
-        )
 
         # Prime Telethon's entity cache so it can deserialise incoming updates.
         # When we know which channels to monitor, fetch only those entities
@@ -181,7 +177,7 @@ class TelegramListener:
         else:
             await self._client.get_dialogs()
 
-        logger.info("Telegram listener started for user %s (new messages + edits)", user_id)
+        logger.info("Telegram listener started for user %s", user_id)
 
     async def _on_new_message(self, event: events.NewMessage.Event) -> None:
         """Handle an incoming Telegram message."""
