@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3.0] - 2026-03-26
+
+### Added
+- Vibe Trading Bot: send trading signals via Telegram DM to @SageRadarBot instead of the SageMaster UI
+- Typed Pydantic sub-models for Telegram Bot API updates (TelegramUser, TelegramChat, TelegramMessage, TelegramCallbackQuery)
+- Bot API helpers on TelegramNotifier: send_message, answer_callback_query, edit_message_text with shared _post method
+- Confirmation flow with Redis-backed state (5-min TTL, atomic GETDEL for idempotency)
+- Auto-create routing rule on /start account linking (clones user's first active rule)
+- `source_type` field on RawSignal/RawSignalMeta — parameterized across pipeline (replaces hardcoded "telegram")
+- `BOT_ENABLED` feature flag (default false) — gates signal processing, commands always work
+- JSONB functional indexes on `telegram_bot_chat_id` and `telegram_user_id` for fast user lookup
+- `getdel()` method on CachePort protocol and both Redis/InMemory adapters
+- 23 unit tests for bot schemas, models, helpers, cache, and linking
+
+### Changed
+- Bot DM routing rules (`bot_dm_*`) filtered from dashboard API to prevent UI leakage
+- Dispatch wrapped in `asyncio.wait_for(15s)` to prevent 45s worst-case blocking in Telegram callback
+- All bot messages use Markdown v1 (simpler escaping than MarkdownV2)
+- Lazy imports in telegram.py moved to top-level for clarity
+
+### Fixed
+- Group mode deferred to Phase 2 (Telegram privacy mode and anonymous admins make it fragile)
+
 ## [0.1.2.0] - 2026-03-26
 
 ### Added
