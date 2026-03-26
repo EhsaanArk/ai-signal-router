@@ -102,6 +102,7 @@ async def list_routing_rules(
         .where(
             RoutingRuleModel.user_id == current_user.id,
             RoutingRuleModel.is_marketplace_template.is_(False),
+            RoutingRuleModel.source_channel_id.notlike("bot_dm_%"),
         )
         .order_by(RoutingRuleModel.created_at.desc())
     )

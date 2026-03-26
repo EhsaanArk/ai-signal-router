@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 import jwt
 from jwt import InvalidTokenError
-from sqlalchemy import select, text as sa_text
+from sqlalchemy import func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sentry_sdk
@@ -24,6 +24,9 @@ from src.adapters.db.models import (
     TelegramSessionModel,
     UserModel,
 )
+from src.adapters.openai import OpenAISignalParser
+from src.adapters.telegram.notifier import TelegramNotifier, _escape_md
+from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import (
     Settings,
     get_cache,
@@ -33,13 +36,21 @@ from src.api.deps import (
     get_session_store,
     get_settings,
 )
+from src.api.workflow import _get_parser_config, _process_single_rule
 from src.core.exceptions import (
     AuthenticationError,
     ConflictError,
     ExternalServiceError,
     InputValidationError,
 )
-from src.core.models import ParsedSignal, RawSignal, RoutingRule, User
+from src.core.models import (
+    DispatchResult,
+    ParsedSignal,
+    RawSignal,
+    RoutingRule,
+    User,
+    normalize_enabled_actions,
+)
 
 from src.api.routes.schemas import (
     ChannelInfo,
@@ -541,6 +552,16 @@ async def _get_user_by_bot_chat_id(db: AsyncSession, chat_id: int) -> UserModel 
     return result.scalar_one_or_none()
 
 
+async def _get_user_by_tg_user_id(db: AsyncSession, tg_user_id: int) -> UserModel | None:
+    """Look up a user by their linked Telegram user ID (JSONB query)."""
+    result = await db.execute(
+        select(UserModel).where(
+            UserModel.notification_preferences["telegram_user_id"].as_integer() == tg_user_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 def _bot_channel_id(telegram_user_id: int) -> str:
     """Synthetic channel ID for bot DM signals."""
     return f"bot_dm_{telegram_user_id}"
@@ -551,7 +572,7 @@ _CONFIRM_PREFIX = "bot:confirm:"
 
 _HELP_TEXT = (
     "*Sage Radar AI — Vibe Trading Bot*\n\n"
-    "Send me a trading signal as a text message and I'll route it to your SageMaster account\\.\n\n"
+    "Send me a trading signal as a text message and I'll route it to your SageMaster account.\n\n"
     "*Examples:*\n"
     "`Buy EURUSD @ 1.0850 SL 1.0800 TP 1.0950`\n"
     "`Sell XAUUSD market SL 2350 TP 2300`\n"
@@ -582,7 +603,6 @@ async def telegram_bot_webhook(
         if not provided_secret or not hmac.compare_digest(provided_secret, required_secret):
             raise AuthenticationError("Invalid Telegram webhook secret")
 
-    from src.adapters.telegram.notifier import TelegramNotifier
     bot = TelegramNotifier(bot_token=settings.TELEGRAM_BOT_TOKEN)
 
     # --- Callback query handling (confirm/cancel) ---
@@ -600,9 +620,13 @@ async def telegram_bot_webhook(
     tg_user = message.from_user
     text = message.text
 
+    # Only support private DMs — group/supergroup deferred to Phase 2
+    if chat_type in ("group", "supergroup"):
+        return {"ok": True}
+
     # Non-text messages
     if text is None:
-        await bot.send_message(chat_id, "I can only process text messages containing trading signals\\.")
+        await bot.send_message(chat_id, "I can only process text messages containing trading signals.")
         return {"ok": True}
 
     # --- Command routing ---
@@ -610,37 +634,30 @@ async def telegram_bot_webhook(
         return await _handle_start(text, chat_id, tg_user, bot, db, settings)
 
     if text.strip() == "/help":
-        await bot.send_message(chat_id, _HELP_TEXT, parse_mode="MarkdownV2")
+        await bot.send_message(chat_id, _HELP_TEXT)
         return {"ok": True}
 
     if text.strip() == "/status":
-        return await _handle_status(chat_id, tg_user, bot, db)
+        return await _handle_status(chat_id, bot, db)
 
     if text.strip() == "/unlink":
-        return await _handle_unlink(chat_id, tg_user, bot, db)
+        return await _handle_unlink(chat_id, bot, db)
 
     # --- BOT_ENABLED gate (only for signal processing, not commands) ---
     if not settings.BOT_ENABLED:
-        await bot.send_message(chat_id, "Vibe trading is not yet enabled\\. Stay tuned\\!", parse_mode="MarkdownV2")
+        await bot.send_message(chat_id, "Vibe trading is not yet enabled. Stay tuned!")
         return {"ok": True}
 
     # --- Signal processing ---
     if not tg_user:
         return {"ok": True}
 
-    # Group messages: only process if sender is the linked account owner
-    if chat_type in ("group", "supergroup"):
-        user_row = await _get_user_by_bot_chat_id(db, tg_user.id)
-        if not user_row:
-            return {"ok": True}  # silently ignore non-linked users in groups
-    else:
-        user_row = await _get_user_by_bot_chat_id(db, chat_id)
+    user_row = await _get_user_by_bot_chat_id(db, chat_id)
 
     if not user_row:
         await bot.send_message(
             chat_id,
-            "Your Telegram account is not linked\\. Use the Sage Radar dashboard to get a /start link\\.",
-            parse_mode="MarkdownV2",
+            "Your Telegram account is not linked. Use the Sage Radar dashboard to get a /start link.",
         )
         return {"ok": True}
 
@@ -654,13 +671,13 @@ async def _handle_start(
     """Handle /start with optional deep-link token for account linking."""
     parts = text.split(maxsplit=1)
     if len(parts) < 2:
-        await bot.send_message(chat_id, _HELP_TEXT, parse_mode="MarkdownV2")
+        await bot.send_message(chat_id, _HELP_TEXT)
         return {"ok": True}
 
     token_part = parts[1].strip()
     user_id = _decode_telegram_bot_link_token(token_part, settings)
     if user_id is None:
-        await bot.send_message(chat_id, "This link has expired or is invalid\\. Please generate a new one from the dashboard\\.", parse_mode="MarkdownV2")
+        await bot.send_message(chat_id, "This link has expired or is invalid. Please generate a new one from the dashboard.")
         return {"ok": True}
 
     result = await db.execute(select(UserModel).where(UserModel.id == user_id))
@@ -669,8 +686,20 @@ async def _handle_start(
         logger.warning("Telegram bot /start: user %s not found", user_id)
         return {"ok": True}
 
+    # Uniqueness check: ensure this Telegram user isn't already linked to another account
+    if tg_user:
+        existing_owner = await _get_user_by_tg_user_id(db, tg_user.id)
+        if existing_owner and existing_owner.id != user_row.id:
+            await bot.send_message(
+                chat_id,
+                "This Telegram account is already linked to another Sage Radar account. "
+                "Please unlink it first.",
+            )
+            return {"ok": True}
+
     prefs = user_row.notification_preferences or {}
     prefs["telegram_bot_chat_id"] = chat_id
+    prefs["telegram_user_id"] = tg_user.id if tg_user else None
     user_row.notification_preferences = prefs
 
     # Auto-create bot routing rule if user has existing rules but none for bot_dm_
@@ -717,57 +746,59 @@ async def _handle_start(
     logger.info("Telegram bot linked for user %s, chat_id=%s", user_id, chat_id)
     await bot.send_message(
         chat_id,
-        "Account linked successfully\\! Send me a trading signal to get started\\.\n\nType /help to see what I can do\\.",
-        parse_mode="MarkdownV2",
+        "Account linked successfully! Send me a trading signal to get started.\n\nType /help to see what I can do.",
     )
     return {"ok": True, "linked": True}
 
 
-async def _handle_status(chat_id: int, tg_user, bot, db: AsyncSession) -> dict:
-    """Handle /status — show linked account info."""
-    lookup_id = tg_user.id if tg_user else chat_id
-    user_row = await _get_user_by_bot_chat_id(db, lookup_id if tg_user else chat_id)
+async def _handle_status(chat_id: int, bot, db: AsyncSession) -> dict:
+    """Handle /status — show linked account info (DMs only)."""
+    user_row = await _get_user_by_bot_chat_id(db, chat_id)
     if not user_row:
-        user_row = await _get_user_by_bot_chat_id(db, chat_id)
-    if not user_row:
-        await bot.send_message(chat_id, "No linked account found\\. Use the dashboard to link your account\\.", parse_mode="MarkdownV2")
+        await bot.send_message(chat_id, "No linked account found. Use the dashboard to link your account.")
         return {"ok": True}
 
-    bot_channel = _bot_channel_id(tg_user.id) if tg_user else None
+    # Use func.count() for efficient rule counting
+    prefs = user_row.notification_preferences or {}
+    tg_user_id = prefs.get("telegram_user_id")
     rule_count = 0
-    if bot_channel:
-        rule_count = (await db.execute(
-            select(RoutingRuleModel.id).where(
+    if tg_user_id:
+        bot_channel = _bot_channel_id(tg_user_id)
+        count_result = await db.execute(
+            select(func.count())
+            .select_from(RoutingRuleModel)
+            .where(
                 RoutingRuleModel.user_id == user_row.id,
                 RoutingRuleModel.source_channel_id == bot_channel,
                 RoutingRuleModel.is_active.is_(True),
             )
-        )).scalars().all().__len__()
+        )
+        rule_count = count_result.scalar_one()
 
-    from src.adapters.telegram.notifier import _escape_md
     lines = [
         "*Linked Account*",
         f"Email: {_escape_md(user_row.email)}",
         f"Tier: {_escape_md(user_row.subscription_tier or 'free')}",
         f"Bot routes: {rule_count}",
     ]
-    await bot.send_message(chat_id, "\n".join(lines), parse_mode="MarkdownV2")
+    await bot.send_message(chat_id, "\n".join(lines))
     return {"ok": True}
 
 
-async def _handle_unlink(chat_id: int, tg_user, bot, db: AsyncSession) -> dict:
-    """Handle /unlink — remove telegram_bot_chat_id from user prefs."""
+async def _handle_unlink(chat_id: int, bot, db: AsyncSession) -> dict:
+    """Handle /unlink — remove telegram_bot_chat_id and telegram_user_id from user prefs."""
     user_row = await _get_user_by_bot_chat_id(db, chat_id)
     if not user_row:
-        await bot.send_message(chat_id, "No linked account found\\.", parse_mode="MarkdownV2")
+        await bot.send_message(chat_id, "No linked account found.")
         return {"ok": True}
 
     prefs = user_row.notification_preferences or {}
     prefs.pop("telegram_bot_chat_id", None)
+    prefs.pop("telegram_user_id", None)
     user_row.notification_preferences = prefs
 
     logger.info("Telegram bot unlinked for user %s", user_row.id)
-    await bot.send_message(chat_id, "Account unlinked\\. You can re\\-link anytime from the dashboard\\.", parse_mode="MarkdownV2")
+    await bot.send_message(chat_id, "Account unlinked. You can re-link anytime from the dashboard.")
     return {"ok": True}
 
 
@@ -796,17 +827,13 @@ async def _handle_signal_message(
     if not rules:
         await bot.send_message(
             chat_id,
-            "You don't have a routing rule set up for bot trading\\. "
+            "You don't have a routing rule set up for bot trading. "
             "Please create one in the Sage Radar dashboard with channel ID: "
             f"`{_bot_channel_id(tg_user_id)}`",
-            parse_mode="MarkdownV2",
         )
         return
 
     # Parse signal via OpenAI
-    from src.adapters.openai import OpenAISignalParser
-    from src.api.workflow import _get_parser_config
-
     sys_prompt, model_name, temp = await _get_parser_config(request, db)
     custom_instructions = next((r.custom_ai_instructions for r in rules if r.custom_ai_instructions), None)
     raw_signal = RawSignal(
@@ -827,20 +854,18 @@ async def _handle_signal_message(
     except Exception as exc:
         logger.error("Bot signal parse error: %s", exc)
         sentry_sdk.capture_exception(exc)
-        await bot.send_message(chat_id, "Failed to parse your message\\. Please try again\\.", parse_mode="MarkdownV2")
+        await bot.send_message(chat_id, "Failed to parse your message. Please try again.")
         return
 
     if not parsed.is_valid_signal:
         hint = parsed.ignore_reason or "Not recognized as a trading signal"
-        from src.adapters.telegram.notifier import _escape_md
         await bot.send_message(
             chat_id,
-            f"Not a valid signal: {_escape_md(hint)}\n\nType /help for examples\\.",
-            parse_mode="MarkdownV2",
+            f"Not a valid signal: {_escape_md(hint)}\n\nType /help for examples.",
         )
         return
 
-    # Store confirmation state in Redis
+    # Store confirmation state in Redis (with error handling)
     cache = request.app.state.cache
     confirm_token = str(_uuid.uuid4())
     confirm_data = json.dumps({
@@ -852,10 +877,15 @@ async def _handle_signal_message(
         "raw_message": text,
         "bot_channel": bot_channel,
     })
-    await cache.set(f"{_CONFIRM_PREFIX}{confirm_token}", confirm_data, ttl_seconds=_CONFIRM_TTL)
+    try:
+        await cache.set(f"{_CONFIRM_PREFIX}{confirm_token}", confirm_data, ttl_seconds=_CONFIRM_TTL)
+    except Exception as exc:
+        logger.error("Failed to store confirmation in Redis: %s", exc)
+        sentry_sdk.capture_exception(exc)
+        await bot.send_message(chat_id, "Something went wrong, please try again.")
+        return
 
     # Build confirmation preview
-    from src.adapters.telegram.notifier import _escape_md
     preview_lines = [
         "*Signal Preview*",
         f"Action: {_escape_md(parsed.action)}",
@@ -868,7 +898,7 @@ async def _handle_signal_message(
         preview_lines.append(f"SL: {parsed.stop_loss}")
     if parsed.take_profits:
         preview_lines.append(f"TP: {', '.join(str(tp) for tp in parsed.take_profits)}")
-    preview_lines.append(f"\nRouting to {len(rules)} destination\\(s\\)\\.")
+    preview_lines.append(f"\nRouting to {len(rules)} destination(s).")
 
     reply_markup = {
         "inline_keyboard": [[
@@ -879,17 +909,12 @@ async def _handle_signal_message(
     await bot.send_message(
         chat_id,
         "\n".join(preview_lines),
-        parse_mode="MarkdownV2",
         reply_markup=reply_markup,
     )
 
 
 async def _handle_callback_query(callback_query, bot, db: AsyncSession, settings: Settings, request: Request) -> None:
     """Handle confirm/cancel callback from inline keyboard."""
-    from src.adapters.telegram.notifier import _escape_md
-    from src.adapters.webhook import WebhookDispatcher
-    from src.core.models import DispatchResult, normalize_enabled_actions
-
     cb_data = callback_query.data or ""
     cb_user = callback_query.from_user
     cb_message = callback_query.message
@@ -907,7 +932,7 @@ async def _handle_callback_query(callback_query, bot, db: AsyncSession, settings
         token = cb_data[7:]
         cache = request.app.state.cache
         await cache.delete(f"{_CONFIRM_PREFIX}{token}")
-        await bot.edit_message_text(chat_id, message_id, "Trade cancelled\\.", parse_mode="MarkdownV2")
+        await bot.edit_message_text(chat_id, message_id, "Trade cancelled.")
         return
 
     if not cb_data.startswith("confirm:"):
@@ -916,18 +941,24 @@ async def _handle_callback_query(callback_query, bot, db: AsyncSession, settings
     token = cb_data[8:]
     cache = request.app.state.cache
 
-    # Atomic GET + DELETE for idempotency
-    confirm_json = await cache.get(f"{_CONFIRM_PREFIX}{token}")
-    if not confirm_json:
-        await bot.edit_message_text(chat_id, message_id, "This confirmation has expired\\. Please send your signal again\\.", parse_mode="MarkdownV2")
+    # Atomic GETDEL for idempotency — prevents double-dispatch on double-tap
+    try:
+        confirm_json = await cache.getdel(f"{_CONFIRM_PREFIX}{token}")
+    except Exception as exc:
+        logger.error("Redis getdel failed during confirmation: %s", exc)
+        sentry_sdk.capture_exception(exc)
+        await bot.edit_message_text(chat_id, message_id, "Something went wrong. Please send your signal again.")
         return
-    await cache.delete(f"{_CONFIRM_PREFIX}{token}")
+
+    if not confirm_json:
+        await bot.edit_message_text(chat_id, message_id, "This confirmation has expired. Please send your signal again.")
+        return
 
     data = json.loads(confirm_json)
 
     # Verify the callback user is the signal owner
     if cb_user.id != data.get("tg_user_id"):
-        await bot.edit_message_text(chat_id, message_id, "Only the original sender can confirm this trade\\.", parse_mode="MarkdownV2")
+        await bot.edit_message_text(chat_id, message_id, "Only the original sender can confirm this trade.")
         return
 
     parsed = ParsedSignal(**data["parsed_signal"])
@@ -935,55 +966,67 @@ async def _handle_callback_query(callback_query, bot, db: AsyncSession, settings
     bot_channel = data["bot_channel"]
     raw_message = data["raw_message"]
 
-    # Dispatch to all routing rules
+    # Dispatch to all routing rules — wrapped in timeout guard
     dispatcher = request.app.state.dispatcher
-    results: list[DispatchResult] = []
-    for rule_id_str in data["routing_rule_ids"]:
-        rule_row = (await db.execute(
-            select(RoutingRuleModel).where(RoutingRuleModel.id == UUID(rule_id_str))
-        )).scalar_one_or_none()
 
-        if not rule_row or not rule_row.is_active:
-            results.append(DispatchResult(routing_rule_id=UUID(rule_id_str), status="ignored", error_message="Rule no longer active"))
-            continue
+    async def _do_dispatch() -> list[DispatchResult]:
+        results: list[DispatchResult] = []
+        for rule_id_str in data["routing_rule_ids"]:
+            rule_row = (await db.execute(
+                select(RoutingRuleModel).where(RoutingRuleModel.id == UUID(rule_id_str))
+            )).scalar_one_or_none()
 
-        from src.api.workflow import _process_single_rule
-        raw_signal = RawSignal(
-            user_id=user_id,
-            channel_id=bot_channel,
-            raw_message=raw_message,
-            message_id=0,
-            source_type="telegram_bot",
-        )
-        try:
-            dispatch_result, log_kwargs = await _process_single_rule(rule_row, raw_signal, parsed, dispatcher)
-            results.append(dispatch_result)
-            db.add(SignalLogModel(**log_kwargs))
-        except Exception as exc:
-            logger.error("Bot dispatch failed for rule %s: %s", rule_id_str, exc)
-            sentry_sdk.capture_exception(exc)
-            results.append(DispatchResult(routing_rule_id=UUID(rule_id_str), status="failed", error_message=str(exc)))
-            db.add(SignalLogModel(
+            if not rule_row or not rule_row.is_active:
+                results.append(DispatchResult(routing_rule_id=UUID(rule_id_str), status="ignored", error_message="Rule no longer active"))
+                continue
+
+            raw_signal = RawSignal(
                 user_id=user_id,
-                message_id=0,
                 channel_id=bot_channel,
                 raw_message=raw_message,
-                parsed_data=parsed.model_dump(),
-                status="failed",
-                error_message=str(exc),
+                message_id=0,
                 source_type="telegram_bot",
-            ))
+            )
+            try:
+                dispatch_result, log_kwargs = await _process_single_rule(rule_row, raw_signal, parsed, dispatcher)
+                results.append(dispatch_result)
+                db.add(SignalLogModel(**log_kwargs))
+            except Exception as exc:
+                logger.error("Bot dispatch failed for rule %s: %s", rule_id_str, exc)
+                sentry_sdk.capture_exception(exc)
+                results.append(DispatchResult(routing_rule_id=UUID(rule_id_str), status="failed", error_message=str(exc)))
+                db.add(SignalLogModel(
+                    user_id=user_id,
+                    message_id=0,
+                    channel_id=bot_channel,
+                    raw_message=raw_message,
+                    parsed_data=parsed.model_dump(),
+                    status="failed",
+                    error_message=str(exc),
+                    source_type="telegram_bot",
+                ))
+        return results
+
+    try:
+        results = await asyncio.wait_for(_do_dispatch(), timeout=15.0)
+    except asyncio.TimeoutError:
+        logger.warning("Bot dispatch timed out for user %s", user_id)
+        await bot.edit_message_text(
+            chat_id, message_id,
+            "Dispatch timed out — your signal may still be processing. Check your SageMaster dashboard.",
+        )
+        return
 
     # Build result message
     succeeded = sum(1 for r in results if r.status == "success")
     failed = [r for r in results if r.status == "failed"]
 
     if succeeded and not failed:
-        result_text = f"Trade dispatched to {succeeded} destination\\(s\\)\\."
+        result_text = f"Trade dispatched to {succeeded} destination(s)."
     elif failed and not succeeded:
         err = _escape_md(failed[0].error_message or "Unknown error")
         result_text = f"Dispatch failed: {err}"
     else:
-        result_text = f"{succeeded} succeeded, {len(failed)} failed\\."
+        result_text = f"{succeeded} succeeded, {len(failed)} failed."
 
-    await bot.edit_message_text(chat_id, message_id, result_text, parse_mode="MarkdownV2")
+    await bot.edit_message_text(chat_id, message_id, result_text)

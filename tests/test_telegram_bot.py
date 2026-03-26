@@ -128,6 +128,9 @@ class FakeCache:
     async def delete(self, key: str) -> None:
         self._store.pop(key, None)
 
+    async def getdel(self, key: str) -> str | None:
+        return self._store.pop(key, None)
+
 
 # ---------------------------------------------------------------------------
 # Test classes
