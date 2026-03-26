@@ -187,10 +187,7 @@ async def backfill_missed_signals(
 
                 # Seed the listener's dedup cache so real-time
                 # MessageEdited events for these messages are skipped.
-                import hashlib as _hashlib
-                _cache_key = (channel_id, msg.id)
-                _text_hash = _hashlib.md5(msg.text.encode()).hexdigest()
-                listener._seen_messages[_cache_key] = _text_hash
+                listener.seed_dedup(channel_id, msg.id, msg.text)
 
                 try:
                     await queue_port.enqueue(raw_signal)

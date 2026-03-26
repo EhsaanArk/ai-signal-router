@@ -289,6 +289,15 @@ class TelegramListener:
                 )
                 sentry_sdk.capture_exception(exc)
 
+    def seed_dedup(self, channel_id: str, message_id: int, text: str) -> None:
+        """Seed the dedup cache so a subsequent MessageEdited for this message is skipped.
+
+        Called by the backfill module after enqueuing a recovered message,
+        preventing the real-time edit handler from re-enqueuing it.
+        """
+        cache_key = (channel_id, message_id)
+        self._seen_messages[cache_key] = hashlib.md5(text.encode()).hexdigest()
+
     @property
     def is_connected(self) -> bool:
         """Return ``True`` if the underlying Telethon client is connected."""

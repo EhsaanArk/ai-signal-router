@@ -54,6 +54,7 @@ def _mock_listener() -> MagicMock:
     listener._client = AsyncMock()
     listener._client.get_entity = AsyncMock(return_value=MagicMock())
     listener._client.get_messages = AsyncMock(return_value=[])
+    listener.seed_dedup = MagicMock()
     return listener
 
 
@@ -390,3 +391,75 @@ class TestWorkflowDeduplication:
 
         assert result == []
         assert mock_db.execute.call_count == 1
+
+
+# -----------------------------------------------------------------------
+# Backfill timestamp + dedup cache tests (PR #198 fixes)
+# -----------------------------------------------------------------------
+
+
+class TestBackfillTimestampAndDedup:
+    """Tests for backfill using original Telegram timestamps and seeding dedup."""
+
+    @pytest.mark.asyncio
+    async def test_backfill_uses_original_telegram_timestamp(self):
+        """Backfilled signals should use msg.date, not datetime.now()."""
+        queue = AsyncMock()
+        repo = _mock_repo()
+        listener = _mock_listener()
+
+        msg = _make_telegram_message(101, "XAUUSD BUY @ 2350", age_seconds=30)
+        original_ts = msg.date
+        listener._client.get_messages = AsyncMock(return_value=[msg])
+        repo.get_last_message_id = AsyncMock(return_value=100)
+
+        await backfill_missed_signals(USER_A, listener, {CHANNEL_1}, repo, queue)
+
+        assert queue.enqueue.call_count == 1
+        enqueued = queue.enqueue.call_args[0][0]
+        # Timestamp should be close to the original msg.date, not now()
+        delta = abs((enqueued.timestamp - original_ts).total_seconds())
+        assert delta < 1.0, f"Expected original timestamp, got {delta}s difference"
+
+    @pytest.mark.asyncio
+    async def test_backfill_fallback_when_msg_date_is_none(self):
+        """If msg.date is None, fallback to datetime.now(UTC)."""
+        queue = AsyncMock()
+        repo = _mock_repo()
+        listener = _mock_listener()
+
+        msg = _make_telegram_message(101, "EURUSD SELL @ 1.08", age_seconds=10)
+        msg.date = None  # Simulate missing date
+        listener._client.get_messages = AsyncMock(return_value=[msg])
+        repo.get_last_message_id = AsyncMock(return_value=100)
+
+        # With msg.date=None, staleness check is skipped (msg.date is falsy),
+        # so the message should still be enqueued with a fallback timestamp
+        await backfill_missed_signals(USER_A, listener, {CHANNEL_1}, repo, queue)
+
+        assert queue.enqueue.call_count == 1
+        enqueued = queue.enqueue.call_args[0][0]
+        assert enqueued.timestamp.tzinfo is not None, "Fallback timestamp must be timezone-aware"
+
+    @pytest.mark.asyncio
+    async def test_backfill_seeds_listener_dedup_cache(self):
+        """Backfilled messages should seed the listener's dedup cache."""
+        queue = AsyncMock()
+        repo = _mock_repo()
+        listener = _mock_listener()
+
+        messages = [
+            _make_telegram_message(102, "XAUUSD BUY @ 2350", age_seconds=5),
+            _make_telegram_message(101, "EURUSD SELL @ 1.08", age_seconds=10),
+        ]
+        listener._client.get_messages = AsyncMock(return_value=messages)
+        repo.get_last_message_id = AsyncMock(return_value=100)
+
+        await backfill_missed_signals(USER_A, listener, {CHANNEL_1}, repo, queue)
+
+        # seed_dedup should be called once per enqueued message
+        assert listener.seed_dedup.call_count == 2
+        # Verify it was called with correct args
+        calls = listener.seed_dedup.call_args_list
+        seeded_ids = {call.args[1] for call in calls}
+        assert seeded_ids == {101, 102}
