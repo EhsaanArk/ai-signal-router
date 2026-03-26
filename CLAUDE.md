@@ -114,6 +114,8 @@ For urgent production fixes:
 - **Never force-push** to `main` or `staging`
 - Always run tests and linter before committing
 - PRs from `staging` → `main` should summarise all included changes
+- **NEVER merge PRs to `main` without explicit user approval** — GitHub branch protection enforces this (1 review required). Agents may CREATE staging→main PRs but must STOP and ask the user to review and approve. This is a hard rule — violating it risks deploying untested code to production where real money is at stake.
+- **After a staging→main merge**: merge `main` back into `staging` to keep histories in sync (`git checkout staging && git merge origin/main && git push`). Squash merges create new commit SHAs that cause divergence if this step is skipped.
 
 ### Multi-Agent Collaboration
 When multiple Claude Code agents are working on this repo simultaneously:
@@ -121,8 +123,9 @@ When multiple Claude Code agents are working on this repo simultaneously:
 2. **Branch off `staging`** at the start of the task: `git checkout -b feature/SGM-XXX-description staging`
 3. **Pull latest staging** before branching: `git fetch origin && git checkout staging && git pull`
 4. **Create a PR to `staging`** when work is complete — do not merge without user approval
-5. **Never force-push** or rebase shared branches
-6. **If you see uncommitted changes** in the working tree that aren't yours, stash them or ask the user — do not discard them
+5. **NEVER create or merge PRs targeting `main`** — only the user initiates production releases. If asked to "push to production", create the staging→main PR and STOP. Do not merge it.
+6. **Never force-push** or rebase shared branches
+7. **If you see uncommitted changes** in the working tree that aren't yours, stash them or ask the user — do not discard them
 
 ### Railway Environments
 - **Staging**: `staging` branch — 3 services (API, Listener, Frontend)
