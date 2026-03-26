@@ -161,9 +161,11 @@ async def login(
     )
     user_row = result.scalar_one_or_none()
 
-    if user_row is None or not user_row.password_hash or user_row.password_hash == "!" or not pwd_context.verify(
-        form_data.password, user_row.password_hash
-    ):
+    # Reject if no user, no hash, or hash is a placeholder (Supabase-only users
+    # have "!" as a placeholder — they must login via Supabase, not this endpoint).
+    if user_row is None or not user_row.password_hash or not user_row.password_hash.startswith("$2b$"):
+        raise AuthenticationError("Incorrect email or password")
+    if not pwd_context.verify(form_data.password, user_row.password_hash):
         raise AuthenticationError("Incorrect email or password")
 
     if getattr(user_row, "is_disabled", False):
@@ -189,9 +191,9 @@ async def login_json(
     )
     user_row = result.scalar_one_or_none()
 
-    if user_row is None or not user_row.password_hash or user_row.password_hash == "!" or not pwd_context.verify(
-        body.password, user_row.password_hash
-    ):
+    if user_row is None or not user_row.password_hash or not user_row.password_hash.startswith("$2b$"):
+        raise AuthenticationError("Incorrect email or password")
+    if not pwd_context.verify(body.password, user_row.password_hash):
         raise AuthenticationError("Incorrect email or password")
 
     if getattr(user_row, "is_disabled", False):
