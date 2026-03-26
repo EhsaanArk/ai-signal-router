@@ -249,6 +249,7 @@ async def compute_provider_stats(
             signal_count=signal_count,
             track_record_days=track_record_days,
             subscriber_count=subscriber_count,
+            is_verified=(track_record_days >= 30 and signal_count >= 20),
             stats_last_computed_at=now,
             # total_pnl_pips and max_drawdown_pips require closed-trade PnL data
             # which is not yet tracked — leave as-is for V1
@@ -362,6 +363,7 @@ async def compute_all_provider_stats(db_session: AsyncSession) -> int:
                 signal_count=total,
                 track_record_days=track_days,
                 subscriber_count=sub_count,
+                is_verified=(track_days >= 30 and total >= 20),
                 stats_last_computed_at=now,
             )
         )

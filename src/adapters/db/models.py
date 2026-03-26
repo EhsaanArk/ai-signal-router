@@ -474,6 +474,9 @@ class MarketplaceProviderModel(Base):
     track_record_days: Mapped[int] = mapped_column(
         Integer, server_default="0", nullable=False
     )
+    is_verified: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
     stats_last_computed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

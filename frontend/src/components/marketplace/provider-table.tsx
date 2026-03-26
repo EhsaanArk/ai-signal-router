@@ -49,7 +49,7 @@ export function ProviderTable({
             const isFollowing = subscribedIds.has(p.id);
             const wr = p.win_rate;
             const hasData = wr !== null;
-            const isVerified = p.track_record_days >= 30 && p.signal_count >= 20;
+            const isVerified = p.is_verified;
             const isNew = !isVerified;
 
             return (

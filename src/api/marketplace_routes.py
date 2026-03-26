@@ -248,7 +248,12 @@ async def subscribe(
             db_session=db,
         )
     except ValueError as exc:
-        raise InputValidationError(str(exc))
+        msg = str(exc)
+        if "not found" in msg.lower():
+            raise ResourceNotFoundError(msg)
+        if "already subscribed" in msg.lower():
+            raise ConflictError(msg)
+        raise InputValidationError(msg)
 
     return SubscriptionResponse(**result)
 
@@ -269,13 +274,18 @@ async def unsubscribe(
             db_session=db,
         )
     except ValueError as exc:
-        raise InputValidationError(str(exc))
+        msg = str(exc)
+        if "no active subscription" in msg.lower():
+            raise ResourceNotFoundError(msg)
+        raise InputValidationError(msg)
 
     return {"status": "unsubscribed", "provider_id": str(provider_id)}
 
 
 @marketplace_router.get("/api/marketplace/my-subscriptions")
+@limiter.limit("30/minute")
 async def my_subscriptions(
+    request: Request,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[MySubscriptionItem]:

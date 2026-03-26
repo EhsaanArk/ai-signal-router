@@ -23,7 +23,7 @@ export function ProviderCard({
 }: ProviderCardProps) {
   const wr = provider.win_rate;
   const hasData = wr !== null;
-  const isVerified = provider.track_record_days >= 30 && provider.signal_count >= 20;
+  const isVerified = provider.is_verified;
 
   return (
     <div
