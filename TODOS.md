@@ -237,6 +237,8 @@ All 4 actions (close_all, close_all_stop, start_assist, stop_assist) implemented
 
 ## P2 — Pipeline dry-run smoke test for post-deploy verification
 
+> **Note (2026-03-26):** Real pipeline smoke tests (Telegram → full pipeline → signal_logs) now run in both staging and production CI workflows (QA Orchestrator P3). This partially addresses the need but uses real Telegram messages, not synthetic dry-run. The dry-run approach below remains valuable for faster, infrastructure-independent testing without needing Telegram bot tokens or test channels.
+
 **What:** Add a `dry_run` flag to the signal workflow so a synthetic test signal can be sent through QStash → workflow → parser → mapper without dispatching to the actual webhook.
 
 **Why:** Catches silent pipeline breaks post-deploy — parser regressions, QStash auth issues, mapper errors. Currently Sentry only catches errors if real signals happen to arrive. The deploy-health endpoint (PR #62) verifies session preservation but not pipeline health.
