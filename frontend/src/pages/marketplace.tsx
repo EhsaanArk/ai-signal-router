@@ -27,7 +27,7 @@ export function MarketplacePage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const sort = (searchParams.get("sort") as MarketplaceSort) || "win_rate";
+  const sort = (searchParams.get("sort") as MarketplaceSort) || "subscribers";
   const filter = (searchParams.get("filter") as MarketplaceFilter) || "all";
 
   const setSort = useCallback(

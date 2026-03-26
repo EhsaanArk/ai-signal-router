@@ -125,7 +125,9 @@ jobs:
           printf 'passed=%s\n' "$PASSED" >> "$GITHUB_OUTPUT"
           printf 'total=%s\n' "$TOTAL" >> "$GITHUB_OUTPUT"
 
-          if [ "$EXIT_CODE" = "0" ]; then
+          if [ "$TOTAL" = "0" ]; then
+            printf 'result=skipped\n' >> "$GITHUB_OUTPUT"
+          elif [ "$EXIT_CODE" = "0" ]; then
             printf 'result=pass\n' >> "$GITHUB_OUTPUT"
           else
             printf 'result=fail\n' >> "$GITHUB_OUTPUT"
@@ -140,23 +142,224 @@ jobs:
             prod-output.txt
 
   # ---------------------------------------------------------------------------
-  # Step 3: Production confidence summary
+  # Step 3: Pipeline smoke tests (real Telegram -> SageMaster flow)
+  # ---------------------------------------------------------------------------
+  pipeline:
+    name: Pipeline smoke tests
+    runs-on: ubuntu-latest
+    needs: [health-check, api-tests]
+    if: needs.health-check.outputs.health_status == 'pass'
+    outputs:
+      result: ${{ steps.pipeline.outputs.result }}
+      passed: ${{ steps.pipeline.outputs.passed }}
+      total: ${{ steps.pipeline.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install -r requirements-e2e.txt
+
+      - name: Run pipeline smoke tests
+        id: pipeline
+        env:
+          STAGING_API_URL: ${{ env.PRODUCTION_API_URL }}
+          TEST_USER_EMAIL: ${{ secrets.PRODUCTION_TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.PRODUCTION_TEST_USER_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_TEST_CHAT_ID: ${{ secrets.PRODUCTION_TELEGRAM_TEST_CHAT_ID }}
+          PIPELINE_TEST_ACCOUNT_EMAIL: ${{ secrets.PRODUCTION_PIPELINE_ACCOUNT_EMAIL }}
+        run: |
+          set +e
+          cd tests/e2e
+          python3 -m pytest test_pipeline_smoke.py -v --tb=short --junitxml=../../pipeline-results.xml -o addopts="" -o asyncio_mode=auto --rootdir=. -c /dev/null 2>&1 | tee ../../pipeline-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          cd ../..
+          echo "Pipeline tests exit code: $EXIT_CODE"
+          set -e
+
+          PASSED="$(grep -c 'PASSED' pipeline-output.txt 2>/dev/null || printf '0')"
+          FAILED="$(grep -c 'FAILED' pipeline-output.txt 2>/dev/null || printf '0')"
+          TOTAL=$((PASSED + FAILED))
+
+          printf 'passed=%s\n' "$PASSED" >> "$GITHUB_OUTPUT"
+          printf 'total=%s\n' "$TOTAL" >> "$GITHUB_OUTPUT"
+
+          if [ "$TOTAL" = "0" ]; then
+            printf 'result=skipped\n' >> "$GITHUB_OUTPUT"
+          elif [ "$EXIT_CODE" = "0" ]; then
+            printf 'result=pass\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'result=fail\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-test-results
+          path: |
+            pipeline-results.xml
+            pipeline-output.txt
+
+  # ---------------------------------------------------------------------------
+  # Step 4: Sentry error check
+  # ---------------------------------------------------------------------------
+  sentry-check:
+    name: Sentry error check
+    runs-on: ubuntu-latest
+    needs: [health-check]
+    if: needs.health-check.outputs.health_status == 'pass'
+    outputs:
+      new_errors: ${{ steps.sentry.outputs.new_errors }}
+    steps:
+      - name: Check Sentry for new errors (last 10 minutes)
+        id: sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::warning::SENTRY_AUTH_TOKEN not configured -- skipping Sentry check"
+            echo "new_errors=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
+            "https://sentry.io/api/0/projects/$SENTRY_ORG/$SENTRY_PROJECT/issues/?query=is:unresolved+firstSeen:-10m&limit=10" \
+          )
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::Sentry API returned HTTP $HTTP_CODE"
+            echo "new_errors=api_error" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          COUNT=$(echo "$BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+          echo "Found $COUNT new Sentry issues in the last 10 minutes"
+
+          if [ "$COUNT" -gt "0" ]; then
+            echo "new_errors=$COUNT" >> "$GITHUB_OUTPUT"
+            echo "::warning::$COUNT new Sentry errors detected after deploy"
+            echo "$BODY" | python3 -m json.tool | head -100
+          else
+            echo "new_errors=0" >> "$GITHUB_OUTPUT"
+            echo "No new Sentry errors -- deploy looks clean"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Step 5: QA Guardian -- Deploy Confidence Score
+  # ---------------------------------------------------------------------------
+  qa-guardian:
+    name: QA Guardian (Deploy Confidence Score)
+    runs-on: ubuntu-latest
+    needs: [health-check, api-tests, pipeline, sentry-check]
+    if: always()
+    outputs:
+      score: ${{ steps.guardian.outputs.score }}
+      verdict: ${{ steps.guardian.outputs.verdict }}
+      summary: ${{ steps.guardian.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: test-results/
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run QA Guardian analysis
+        id: guardian
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HEALTH_STATUS: ${{ needs.health-check.outputs.health_status }}
+          DEPLOY_HEALTH: ${{ needs.health-check.outputs.deploy_health }}
+          API_RESULT: ${{ needs.api-tests.outputs.result }}
+          API_PASSED: ${{ needs.api-tests.outputs.passed }}
+          API_TOTAL: ${{ needs.api-tests.outputs.total }}
+          PIPELINE_RESULT: ${{ needs.pipeline.outputs.result }}
+          PIPELINE_PASSED: ${{ needs.pipeline.outputs.passed }}
+          PIPELINE_TOTAL: ${{ needs.pipeline.outputs.total }}
+          SENTRY_ERRORS: ${{ needs.sentry-check.outputs.new_errors }}
+        run: |
+          PROMPT="You are the QA Guardian for Sage Radar AI PRODUCTION environment.
+          Analyze results and produce a Deploy Confidence Score (0-100).
+
+          Health Check: $HEALTH_STATUS
+          Deploy Health: $DEPLOY_HEALTH
+          API Tests: $API_RESULT ($API_PASSED/$API_TOTAL passed)
+          Pipeline Tests: $PIPELINE_RESULT ($PIPELINE_PASSED/$PIPELINE_TOTAL passed)
+          Sentry New Errors: $SENTRY_ERRORS
+
+          Scoring: Health pass +20, Deploy HEALTHY +10, API all pass +25, Pipeline all pass +30, No Sentry errors +15.
+          Deductions: 5xx in API -20, Pipeline fail -25, Health fail caps at 10, DEGRADED -10, Sentry errors -5 each (max -15).
+          SHIP >= 80, INVESTIGATE 50-79, BLOCK < 50.
+
+          Respond ONLY JSON: {\"confidence_score\": N, \"verdict\": \"...\", \"summary\": \"...\", \"details\": [...]}"
+
+          GUARDIAN_OUTPUT=$(claude -p "$PROMPT" --output-format json 2>/dev/null || echo '{"confidence_score": 0, "verdict": "BLOCK", "summary": "QA Guardian failed to run"}')
+
+          echo "$GUARDIAN_OUTPUT" > /tmp/guardian-result.json
+
+          SCORE=$(echo "$GUARDIAN_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('confidence_score', 0))" 2>/dev/null || echo "0")
+          VERDICT=$(echo "$GUARDIAN_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verdict', 'UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
+          SUMMARY=$(echo "$GUARDIAN_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('summary', 'N/A'))" 2>/dev/null || echo "N/A")
+
+          echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-guardian-result
+          path: /tmp/guardian-result.json
+
+  # ---------------------------------------------------------------------------
+  # Step 6: Production deploy summary
   # ---------------------------------------------------------------------------
   summary:
     name: Production deploy summary
     runs-on: ubuntu-latest
-    needs: [health-check, api-tests]
+    needs: [health-check, api-tests, pipeline, sentry-check, qa-guardian]
     if: always()
+    env:
+      HEALTH: ${{ needs.health-check.outputs.health_status }}
+      DEPLOY_HEALTH: ${{ needs.health-check.outputs.deploy_health }}
+      API_RESULT: ${{ needs.api-tests.outputs.result }}
+      API_PASSED: ${{ needs.api-tests.outputs.passed }}
+      API_TOTAL: ${{ needs.api-tests.outputs.total }}
+      PIPELINE_RESULT: ${{ needs.pipeline.outputs.result }}
+      PIPELINE_PASSED: ${{ needs.pipeline.outputs.passed }}
+      PIPELINE_TOTAL: ${{ needs.pipeline.outputs.total }}
+      SENTRY_ERRORS: ${{ needs.sentry-check.outputs.new_errors }}
+      QA_SCORE: ${{ needs.qa-guardian.outputs.score }}
+      QA_VERDICT: ${{ needs.qa-guardian.outputs.verdict }}
+      QA_SUMMARY: ${{ needs.qa-guardian.outputs.summary }}
     steps:
       - name: Generate summary
-        env:
-          HEALTH: ${{ needs.health-check.outputs.health_status }}
-          DEPLOY_HEALTH: ${{ needs.health-check.outputs.deploy_health }}
-          TEST_RESULT: ${{ needs.api-tests.outputs.result }}
-          TEST_PASSED: ${{ needs.api-tests.outputs.passed }}
-          TEST_TOTAL: ${{ needs.api-tests.outputs.total }}
         run: |
           echo "## Production Deploy Verification" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$QA_VERDICT" = "SHIP" ]; then
+            echo "> :rocket: **$QA_SCORE/100 — $QA_VERDICT** — $QA_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$QA_VERDICT" = "INVESTIGATE" ]; then
+            echo "> :mag: **$QA_SCORE/100 — $QA_VERDICT** — $QA_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "> :stop_sign: **$QA_SCORE/100 — $QA_VERDICT** — $QA_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
@@ -173,8 +376,22 @@ jobs:
             echo "| Deploy health | :warning: $DEPLOY_HEALTH |" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          if [ "$TEST_RESULT" = "pass" ]; then
-            echo "| API tests | :white_check_mark: $TEST_PASSED/$TEST_TOTAL passed |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$API_RESULT" = "pass" ]; then
+            echo "| API tests | :white_check_mark: $API_PASSED/$API_TOTAL passed |" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "| API tests | :x: $TEST_PASSED/$TEST_TOTAL passed |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| API tests | :x: $API_PASSED/$API_TOTAL passed |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$PIPELINE_RESULT" = "pass" ]; then
+            echo "| Pipeline tests | :white_check_mark: $PIPELINE_PASSED/$PIPELINE_TOTAL passed |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| Pipeline tests | :x: $PIPELINE_PASSED/$PIPELINE_TOTAL passed |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$SENTRY_ERRORS" = "0" ]; then
+            echo "| Sentry errors | :white_check_mark: none |" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$SENTRY_ERRORS" = "skipped" ]; then
+            echo "| Sentry errors | :warning: skipped (not configured) |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| Sentry errors | :x: $SENTRY_ERRORS new errors |" >> "$GITHUB_STEP_SUMMARY"
           fi

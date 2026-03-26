@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2.0] - 2026-03-26
+
+### Added
+- Webhook contract tests (26 tests): deterministic validation of all SageMaster payload formats (Forex V1/V2, Crypto, management actions, edge cases)
+- Parser fixture regression tests (82 tests): validate all 25 signal fixtures against expected payloads without OpenAI calls
+- Pipeline smoke tests in production CI: real Telegram-to-SageMaster E2E verification post-deploy
+- Sentry error check in both staging and production CI: queries new issues within 10 minutes of deploy
+- QA Guardian confidence scoring in production CI: SHIP/INVESTIGATE/BLOCK verdicts with 0-100 score
+
+### Changed
+- Production post-deploy workflow upgraded from 3-stage (health + API tests + summary) to 6-stage (+ pipeline smoke + Sentry + QA Guardian)
+- Staging QA Guardian prompt aligned with production (env vars instead of sed substitution)
+- All CI test steps now report `skipped` instead of false-green `pass` when 0 tests run (fixes 0/0 = pass bug)
+- Staging QA Guardian now includes pipeline and Sentry results in scoring
+
+### Fixed
+- False-green CI results when secrets are missing (0 passed / 0 failed no longer reports as pass)
+- Duplicate test files removed (`test_api_regression 2.py`, `test_pipeline_smoke 2.py`)
+
 ## [0.1.1.0] - 2026-03-23
 
 ### Added

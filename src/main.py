@@ -217,9 +217,47 @@ def create_app() -> FastAPI:
                 if promoted:
                     logger.info("Admin bootstrap: %s → is_admin=True, tier=%s", promoted, admin_tier)
 
+        # Start marketplace stats scheduler (background task)
+        marketplace_task = None
+        if os.environ.get("MARKETPLACE_ENABLED", "false").lower() in ("true", "1", "yes"):
+            import asyncio
+
+            async def _marketplace_stats_loop():
+                """Refresh marketplace provider stats every 15 minutes."""
+                import sentry_sdk as _sentry
+                from sqlalchemy.ext.asyncio import AsyncSession as SASession
+                from src.adapters.db.session import get_engine
+                from src.core.marketplace import compute_all_provider_stats
+
+                while True:
+                    await asyncio.sleep(900)  # 15 minutes
+                    try:
+                        engine = get_engine()
+                        async with SASession(engine, expire_on_commit=False) as db:
+                            refreshed = await compute_all_provider_stats(db)
+                            await db.commit()
+                            logger.info("Marketplace stats refreshed for %d providers", refreshed)
+                            _sentry.add_breadcrumb(
+                                category="marketplace.stats",
+                                message=f"Stats refreshed for {refreshed} providers",
+                                level="info",
+                            )
+                    except Exception as exc:
+                        logger.error("Marketplace stats scheduler error: %s", exc)
+                        _sentry.add_breadcrumb(
+                            category="marketplace.stats",
+                            message=f"Stats refresh failed: {exc}",
+                            level="error",
+                        )
+
+            marketplace_task = asyncio.create_task(_marketplace_stats_loop())
+            logger.info("Marketplace stats scheduler started (15-minute interval)")
+
         yield
 
         # Shutdown
+        if marketplace_task is not None:
+            marketplace_task.cancel()
         if os.environ.get("SENTRY_DSN", ""):
             import sentry_sdk
 

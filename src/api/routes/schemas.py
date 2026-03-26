@@ -158,6 +158,7 @@ class RoutingRuleCreate(BaseModel):
     custom_ai_instructions: str | None = None
     enabled_actions: list[str] | None = None
     keyword_blacklist: list[str] = Field(default_factory=list)
+    is_marketplace_template: bool = False
 
 
 class RoutingRuleResponse(BaseModel):
