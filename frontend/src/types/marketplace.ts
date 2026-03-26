@@ -10,6 +10,7 @@ export interface MarketplaceProvider {
   signal_count: number;
   subscriber_count: number;
   track_record_days: number;
+  is_verified: boolean;
   stats_last_computed_at: string | null;
   created_at?: string;
   /** Admin-only field — present in admin responses */

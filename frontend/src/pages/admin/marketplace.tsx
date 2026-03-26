@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Loader2,
   MoreHorizontal,
@@ -155,7 +155,16 @@ function ProviderFormSheet({ open, onOpenChange, provider }: ProviderFormProps) 
     provider?.telegram_channel_id ?? ""
   );
 
-  // Reset form when provider changes
+  // Reset form when provider changes (fixes stale state when reopening for different provider)
+  useEffect(() => {
+    if (open) {
+      setName(provider?.name ?? "");
+      setDescription(provider?.description ?? "");
+      setAssetClass(provider?.asset_class ?? "forex");
+      setChannelId(provider?.telegram_channel_id ?? "");
+    }
+  }, [open, provider]);
+
   function resetForm() {
     setName(provider?.name ?? "");
     setDescription(provider?.description ?? "");
