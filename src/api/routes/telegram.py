@@ -423,6 +423,8 @@ async def list_channels(
             api_id=settings.TELEGRAM_API_ID,
             api_hash=settings.TELEGRAM_API_HASH,
             proxy=proxy,
+            cache=cache,
+            user_id=str(current_user.id),
         )
     except FloodWaitError as exc:
         raise InputValidationError(f"Rate limited by Telegram. Retry after {exc.seconds} seconds.")
