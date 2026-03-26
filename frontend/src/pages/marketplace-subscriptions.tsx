@@ -113,7 +113,7 @@ export function MarketplaceSubscriptionsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead className="text-xs">Provider</TableHead>
-                <TableHead className="text-xs">Asset Class</TableHead>
+                <TableHead className="text-xs">Routing To</TableHead>
                 <TableHead className="text-xs">Status</TableHead>
                 <TableHead className="text-xs">Subscribed</TableHead>
                 <TableHead className="text-xs w-24" />
@@ -124,9 +124,12 @@ export function MarketplaceSubscriptionsPage() {
                 <TableRow key={sub.subscription_id}>
                   <TableCell className="text-xs font-medium">
                     {sub.provider_name}
+                    <span className="block text-[10px] text-muted-foreground capitalize">
+                      {sub.provider_asset_class}
+                    </span>
                   </TableCell>
-                  <TableCell className="text-xs capitalize">
-                    {sub.provider_asset_class}
+                  <TableCell className="text-xs text-muted-foreground">
+                    {sub.destination_label || "—"}
                   </TableCell>
                   <TableCell>
                     <Badge

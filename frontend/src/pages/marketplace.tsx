@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Radio, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw, Store } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,6 +16,7 @@ import {
   useMySubscriptions,
 } from "@/hooks/use-marketplace";
 import { useAuth } from "@/contexts/auth-context";
+import { useRoutingRules } from "@/hooks/use-routing-rules";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { cn } from "@/lib/utils";
 import type { MarketplaceProvider } from "@/types/marketplace";
@@ -50,6 +51,7 @@ export function MarketplacePage() {
   const { data: providers, isLoading, isError, refetch, isFetching } =
     useMarketplaceProviders(sort, filter);
   const { data: subscriptions } = useMySubscriptions(!!user);
+  const { data: rules } = useRoutingRules(!!user);
   const subscribeMutation = useSubscribe();
   const unsubscribeMutation = useUnsubscribe();
 
@@ -70,11 +72,14 @@ export function MarketplacePage() {
   }
 
   function handleConfirmSubscribe(providerId: string, webhookDestinationId: string) {
+    // Find destination label for the richer toast
+    const destRule = rules?.find((r) => r.id === webhookDestinationId);
+    const destName = destRule?.destination_label || destRule?.rule_name || "your account";
     subscribeMutation.mutate(
       { providerId, webhookDestinationId },
       {
         onSuccess: () => {
-          toast.success(`Now following ${sheetProvider?.name ?? "provider"}`);
+          toast.success(`Now following ${sheetProvider?.name ?? "provider"} → ${destName}`);
           setSheetOpen(false);
           setSheetProvider(null);
         },
@@ -102,7 +107,7 @@ export function MarketplacePage() {
             Signal Marketplace
           </h1>
           <p className="text-[11px] text-muted-foreground mt-0.5">
-            Verified providers ranked by Sage Intelligence
+            Browse and compare signal providers
             {providers && providers.length > 0 && (
               <>
                 <span> · {providers.length} provider{providers.length !== 1 ? "s" : ""}</span>
@@ -181,13 +186,15 @@ export function MarketplacePage() {
       {/* Empty */}
       {!isLoading && !isError && providers?.length === 0 && (
         <EmptyState
-          icon={Radio}
-          title="No providers found"
+          icon={Store}
+          title={filter !== "all" ? `No ${filter} providers` : "No providers yet"}
           description={
             filter !== "all"
-              ? `No ${filter} providers available. Try a different filter.`
-              : "No signal providers listed yet. Check back soon."
+              ? `No ${filter} providers available right now.`
+              : "Signal providers will appear here once listed. Check back soon."
           }
+          actionLabel={filter !== "all" ? "Show all providers" : undefined}
+          onAction={filter !== "all" ? () => setFilter("all") : undefined}
         />
       )}
 

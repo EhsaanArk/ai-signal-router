@@ -97,6 +97,7 @@ class MySubscriptionItem(BaseModel):
     provider_name: str
     provider_asset_class: str
     routing_rule_id: UUID | None
+    destination_label: str | None = None
     is_active: bool
     created_at: str
 
@@ -291,10 +292,14 @@ async def my_subscriptions(
 ) -> list[MySubscriptionItem]:
     """List the current user's active marketplace subscriptions."""
     result = await db.execute(
-        select(MarketplaceSubscriptionModel, MarketplaceProviderModel)
+        select(MarketplaceSubscriptionModel, MarketplaceProviderModel, RoutingRuleModel.destination_label)
         .join(
             MarketplaceProviderModel,
             MarketplaceSubscriptionModel.provider_id == MarketplaceProviderModel.id,
+        )
+        .outerjoin(
+            RoutingRuleModel,
+            MarketplaceSubscriptionModel.routing_rule_id == RoutingRuleModel.id,
         )
         .where(
             MarketplaceSubscriptionModel.user_id == user.id,
@@ -311,10 +316,11 @@ async def my_subscriptions(
             provider_name=provider.name,
             provider_asset_class=provider.asset_class,
             routing_rule_id=sub.routing_rule_id,
+            destination_label=dest_label,
             is_active=sub.is_active,
             created_at=sub.created_at.isoformat() if sub.created_at else "",
         )
-        for sub, provider in rows
+        for sub, provider, dest_label in rows
     ]
 
 
