@@ -329,6 +329,42 @@ async def my_subscriptions(
 # ===========================================================================
 
 
+@marketplace_router.get("/api/admin/marketplace/available-channels")
+@limiter.limit("30/minute")
+async def admin_available_channels(
+    request: Request,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[dict]:
+    """List Telegram channels from routing rules that aren't already marketplace providers."""
+    # Get all distinct channels from routing rules
+    channels_result = await db.execute(
+        select(
+            RoutingRuleModel.source_channel_id,
+            func.max(RoutingRuleModel.source_channel_name).label("name"),
+        )
+        .where(
+            RoutingRuleModel.is_active.is_(True),
+            RoutingRuleModel.is_marketplace_template.is_(False),
+            RoutingRuleModel.source_channel_id != "marketplace-template",
+        )
+        .group_by(RoutingRuleModel.source_channel_id)
+    )
+    all_channels = channels_result.all()
+
+    # Get already-registered provider channel IDs
+    existing_result = await db.execute(
+        select(MarketplaceProviderModel.telegram_channel_id)
+    )
+    existing_ids = {row[0] for row in existing_result.all()}
+
+    return [
+        {"channel_id": ch.source_channel_id, "channel_name": ch.name or ch.source_channel_id}
+        for ch in all_channels
+        if ch.source_channel_id not in existing_ids
+    ]
+
+
 @marketplace_router.post("/api/admin/marketplace/providers")
 @limiter.limit("30/minute")
 async def admin_create_provider(
