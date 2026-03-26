@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Any, Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +175,29 @@ class ParsedSignal(BaseModel):
     stop_loss_pips: int | None = None
     is_market: bool | None = None
     order_price: float | None = None
+
+    @field_validator(
+        "stop_loss_pips", "trailing_sl_pips", "breakeven_offset_pips", "percentage",
+        mode="before",
+    )
+    @classmethod
+    def _unwrap_single_element_int(cls, v):
+        """GPT sometimes returns [100] instead of 100 for int fields."""
+        if isinstance(v, list) and len(v) == 1:
+            return v[0]
+        if isinstance(v, list) and len(v) == 0:
+            return None
+        return v
+
+    @field_validator("entry_price", "stop_loss", "new_sl", "new_tp", "order_price", mode="before")
+    @classmethod
+    def _unwrap_single_element_float(cls, v):
+        """GPT sometimes returns [1.08] instead of 1.08 for float fields."""
+        if isinstance(v, list) and len(v) == 1:
+            return v[0]
+        if isinstance(v, list) and len(v) == 0:
+            return None
+        return v
 
 
 # ---------------------------------------------------------------------------
