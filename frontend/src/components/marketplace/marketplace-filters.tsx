@@ -48,25 +48,27 @@ export function MarketplaceFilters({
         ))}
       </div>
 
-      {/* Sort — inline text tabs */}
-      <div className="flex items-center gap-1 text-[11px]">
-        <span className="text-muted-foreground mr-1">Sort:</span>
-        {SORTS.map((s) => (
-          <button
-            key={s.value}
-            type="button"
-            aria-pressed={sort === s.value}
-            onClick={() => onSortChange(s.value)}
-            className={cn(
-              "px-2 py-0.5 rounded transition-colors",
-              sort === s.value
-                ? "text-foreground font-medium"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {s.label}
-          </button>
-        ))}
+      {/* Sort — segmented control (matching filter style) */}
+      <div className="flex items-center gap-1.5 text-[11px]">
+        <span className="text-muted-foreground">Sort:</span>
+        <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
+          {SORTS.map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              aria-pressed={sort === s.value}
+              onClick={() => onSortChange(s.value)}
+              className={cn(
+                "px-2.5 py-1 text-[11px] font-medium rounded-[5px] transition-colors",
+                sort === s.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
