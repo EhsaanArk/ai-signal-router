@@ -109,6 +109,13 @@ class RedisCacheAdapter:
     async def delete(self, key: str) -> None:
         await self._redis.delete(key)
 
+    async def getdel(self, key: str) -> str | None:
+        """Atomically get and delete a key (Redis 6.2+ GETDEL)."""
+        value = await self._redis.getdel(key)
+        if value is None:
+            return None
+        return str(value)
+
     async def close(self) -> None:
         await self._redis.close()
 
@@ -138,6 +145,16 @@ class InMemoryCacheAdapter:
 
     async def delete(self, key: str) -> None:
         self._store.pop(key, None)
+
+    async def getdel(self, key: str) -> str | None:
+        """Atomically get and delete a key."""
+        entry = self._store.pop(key, None)
+        if entry is None:
+            return None
+        value, expiry = entry
+        if expiry is not None and time.monotonic() > expiry:
+            return None
+        return value
 
     async def close(self) -> None:
         pass

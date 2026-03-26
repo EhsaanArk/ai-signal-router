@@ -145,6 +145,7 @@ class RawSignal(BaseModel):
     raw_message: str
     message_id: int
     reply_to_msg_id: int | None = None
+    source_type: str = "telegram"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -306,6 +307,7 @@ class RawSignalMeta(BaseModel):
     message_id: int
     reply_to_msg_id: int | None = None
     raw_message: str
+    source_type: str = "telegram"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
