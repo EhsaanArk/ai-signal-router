@@ -95,7 +95,26 @@ def _get_real_ip(request: Request) -> str:
     return remote_ip
 
 
-limiter = Limiter(key_func=_get_real_ip)
+def _get_rate_limit_storage() -> str | None:
+    """Return Redis URL for rate limit storage, or None for in-memory fallback.
+
+    Redis-backed storage ensures rate limits work correctly across multiple
+    API instances behind a load balancer. In LOCAL_MODE or when Redis is
+    unavailable, falls back to in-memory (single-instance only).
+    """
+    import os
+    if os.environ.get("LOCAL_MODE", "").lower() == "true":
+        return None
+    redis_url = os.environ.get("REDIS_URL", "")
+    return redis_url if redis_url else None
+
+
+_storage_uri = _get_rate_limit_storage()
+limiter = Limiter(
+    key_func=_get_real_ip,
+    storage_uri=_storage_uri,
+    in_memory_fallback_enabled=True,  # graceful degradation if Redis is down
+)
 
 # ---------------------------------------------------------------------------
 # OAuth2 scheme
