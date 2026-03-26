@@ -31,7 +31,8 @@ def _handle_resend_error(exc: Exception, context: str) -> None:
     normally.
     """
     global _quota_hit_at
-    is_quota = "quota" in str(exc).lower()
+    exc_str = str(exc).lower()
+    is_quota = any(kw in exc_str for kw in ("quota", "daily limit", "rate limit", "sending limit"))
 
     if is_quota:
         now = time.monotonic()

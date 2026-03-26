@@ -13,6 +13,7 @@ from src.adapters.db.models import (
     MarketplaceProviderModel,
     MarketplaceSubscriptionModel,
     RoutingRuleModel,
+    UserModel,
 )
 from src.api.deps import (
     get_admin_user,
@@ -336,14 +337,17 @@ async def admin_available_channels(
     admin: Annotated[User, Depends(get_admin_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[dict]:
-    """List Telegram channels from routing rules that aren't already marketplace providers."""
-    # Get all distinct channels from routing rules
+    """List Telegram channels from admin routing rules that aren't already marketplace providers."""
+    # Only show channels the admin account is connected to — if the admin
+    # hasn't joined a channel, the Listener can't receive signals from it.
+    admin_ids = select(UserModel.id).where(UserModel.is_admin.is_(True)).scalar_subquery()
     channels_result = await db.execute(
         select(
             RoutingRuleModel.source_channel_id,
             func.max(RoutingRuleModel.source_channel_name).label("name"),
         )
         .where(
+            RoutingRuleModel.user_id.in_(admin_ids),
             RoutingRuleModel.is_active.is_(True),
             RoutingRuleModel.is_marketplace_template.is_(False),
             RoutingRuleModel.source_channel_id != "marketplace-template",
