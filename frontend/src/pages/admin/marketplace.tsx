@@ -60,6 +60,7 @@ import { cn } from "@/lib/utils";
 import {
   useAdminProviders,
   useAdminMarketplaceStats,
+  useAvailableChannels,
   useCreateProvider,
   useUpdateProvider,
   useDeactivateProvider,
@@ -145,6 +146,7 @@ function ProviderFormSheet({ open, onOpenChange, provider }: ProviderFormProps) 
   const isEdit = !!provider;
   const createProvider = useCreateProvider();
   const updateProvider = useUpdateProvider();
+  const { data: availableChannels } = useAvailableChannels(open && !isEdit);
 
   const [name, setName] = useState(provider?.name ?? "");
   const [description, setDescription] = useState(provider?.description ?? "");
@@ -264,14 +266,53 @@ function ProviderFormSheet({ open, onOpenChange, provider }: ProviderFormProps) 
           </div>
           <div>
             <label className="text-xs font-medium mb-1.5 block">
-              Telegram Channel ID
+              Telegram Channel
             </label>
-            <Input
-              value={channelId}
-              onChange={(e) => setChannelId(e.target.value)}
-              placeholder="e.g. -1001234567890"
-              className="text-xs font-mono"
-            />
+            {isEdit ? (
+              <Input
+                value={channelId}
+                disabled
+                className="text-xs font-mono bg-muted"
+              />
+            ) : availableChannels && availableChannels.length > 0 ? (
+              <Select
+                value={channelId}
+                onValueChange={(v) => {
+                  setChannelId(v);
+                  // Auto-fill name from channel name if name is empty
+                  if (!name.trim()) {
+                    const ch = availableChannels.find((c) => c.channel_id === v);
+                    if (ch) setName(ch.channel_name);
+                  }
+                }}
+              >
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Select a channel..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableChannels.map((ch) => (
+                    <SelectItem key={ch.channel_id} value={ch.channel_id} className="text-xs">
+                      {ch.channel_name}
+                      <span className="text-muted-foreground ml-1 font-mono text-[10px]">
+                        {ch.channel_id}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="space-y-1.5">
+                <Input
+                  value={channelId}
+                  onChange={(e) => setChannelId(e.target.value)}
+                  placeholder="e.g. 1234567890"
+                  className="text-xs font-mono"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  No unregistered channels found. Enter a channel ID manually.
+                </p>
+              </div>
+            )}
           </div>
           <Button type="submit" disabled={isPending} className="mt-2">
             {isPending ? (
