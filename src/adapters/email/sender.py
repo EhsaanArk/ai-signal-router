@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import resend
 import sentry_sdk
@@ -15,6 +16,34 @@ import sentry_sdk
 from src.core.models import DispatchResult
 
 logger = logging.getLogger(__name__)
+
+# Track quota errors to avoid spamming Sentry with identical reports.
+# Once we detect a quota error, suppress Sentry reports for 1 hour.
+_quota_hit_at: float = 0.0
+_QUOTA_SUPPRESS_SECONDS = 3600  # 1 hour
+
+
+def _handle_resend_error(exc: Exception, context: str) -> None:
+    """Handle Resend API errors with quota-aware Sentry suppression.
+
+    Quota errors ("daily email sending quota") are logged as warnings and
+    reported to Sentry at most once per hour. All other errors are reported
+    normally.
+    """
+    global _quota_hit_at
+    is_quota = "quota" in str(exc).lower()
+
+    if is_quota:
+        now = time.monotonic()
+        if now - _quota_hit_at < _QUOTA_SUPPRESS_SECONDS:
+            # Already reported recently — just log, don't spam Sentry
+            logger.warning("Resend quota still exceeded — suppressing Sentry (%s)", context)
+            return
+        _quota_hit_at = now
+        logger.warning("Resend daily quota hit — suppressing further Sentry reports for 1h (%s)", context)
+
+    logger.error("Failed to send email (%s): %s", context, exc)
+    sentry_sdk.capture_exception(exc)
 
 
 class ResendNotifier:
@@ -53,8 +82,7 @@ class ResendNotifier:
                 "html": html,
             })
         except Exception as exc:
-            logger.error("Failed to send email (%s): %s", subject, exc)
-            sentry_sdk.capture_exception(exc)
+            _handle_resend_error(exc, f"raw email: {subject}")
 
     async def send_dispatch_summary(
         self,
@@ -101,8 +129,7 @@ class ResendNotifier:
             })
             logger.info("Dispatch summary email sent to %s", user_email)
         except Exception as exc:
-            logger.error("Failed to send notification email: %s", exc)
-            sentry_sdk.capture_exception(exc)
+            _handle_resend_error(exc, f"dispatch summary: {signal_symbol}")
 
     # Reason code → (user-friendly headline, actionable guidance)
     _DISCONNECT_COPY: dict[str, tuple[str, str]] = {
@@ -171,8 +198,7 @@ class ResendNotifier:
             })
             logger.info("Disconnect alert email sent to %s (reason=%s)", user_email, reason)
         except Exception as exc:
-            logger.error("Failed to send disconnect alert email: %s", exc)
-            sentry_sdk.capture_exception(exc)
+            _handle_resend_error(exc, f"disconnect alert: {reason}")
 
     # ------------------------------------------------------------------
     # Milestone emails (welcome sequence)
@@ -213,8 +239,7 @@ class ResendNotifier:
             })
             logger.info("Welcome email sent to %s", user_email)
         except Exception as exc:
-            logger.error("Failed to send welcome email: %s", exc)
-            sentry_sdk.capture_exception(exc)
+            _handle_resend_error(exc, "welcome email")
 
     async def send_telegram_connected(
         self, user_email: str, frontend_url: str,
@@ -249,8 +274,7 @@ class ResendNotifier:
             })
             logger.info("Telegram connected email sent to %s", user_email)
         except Exception as exc:
-            logger.error("Failed to send Telegram connected email: %s", exc)
-            sentry_sdk.capture_exception(exc)
+            _handle_resend_error(exc, "telegram connected email")
 
     async def send_first_signal_routed(
         self, user_email: str, symbol: str, frontend_url: str,
@@ -289,5 +313,4 @@ class ResendNotifier:
             })
             logger.info("First signal routed email sent to %s", user_email)
         except Exception as exc:
-            logger.error("Failed to send first signal routed email: %s", exc)
-            sentry_sdk.capture_exception(exc)
+            _handle_resend_error(exc, f"first signal routed: {symbol}")
