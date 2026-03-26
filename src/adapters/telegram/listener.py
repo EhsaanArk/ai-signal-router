@@ -16,6 +16,7 @@ Connection resilience is tuned for residential SOCKS5 proxies on Railway:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Callable, Awaitable
@@ -95,6 +96,12 @@ class TelegramListener:
         self._user_id: UUID | None = None
         self._monitored_channels: set[str] = monitored_channels or set()
         self._proxy = proxy
+        # Dedup cache: (channel_id, message_id) → message_text_hash
+        # Prevents re-enqueuing to QStash when MessageEdited fires with
+        # identical text (Telegram sends edits for reactions, views, etc.).
+        # Only enqueues edits where the text actually changed.
+        self._seen_messages: dict[tuple[str, int], str] = {}
+        self._seen_messages_max = 2000  # evict oldest when exceeded
 
     async def start(
         self,
@@ -227,6 +234,29 @@ class TelegramListener:
             )
             return
         logger.info("Message from monitored channel %s (msg_id=%s)", channel_id, message.id)
+
+        # Dedup: skip if this exact (channel, message_id, text) was already enqueued.
+        # Telegram fires MessageEdited for reactions, view counts, pin changes —
+        # not just text edits. Only re-enqueue when the text actually changed.
+        text_hash = hashlib.md5(message.text.encode()).hexdigest()
+        cache_key = (channel_id, message.id)
+        if cache_key in self._seen_messages:
+            if self._seen_messages[cache_key] == text_hash:
+                logger.debug(
+                    "Skipping duplicate enqueue for channel %s msg %d (text unchanged)",
+                    channel_id, message.id,
+                )
+                return
+            logger.info(
+                "Re-enqueuing edited message %d from channel %s (text changed)",
+                message.id, channel_id,
+            )
+        self._seen_messages[cache_key] = text_hash
+        # Evict oldest entries if cache is too large
+        if len(self._seen_messages) > self._seen_messages_max:
+            keys = list(self._seen_messages.keys())
+            for k in keys[:len(keys) // 2]:
+                del self._seen_messages[k]
 
         reply_to_id = None
         if message.reply_to:
