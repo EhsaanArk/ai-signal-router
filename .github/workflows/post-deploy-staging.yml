@@ -129,7 +129,9 @@ jobs:
           printf 'passed=%s\n' "$PASSED" >> "$GITHUB_OUTPUT"
           printf 'total=%s\n' "$TOTAL" >> "$GITHUB_OUTPUT"
 
-          if [ "$EXIT_CODE" = "0" ]; then
+          if [ "$TOTAL" = "0" ]; then
+            printf 'result=skipped\n' >> "$GITHUB_OUTPUT"
+          elif [ "$EXIT_CODE" = "0" ]; then
             printf 'result=pass\n' >> "$GITHUB_OUTPUT"
           else
             printf 'result=fail\n' >> "$GITHUB_OUTPUT"
@@ -186,7 +188,9 @@ jobs:
           printf 'passed=%s\n' "$PASSED" >> "$GITHUB_OUTPUT"
           printf 'total=%s\n' "$TOTAL" >> "$GITHUB_OUTPUT"
 
-          if [ "$EXIT_CODE" = "0" ]; then
+          if [ "$TOTAL" = "0" ]; then
+            printf 'result=skipped\n' >> "$GITHUB_OUTPUT"
+          elif [ "$EXIT_CODE" = "0" ]; then
             printf 'result=pass\n' >> "$GITHUB_OUTPUT"
           else
             printf 'result=fail\n' >> "$GITHUB_OUTPUT"
@@ -249,7 +253,9 @@ jobs:
           printf 'passed=%s\n' "$PASSED" >> "$GITHUB_OUTPUT"
           printf 'total=%s\n' "$TOTAL" >> "$GITHUB_OUTPUT"
 
-          if [ "$EXIT_CODE" = "0" ]; then
+          if [ "$TOTAL" = "0" ]; then
+            printf 'result=skipped\n' >> "$GITHUB_OUTPUT"
+          elif [ "$EXIT_CODE" = "0" ]; then
             printf 'result=pass\n' >> "$GITHUB_OUTPUT"
           else
             printf 'result=fail\n' >> "$GITHUB_OUTPUT"
@@ -264,12 +270,61 @@ jobs:
             pipeline-output.txt
 
   # ---------------------------------------------------------------------------
-  # Step 5: QA Guardian — Claude Code CLI
+  # Step 5: Sentry error check
+  # ---------------------------------------------------------------------------
+  sentry-check:
+    name: Sentry error check
+    runs-on: ubuntu-latest
+    needs: [health-check]
+    if: needs.health-check.outputs.health_status == 'pass'
+    outputs:
+      new_errors: ${{ steps.sentry.outputs.new_errors }}
+    steps:
+      - name: Check Sentry for new errors (last 10 minutes)
+        id: sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::warning::SENTRY_AUTH_TOKEN not configured -- skipping Sentry check"
+            echo "new_errors=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
+            "https://sentry.io/api/0/projects/$SENTRY_ORG/$SENTRY_PROJECT/issues/?query=is:unresolved+firstSeen:-10m&limit=10" \
+          )
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::Sentry API returned HTTP $HTTP_CODE"
+            echo "new_errors=api_error" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          COUNT=$(echo "$BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+          echo "Found $COUNT new Sentry issues in the last 10 minutes"
+
+          if [ "$COUNT" -gt "0" ]; then
+            echo "new_errors=$COUNT" >> "$GITHUB_OUTPUT"
+            echo "::warning::$COUNT new Sentry errors detected after deploy"
+            echo "$BODY" | python3 -m json.tool | head -100
+          else
+            echo "new_errors=0" >> "$GITHUB_OUTPUT"
+            echo "No new Sentry errors -- deploy looks clean"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Step 6: QA Guardian — Claude Code CLI
   # ---------------------------------------------------------------------------
   qa-guardian:
     name: QA Guardian (Deploy Confidence Score)
     runs-on: ubuntu-latest
-    needs: [health-check, api-smoke, e2e, pipeline]
+    needs: [health-check, api-smoke, e2e, pipeline, sentry-check]
     if: always()
     steps:
       - uses: actions/checkout@v4
@@ -287,69 +342,36 @@ jobs:
         id: guardian
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HEALTH_STATUS: ${{ needs.health-check.outputs.health_status }}
+          DEPLOY_HEALTH: ${{ needs.health-check.outputs.deploy_health }}
+          SMOKE_RESULT: ${{ needs.api-smoke.outputs.result }}
+          SMOKE_PASSED: ${{ needs.api-smoke.outputs.passed }}
+          SMOKE_TOTAL: ${{ needs.api-smoke.outputs.total }}
+          E2E_RESULT: ${{ needs.e2e.outputs.result }}
+          E2E_PASSED: ${{ needs.e2e.outputs.passed }}
+          E2E_TOTAL: ${{ needs.e2e.outputs.total }}
+          PIPELINE_RESULT: ${{ needs.pipeline.outputs.result }}
+          PIPELINE_PASSED: ${{ needs.pipeline.outputs.passed }}
+          PIPELINE_TOTAL: ${{ needs.pipeline.outputs.total }}
+          SENTRY_ERRORS: ${{ needs.sentry-check.outputs.new_errors }}
         run: |
-          # Collect inputs for the QA Guardian
-          HEALTH_STATUS="${{ needs.health-check.outputs.health_status }}"
-          DEPLOY_HEALTH="${{ needs.health-check.outputs.deploy_health }}"
-          SMOKE_RESULT="${{ needs.api-smoke.outputs.result }}"
-          SMOKE_PASSED="${{ needs.api-smoke.outputs.passed }}"
-          SMOKE_TOTAL="${{ needs.api-smoke.outputs.total }}"
-          E2E_RESULT="${{ needs.e2e.outputs.result }}"
-          E2E_PASSED="${{ needs.e2e.outputs.passed }}"
-          E2E_TOTAL="${{ needs.e2e.outputs.total }}"
-
-          cat > /tmp/qa-prompt.txt << 'PROMPT_EOF'
-          You are the QA Guardian for Sage Radar AI (SGM Telegram Copier).
-          Analyze the post-deploy test results and produce a Deploy Confidence Score (0-100).
-
-          ## Test Results
+          PROMPT="You are the QA Guardian for Sage Radar AI STAGING environment.
+          Analyze results and produce a Deploy Confidence Score (0-100).
 
           Health Check: $HEALTH_STATUS
           Deploy Health: $DEPLOY_HEALTH
           API Smoke Tests: $SMOKE_RESULT ($SMOKE_PASSED/$SMOKE_TOTAL passed)
           E2E Tests: $E2E_RESULT ($E2E_PASSED/$E2E_TOTAL passed)
+          Pipeline Tests: $PIPELINE_RESULT ($PIPELINE_PASSED/$PIPELINE_TOTAL passed)
+          Sentry New Errors: $SENTRY_ERRORS
 
-          ## Scoring Rubric
+          Scoring: Health pass +20, Deploy HEALTHY +10, API all pass +20, E2E all pass +20, Pipeline all pass +20, No Sentry errors +10.
+          Deductions: 5xx in API -20, Pipeline fail -25, Health fail caps at 10, DEGRADED -10, Sentry errors -5 each (max -10), Skipped suite -5.
+          SHIP >= 80, INVESTIGATE 50-79, BLOCK < 50.
 
-          - Health check pass: +25 points
-          - Deploy health HEALTHY: +15 points
-          - API smoke all pass: +30 points (pro-rate for partial)
-          - E2E all pass: +30 points (pro-rate for partial)
+          Respond ONLY JSON: {\"confidence_score\": N, \"verdict\": \"...\", \"summary\": \"...\", \"details\": [...]}"
 
-          ## Deductions
-
-          - Any 5xx error in smoke tests: -20 points
-          - Health check fail: score capped at 10
-          - Deploy health DEGRADED: -10 points
-
-          ## Output Format
-
-          Respond with ONLY a JSON object (no markdown):
-          {
-            "confidence_score": <0-100>,
-            "verdict": "SHIP" | "INVESTIGATE" | "BLOCK",
-            "summary": "<one-line summary>",
-            "details": ["<detail1>", "<detail2>", ...]
-          }
-
-          Verdict rules:
-          - SHIP: score >= 80
-          - INVESTIGATE: score 50-79
-          - BLOCK: score < 50
-          PROMPT_EOF
-
-          # Substitute variables
-          sed -i "s/\$HEALTH_STATUS/$HEALTH_STATUS/g" /tmp/qa-prompt.txt
-          sed -i "s/\$DEPLOY_HEALTH/$DEPLOY_HEALTH/g" /tmp/qa-prompt.txt
-          sed -i "s/\$SMOKE_RESULT/$SMOKE_RESULT/g" /tmp/qa-prompt.txt
-          sed -i "s/\$SMOKE_PASSED/$SMOKE_PASSED/g" /tmp/qa-prompt.txt
-          sed -i "s/\$SMOKE_TOTAL/$SMOKE_TOTAL/g" /tmp/qa-prompt.txt
-          sed -i "s/\$E2E_RESULT/$E2E_RESULT/g" /tmp/qa-prompt.txt
-          sed -i "s/\$E2E_PASSED/$E2E_PASSED/g" /tmp/qa-prompt.txt
-          sed -i "s/\$E2E_TOTAL/$E2E_TOTAL/g" /tmp/qa-prompt.txt
-
-          # Run Claude Code CLI with the prompt
-          GUARDIAN_OUTPUT=$(claude -p "$(cat /tmp/qa-prompt.txt)" --output-format json 2>/dev/null || echo '{"confidence_score": 0, "verdict": "BLOCK", "summary": "QA Guardian failed to run"}')
+          GUARDIAN_OUTPUT=$(claude -p "$PROMPT" --output-format json 2>/dev/null || echo '{"confidence_score": 0, "verdict": "BLOCK", "summary": "QA Guardian failed to run"}')
 
           echo "$GUARDIAN_OUTPUT" > /tmp/guardian-result.json
           echo "## QA Guardian Result" >> "$GITHUB_STEP_SUMMARY"
@@ -357,7 +379,6 @@ jobs:
           echo "$GUARDIAN_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-          # Extract score for use in PR comment
           SCORE=$(echo "$GUARDIAN_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('confidence_score', 0))" 2>/dev/null || echo "0")
           VERDICT=$(echo "$GUARDIAN_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verdict', 'UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
           SUMMARY=$(echo "$GUARDIAN_OUTPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('summary', 'N/A'))" 2>/dev/null || echo "N/A")
