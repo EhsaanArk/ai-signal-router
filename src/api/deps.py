@@ -156,6 +156,9 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_LINK_SECRET: str = ""
     TRUSTED_PROXY_IPS: str = ""
 
+    # Vibe Trading Bot feature flag
+    BOT_ENABLED: bool = False
+
     # Two-stage dispatch pipeline (marketplace scale)
     TWO_STAGE_DISPATCH: bool = False
     BACKEND_URL: str = "http://localhost:8000"
