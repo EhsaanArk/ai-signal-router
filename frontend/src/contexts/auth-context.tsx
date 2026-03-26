@@ -131,14 +131,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Defer to prevent sync render loops
       setTimeout(() => {
         if (session?.access_token) {
-          // Only show loading spinner for sign-in events, NOT token refreshes.
-          // Token refreshes happen when the tab regains focus — showing the
-          // spinner unmounts the current page (destroying form/wizard state).
-          const isTokenRefresh = event === "TOKEN_REFRESHED";
-          if (!isTokenRefresh) setIsLoading(true);
-          hydrateSession(session.access_token).finally(() => {
-            if (!isTokenRefresh) setIsLoading(false);
-          });
+          if (event === "TOKEN_REFRESHED") {
+            // Token refresh: just update the token silently. Do NOT call
+            // hydrateSession (which hits /auth/me and calls setUser with a
+            // new object, triggering re-renders that unmount the current page
+            // and destroy wizard/form state).
+            log("TOKEN_REFRESHED: updating token silently");
+            setToken(session.access_token);
+            return;
+          }
+          // Sign-in or other auth events: full hydration with loading state
+          setIsLoading(true);
+          hydrateSession(session.access_token).finally(() => setIsLoading(false));
         } else {
           setToken(null);
           setUser(null);
