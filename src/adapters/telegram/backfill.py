@@ -7,6 +7,7 @@ best-effort basis — no backfill is always safer than wrong backfill.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -30,7 +31,11 @@ logger = logging.getLogger(__name__)
 _BACKFILL_MAX_AGE_SECONDS_DEFAULT = int(os.environ.get("BACKFILL_MAX_AGE_SECONDS", "60"))
 
 # Backfill: max messages to fetch per channel from Telegram history.
-BACKFILL_MESSAGE_LIMIT = int(os.environ.get("BACKFILL_MESSAGE_LIMIT", "20"))
+BACKFILL_MESSAGE_LIMIT = int(os.environ.get("BACKFILL_MESSAGE_LIMIT", "5"))
+
+# Backfill: delay (seconds) between consecutive enqueue calls to avoid
+# overwhelming QStash's daily message limit during burst backfill operations.
+BACKFILL_ENQUEUE_DELAY = float(os.environ.get("BACKFILL_ENQUEUE_DELAY", "0.5"))
 
 
 async def get_backfill_max_age(db: AsyncSession | None) -> int:
@@ -181,6 +186,9 @@ async def backfill_missed_signals(
                 try:
                     await queue_port.enqueue(raw_signal)
                     total_backfilled += 1
+                    # Throttle enqueue rate to avoid hitting QStash's daily
+                    # message limit during burst backfill across many users.
+                    await asyncio.sleep(BACKFILL_ENQUEUE_DELAY)
                 except Exception as exc:
                     logger.error(
                         "Backfill: failed to enqueue message %d "
