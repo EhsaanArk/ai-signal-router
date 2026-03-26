@@ -104,7 +104,11 @@ export function MarketplacePage() {
           <p className="text-[11px] text-muted-foreground mt-0.5">
             Verified providers ranked by Sage Intelligence
             {providers && providers.length > 0 && (
-              <span className="text-muted-foreground"> · {providers.length} listed</span>
+              <>
+                <span> · {providers.length} provider{providers.length !== 1 ? "s" : ""}</span>
+                <span> · {providers.reduce((sum, p) => sum + p.signal_count, 0)} signals tracked</span>
+                <span> · {providers.reduce((sum, p) => sum + p.subscriber_count, 0)} followers</span>
+              </>
             )}
           </p>
         </div>
