@@ -292,3 +292,4 @@ class DispatchJob(BaseModel):
     parsed_signal: ParsedSignal
     routing_rule_id: UUID
     raw_signal_meta: RawSignalMeta
+    source_type: str = "telegram"

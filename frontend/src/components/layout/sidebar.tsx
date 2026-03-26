@@ -49,15 +49,27 @@ function prefetchRoute(path: string) {
   if (loader) loader().catch(() => { /* chunk prefetch failed — no-op */ });
 }
 
-const navItems = [
+const marketplaceEnabled = import.meta.env.VITE_MARKETPLACE_ENABLED === "true";
+
+const baseNavItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/telegram", label: "Telegram", icon: MessageSquare },
   { path: "/routing-rules", label: "Signal Routes", icon: Route },
+];
+
+const marketplaceNavItems = [
   { path: "/marketplace", label: "Marketplace", icon: Store },
   { path: "/dashboard/subscriptions", label: "My Subs", icon: Bookmark },
+];
+
+const trailingNavItems = [
   { path: "/logs", label: "Signal Logs", icon: ScrollText },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
+
+const navItems = marketplaceEnabled
+  ? [...baseNavItems, ...marketplaceNavItems, ...trailingNavItems]
+  : [...baseNavItems, ...trailingNavItems];
 
 const tierColors: Record<string, string> = {
   free: "text-zinc-400",
@@ -226,7 +238,7 @@ export function Sidebar({ className, onNavClick, collapsed, onToggle }: SidebarP
             { path: "/admin/signals", label: "All Signals", icon: Radio },
             { path: "/admin/system-rules", label: "System Rules", icon: BookOpen },
             { path: "/admin/parser", label: "Sage Intelligence", icon: Brain },
-            { path: "/admin/marketplace", label: "Marketplace", icon: Store },
+            ...(marketplaceEnabled ? [{ path: "/admin/marketplace", label: "Marketplace", icon: Store }] : []),
             { path: "/admin/settings", label: "Settings", icon: Settings },
           ].map((item) => {
             const isActive = location.pathname.startsWith(item.path);

@@ -35,6 +35,8 @@ const MarketplaceSubscriptionsPage = lazyRetry(() => import("./pages/marketplace
 const AdminMarketplacePage = lazyRetry(() => import("./pages/admin/marketplace"));
 const PublicLayout = lazyRetry(() => import("./components/layout/public-layout"));
 
+const marketplaceEnabled = import.meta.env.VITE_MARKETPLACE_ENABLED === "true";
+
 function AdminRoute({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   if (!user?.is_admin) return <Navigate to="/" replace />;
@@ -71,19 +73,23 @@ const router = createBrowserRouter([
           { path: "/admin/signals", element: <AdminRoute><AdminSignalsPage /></AdminRoute> },
           { path: "/admin/system-rules", element: <AdminRoute><AdminSystemRulesPage /></AdminRoute> },
           { path: "/admin/parser", element: <AdminRoute><AdminParserPage /></AdminRoute> },
-          { path: "/admin/marketplace", element: <AdminRoute><AdminMarketplacePage /></AdminRoute> },
+          ...(marketplaceEnabled ? [
+            { path: "/admin/marketplace", element: <AdminRoute><AdminMarketplacePage /></AdminRoute> },
+          ] : []),
           { path: "/admin/settings", element: <AdminRoute><AdminSettingsPage /></AdminRoute> },
-          { path: "/dashboard/subscriptions", element: <MarketplaceSubscriptionsPage /> },
+          ...(marketplaceEnabled ? [
+            { path: "/dashboard/subscriptions", element: <MarketplaceSubscriptionsPage /> },
+          ] : []),
         ],
       },
     ],
   },
-  {
+  ...(marketplaceEnabled ? [{
     element: <PublicLayout />,
     children: [
       { path: "/marketplace", element: <MarketplacePage /> },
     ],
-  },
+  }] : []),
   { path: "*", element: <NotFound /> },
 ]);
 
