@@ -2,7 +2,7 @@ import { BadgeCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MarketplaceProvider } from "@/types/marketplace";
-import { fmtPips, ASSET_SHORT } from "./format";
+import { ASSET_SHORT } from "./format";
 
 interface ProviderCardProps {
   provider: MarketplaceProvider;
@@ -22,22 +22,25 @@ export function ProviderCard({
   onUnsubscribe,
 }: ProviderCardProps) {
   const wr = provider.win_rate;
-  const pnl = provider.total_pnl_pips;
-  const dd = provider.max_drawdown_pips;
   const hasData = wr !== null;
+  const isVerified = provider.track_record_days >= 30 && provider.signal_count >= 20;
 
   return (
     <div
       role="article"
-      aria-label={`${provider.name} - ${hasData ? `${wr!.toFixed(1)}%` : "N/A"} win rate`}
+      aria-label={`${provider.name} - ${hasData ? `${wr!.toFixed(1)}% reliability` : "new provider"}`}
       className="rounded-md border border-border/40 bg-card px-4 py-3 transition-colors hover:bg-accent/5"
     >
       {/* Row 1: Identity */}
       <div className="flex items-center justify-between gap-2 mb-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <h3 className="text-sm font-medium truncate">{provider.name}</h3>
-          {provider.track_record_days >= 30 && provider.signal_count >= 20 && (
+          {isVerified ? (
             <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+          ) : (
+            <span className="shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+              New
+            </span>
           )}
         </div>
         <span className="shrink-0 text-[10px] text-muted-foreground">
@@ -45,8 +48,8 @@ export function ProviderCard({
         </span>
       </div>
       {provider.description && (
-        <p className="text-[11px] text-muted-foreground truncate mb-2.5">
-          {provider.description.length > 60 ? `${provider.description.slice(0, 60)}...` : provider.description}
+        <p className="text-[11px] text-muted-foreground line-clamp-1 mb-2.5">
+          {provider.description}
         </p>
       )}
       {!provider.description && <div className="mb-1.5" />}
@@ -57,42 +60,27 @@ export function ProviderCard({
           <span className={cn(
             "text-sm font-semibold tabular-nums",
             !hasData ? "text-muted-foreground" :
-            wr! >= 60 ? "text-emerald-400" :
-            wr! >= 45 ? "text-foreground" : "text-rose-400",
+            isVerified ? "text-foreground" : "text-muted-foreground",
           )}>
             {hasData ? `${wr!.toFixed(1)}%` : "—"}
           </span>
-          <span className="ml-1 text-[10px] text-muted-foreground">win</span>
-        </div>
-        <div>
-          <span className={cn(
-            "text-sm font-semibold tabular-nums",
-            pnl === null ? "text-muted-foreground" :
-            pnl >= 0 ? "text-emerald-400" : "text-rose-400",
-          )}>
-            {fmtPips(pnl, true)}
-          </span>
-        </div>
-        <div>
-          <span className={cn(
-            "text-sm font-semibold tabular-nums",
-            dd === null ? "text-muted-foreground" : "text-rose-400",
-          )}>
-            {dd !== null ? `-${Math.round(Math.abs(dd))}` : "—"}
-          </span>
-          <span className="ml-0.5 text-[10px] text-muted-foreground">dd</span>
+          <span className="ml-1 text-[10px] text-muted-foreground">reliability</span>
         </div>
         <div>
           <span className="text-sm tabular-nums text-foreground">{provider.signal_count}</span>
           <span className="ml-0.5 text-[10px] text-muted-foreground">sig</span>
         </div>
+        <div>
+          <span className="text-sm tabular-nums text-muted-foreground">{provider.subscriber_count}</span>
+          <span className="ml-0.5 text-[10px] text-muted-foreground">followers</span>
+        </div>
       </div>
 
-      {/* Row 3: Meta + Action */}
+      {/* Row 3: Track record + Action */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
-            {provider.subscriber_count} followers · {provider.track_record_days}d tracked
+            {provider.track_record_days}d tracked
           </span>
           <div className="w-12 h-1 rounded-full bg-primary/20 shrink-0">
             <div
@@ -103,18 +91,18 @@ export function ProviderCard({
         </div>
         {isSubscribed ? (
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
-            className="h-6 px-2 text-[10px] text-emerald-500 hover:text-rose-400 hover:bg-rose-500/5"
+            className="h-7 px-3 text-xs text-emerald-500 border-emerald-500/20 hover:text-rose-400 hover:border-rose-500/20 hover:bg-rose-500/5"
             onClick={() => onUnsubscribe(provider.id)}
           >
             Following
           </Button>
         ) : (
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
-            className="h-6 px-2 text-[10px] text-primary hover:text-primary hover:bg-primary/5"
+            className="h-7 px-3 text-xs text-primary border-primary/20 hover:bg-primary/5"
             onClick={() => onSubscribe(provider)}
           >
             Follow

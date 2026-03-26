@@ -24,5 +24,5 @@ export interface MarketplaceSubscription {
   created_at: string;
 }
 
-export type MarketplaceSort = "win_rate" | "pnl" | "signals" | "subscribers";
+export type MarketplaceSort = "win_rate" | "signals" | "subscribers";
 export type MarketplaceFilter = "all" | "forex" | "crypto";

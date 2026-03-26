@@ -196,6 +196,9 @@ class RoutingRuleModel(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default="true"
     )
+    is_marketplace_template: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

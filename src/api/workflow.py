@@ -183,6 +183,88 @@ async def _check_first_signal_milestone(db, settings, user_id, parsed, results):
         sentry_sdk.capture_exception(exc)
 
 
+async def _maybe_marketplace_fanout(
+    *,
+    raw_signal: RawSignal,
+    parsed: ParsedSignal,
+    dispatcher: WebhookDispatcher,
+    db: AsyncSession,
+    dispatch_queue=None,
+) -> None:
+    """Trigger marketplace fan-out if the channel is an active marketplace provider.
+
+    Checks channel_id against marketplace_providers directly (no is_admin check).
+    In two-stage mode (dispatch_queue provided), enqueues individual DispatchJobs
+    per subscriber via QStash. Otherwise, dispatches directly.
+    """
+    if os.getenv("MARKETPLACE_ENABLED", "false").lower() not in ("true", "1", "yes"):
+        return
+    try:
+        mp_result = await db.execute(
+            select(MarketplaceProviderModel.id).where(
+                MarketplaceProviderModel.telegram_channel_id == raw_signal.channel_id,
+                MarketplaceProviderModel.is_active.is_(True),
+            ).limit(1)
+        )
+        if mp_result.scalar_one_or_none() is None:
+            return
+
+        if dispatch_queue is not None:
+            # Two-stage: enqueue per-subscriber dispatch jobs via QStash
+            from src.adapters.db.models import MarketplaceSubscriptionModel
+            subs_result = await db.execute(
+                select(MarketplaceSubscriptionModel.routing_rule_id, MarketplaceSubscriptionModel.user_id).where(
+                    MarketplaceSubscriptionModel.provider_id == (
+                        select(MarketplaceProviderModel.id).where(
+                            MarketplaceProviderModel.telegram_channel_id == raw_signal.channel_id,
+                            MarketplaceProviderModel.is_active.is_(True),
+                        ).limit(1).correlate(None).scalar_subquery()
+                    ),
+                    MarketplaceSubscriptionModel.is_active.is_(True),
+                    MarketplaceSubscriptionModel.routing_rule_id.isnot(None),
+                )
+            )
+            sub_rows = subs_result.all()
+            for rule_id, user_id in sub_rows:
+                meta = RawSignalMeta(
+                    user_id=user_id,
+                    channel_id=raw_signal.channel_id,
+                    message_id=raw_signal.message_id,
+                    reply_to_msg_id=raw_signal.reply_to_msg_id,
+                    raw_message=raw_signal.raw_message,
+                    timestamp=raw_signal.timestamp,
+                )
+                job = DispatchJob(
+                    parsed_signal=parsed,
+                    routing_rule_id=rule_id,
+                    raw_signal_meta=meta,
+                    source_type="marketplace",
+                )
+                try:
+                    await dispatch_queue.enqueue_dispatch_job(job)
+                except Exception as exc:
+                    sentry_sdk.capture_exception(exc)
+                    logger.error("Marketplace enqueue failed for rule %s: %s", rule_id, exc)
+            if sub_rows:
+                logger.info("Marketplace fan-out (queued) for channel %s: %d jobs", raw_signal.channel_id, len(sub_rows))
+        else:
+            # Direct dispatch path
+            from src.core.marketplace import marketplace_fanout
+            fanout_results = await marketplace_fanout(
+                parsed_signal=parsed,
+                channel_id=raw_signal.channel_id,
+                raw_message=raw_signal.raw_message,
+                message_id=raw_signal.message_id,
+                reply_to_msg_id=raw_signal.reply_to_msg_id,
+                dispatcher=dispatcher,
+                db_session=db,
+            )
+            logger.info("Marketplace fan-out for channel %s: %d dispatches", raw_signal.channel_id, len(fanout_results))
+    except Exception as exc:
+        logger.error("Marketplace fan-out failed for channel %s: %s", raw_signal.channel_id, exc)
+        sentry_sdk.capture_exception(exc)
+
+
 @workflow_router.post("/api/workflow/process-signal", response_model=list[DispatchResult], dependencies=[Depends(verify_qstash_signature)])
 async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[AsyncSession, Depends(get_db)], settings: Annotated[Settings, Depends(get_settings)], dispatcher: Annotated[WebhookDispatcher, Depends(get_dispatcher)]) -> list[DispatchResult]:
     if raw_signal.message_id:
@@ -231,6 +313,8 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
             except Exception as exc:
                 sentry_sdk.capture_exception(exc)
                 queued_results.append(DispatchResult(routing_rule_id=rule_row.id, status="failed", error_message=f"Enqueue failed: {exc}"))
+        # Marketplace fan-out (two-stage path) — enqueue subscriber dispatches via QStash
+        await _maybe_marketplace_fanout(raw_signal=raw_signal, parsed=parsed, dispatcher=dispatcher, db=db, dispatch_queue=dispatch_queue)
         return queued_results
     outcomes = await asyncio.gather(*[_process_single_rule(rule_row, raw_signal, parsed, dispatcher) for rule_row in rules], return_exceptions=True)
     results: list[DispatchResult] = []
@@ -250,21 +334,8 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
     except Exception:
         pass
 
-    # Marketplace fan-out — only for admin account signals (design doc: "signal came from the admin listener account")
-    if os.getenv("MARKETPLACE_ENABLED", "false").lower() in ("true", "1", "yes"):
-        try:
-            # Check if the signal originated from an admin user's listener
-            admin_check = await db.execute(select(UserModel.is_admin).where(UserModel.id == raw_signal.user_id))
-            is_admin_signal = admin_check.scalar_one_or_none() or False
-            if is_admin_signal:
-                mp_result = await db.execute(select(MarketplaceProviderModel.id).where(MarketplaceProviderModel.telegram_channel_id == raw_signal.channel_id, MarketplaceProviderModel.is_active.is_(True)).limit(1))
-                if mp_result.scalar_one_or_none() is not None:
-                    from src.core.marketplace import marketplace_fanout
-                    fanout_results = await marketplace_fanout(parsed_signal=parsed, channel_id=raw_signal.channel_id, raw_message=raw_signal.raw_message, message_id=raw_signal.message_id, reply_to_msg_id=raw_signal.reply_to_msg_id, dispatcher=dispatcher, db_session=db)
-                    logger.info("Marketplace fan-out for channel %s: %d dispatches", raw_signal.channel_id, len(fanout_results))
-        except Exception as exc:
-            logger.error("Marketplace fan-out failed for channel %s: %s", raw_signal.channel_id, exc)
-            sentry_sdk.capture_exception(exc)
+    # Marketplace fan-out — dispatch to all marketplace subscribers of this channel
+    await _maybe_marketplace_fanout(raw_signal=raw_signal, parsed=parsed, dispatcher=dispatcher, db=db)
     await _send_dispatch_notifications(db, settings, raw_signal.user_id, parsed, results)
     await _check_first_signal_milestone(db, settings, raw_signal.user_id, parsed, results)
     return results
@@ -290,6 +361,7 @@ async def dispatch_signal(job: DispatchJob, request: Request, db: Annotated[Asyn
         return DispatchResult(routing_rule_id=job.routing_rule_id, status="ignored", error_message="Rule no longer active")
     raw_signal = RawSignal(user_id=meta.user_id, channel_id=meta.channel_id, raw_message=meta.raw_message, message_id=meta.message_id, reply_to_msg_id=meta.reply_to_msg_id, timestamp=meta.timestamp)
     dispatch_result, log_kwargs = await _process_single_rule(rule_row, raw_signal, job.parsed_signal, dispatcher)
+    log_kwargs["source_type"] = job.source_type
     db.add(SignalLogModel(**log_kwargs))
     try:
         cache = request.app.state.cache

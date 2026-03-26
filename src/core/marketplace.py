@@ -7,6 +7,7 @@ logic centralised rather than scattered across route handlers.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -99,40 +100,42 @@ async def marketplace_fanout(
         reply_to_msg_id=reply_to_msg_id,
     )
 
-    dispatch_results: list[dict] = []
+    semaphore = asyncio.Semaphore(10)  # max 10 concurrent dispatches
 
-    for sub in subscriptions:
+    async def _dispatch_one(sub):
+        """Dispatch to one subscriber. Returns (result_dict, log_kwargs) or None."""
         rule_row = rule_rows.get(sub.routing_rule_id)
         if rule_row is None:
-            continue
+            return None
 
-        # Override user_id per subscriber so logs attribute correctly
-        synthetic_raw.user_id = sub.user_id
+        sub_raw = RawSignal(
+            user_id=sub.user_id,
+            channel_id=channel_id,
+            raw_message=raw_message,
+            message_id=message_id,
+            reply_to_msg_id=reply_to_msg_id,
+        )
 
         try:
-            # Use _process_single_rule for full safety checks:
-            # keyword_blacklist, enabled_actions, asset_class, symbol mapping
-            dispatch_result, log_kwargs = await _process_single_rule(
-                rule_row, synthetic_raw, parsed_signal, dispatcher,
-            )
-
-            # Override source_type to 'marketplace' (default is 'telegram')
+            async with semaphore:
+                dispatch_result, log_kwargs = await _process_single_rule(
+                    rule_row, sub_raw, parsed_signal, dispatcher,
+                )
             log_kwargs["source_type"] = "marketplace"
-            db_session.add(SignalLogModel(**log_kwargs))
-
-            dispatch_results.append({
+            result_dict = {
                 "subscription_id": str(sub.id),
                 "user_id": str(sub.user_id),
                 "status": dispatch_result.status,
                 "error": dispatch_result.error_message,
-            })
+            }
+            return result_dict, log_kwargs
 
         except Exception as exc:
             logger.error(
                 "Marketplace fanout failed for subscription %s (user %s): %s",
                 sub.id, sub.user_id, exc,
             )
-            log_entry = SignalLogModel(
+            fail_log = dict(
                 user_id=sub.user_id,
                 routing_rule_id=rule_row.id,
                 message_id=message_id,
@@ -144,14 +147,24 @@ async def marketplace_fanout(
                 error_message=str(exc),
                 source_type="marketplace",
             )
-            db_session.add(log_entry)
-
-            dispatch_results.append({
+            result_dict = {
                 "subscription_id": str(sub.id),
                 "user_id": str(sub.user_id),
                 "status": "failed",
                 "error": str(exc),
-            })
+            }
+            return result_dict, fail_log
+
+    # Dispatch concurrently, then add all signal logs to session sequentially
+    gather_results = await asyncio.gather(*[_dispatch_one(sub) for sub in subscriptions])
+
+    dispatch_results: list[dict] = []
+    for item in gather_results:
+        if item is None:
+            continue
+        result_dict, log_kwargs = item
+        dispatch_results.append(result_dict)
+        db_session.add(SignalLogModel(**log_kwargs))
 
     return dispatch_results
 
@@ -263,6 +276,109 @@ async def compute_provider_stats(
     return stats
 
 
+async def compute_all_provider_stats(db_session: AsyncSession) -> int:
+    """Batch-compute stats for all active marketplace providers.
+
+    Uses aggregate queries across all providers in 3 queries total
+    (signal counts, date ranges, subscriber counts) instead of
+    6 queries per provider. Returns the number of providers refreshed.
+    """
+    from sqlalchemy import case, literal_column
+    from sqlalchemy.orm import aliased
+
+    # Get all active providers
+    result = await db_session.execute(
+        select(
+            MarketplaceProviderModel.id,
+            MarketplaceProviderModel.telegram_channel_id,
+        ).where(MarketplaceProviderModel.is_active.is_(True))
+    )
+    providers = result.all()
+    if not providers:
+        return 0
+
+    channel_ids = [p.telegram_channel_id for p in providers]
+    channel_to_provider = {p.telegram_channel_id: p.id for p in providers}
+
+    # Query 1: Signal counts + success counts per channel (batched)
+    signal_stats = await db_session.execute(
+        select(
+            SignalLogModel.channel_id,
+            func.count(func.distinct(SignalLogModel.message_id)).label("total"),
+            func.count(func.distinct(
+                case(
+                    (SignalLogModel.status == "success", SignalLogModel.message_id),
+                    else_=literal_column("NULL"),
+                )
+            )).label("success"),
+        )
+        .where(
+            SignalLogModel.channel_id.in_(channel_ids),
+            SignalLogModel.source_type == "telegram",
+            SignalLogModel.status.in_(["success", "failed"]),
+        )
+        .group_by(SignalLogModel.channel_id)
+    )
+    counts_by_channel: dict[str, tuple[int, int]] = {}
+    for row in signal_stats.all():
+        counts_by_channel[row.channel_id] = (row.total, row.success)
+
+    # Query 2: Date ranges per channel (batched)
+    date_stats = await db_session.execute(
+        select(
+            SignalLogModel.channel_id,
+            func.min(SignalLogModel.processed_at),
+            func.max(SignalLogModel.processed_at),
+        )
+        .where(
+            SignalLogModel.channel_id.in_(channel_ids),
+            SignalLogModel.source_type == "telegram",
+        )
+        .group_by(SignalLogModel.channel_id)
+    )
+    dates_by_channel: dict[str, tuple] = {}
+    for row in date_stats.all():
+        dates_by_channel[row.channel_id] = (row[1], row[2])
+
+    # Query 3: Subscriber counts per provider (batched)
+    sub_stats = await db_session.execute(
+        select(
+            MarketplaceSubscriptionModel.provider_id,
+            func.count().label("count"),
+        )
+        .where(MarketplaceSubscriptionModel.is_active.is_(True))
+        .group_by(MarketplaceSubscriptionModel.provider_id)
+    )
+    subs_by_provider: dict[UUID, int] = {}
+    for row in sub_stats.all():
+        subs_by_provider[row.provider_id] = row.count
+
+    # Update all providers in one pass
+    now = datetime.now(timezone.utc)
+    for provider_row in providers:
+        pid = provider_row.id
+        cid = provider_row.telegram_channel_id
+        total, success = counts_by_channel.get(cid, (0, 0))
+        win_rate = (success / total * 100.0) if total > 0 else None
+        first, last = dates_by_channel.get(cid, (None, None))
+        track_days = (last - first).days if first and last else 0
+        sub_count = subs_by_provider.get(pid, 0)
+
+        await db_session.execute(
+            update(MarketplaceProviderModel)
+            .where(MarketplaceProviderModel.id == pid)
+            .values(
+                win_rate=win_rate,
+                signal_count=total,
+                track_record_days=track_days,
+                subscriber_count=sub_count,
+                stats_last_computed_at=now,
+            )
+        )
+
+    return len(providers)
+
+
 # ---------------------------------------------------------------------------
 # Subscribe / unsubscribe
 # ---------------------------------------------------------------------------
@@ -323,6 +439,7 @@ async def subscribe_to_provider(
         select(func.count()).select_from(RoutingRuleModel).where(
             RoutingRuleModel.user_id == user_id,
             RoutingRuleModel.is_active.is_(True),
+            RoutingRuleModel.is_marketplace_template.is_(False),
         )
     )).scalar_one()
     if active_rule_count >= user_tier.max_destinations:

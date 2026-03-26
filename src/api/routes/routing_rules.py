@@ -99,7 +99,10 @@ async def list_routing_rules(
 
     result = await db.execute(
         select(RoutingRuleModel)
-        .where(RoutingRuleModel.user_id == current_user.id)
+        .where(
+            RoutingRuleModel.user_id == current_user.id,
+            RoutingRuleModel.is_marketplace_template.is_(False),
+        )
         .order_by(RoutingRuleModel.created_at.desc())
     )
     rows = result.scalars().all()
@@ -132,18 +135,23 @@ async def create_routing_rule(
     if not allowed_url:
         raise InputValidationError(f"Invalid destination webhook URL: {reason}")
 
-    # Count existing active rules
-    count_result = await db.execute(
-        select(func.count())
-        .select_from(RoutingRuleModel)
-        .where(
-            RoutingRuleModel.user_id == current_user.id,
-            RoutingRuleModel.is_active.is_(True),
-        )
-    )
-    current_count = count_result.scalar_one()
+    # Marketplace template rules are exempt from tier limits and template validation
+    is_template = getattr(body, "is_marketplace_template", False)
 
-    _check_tier_limit(current_user.subscription_tier, current_count)
+    if not is_template:
+        # Count existing active rules (excluding marketplace templates)
+        count_result = await db.execute(
+            select(func.count())
+            .select_from(RoutingRuleModel)
+            .where(
+                RoutingRuleModel.user_id == current_user.id,
+                RoutingRuleModel.is_active.is_(True),
+                RoutingRuleModel.is_marketplace_template.is_(False),
+            )
+        )
+        current_count = count_result.scalar_one()
+
+        _check_tier_limit(current_user.subscription_tier, current_count)
 
     # Prevent duplicate webhook URLs across accounts (same user can reuse).
     # Admin users are exempt — they need to test with shared webhook URLs.
@@ -164,7 +172,8 @@ async def create_routing_rule(
             )
 
     # Template is required for SageMaster destinations (contains assistId)
-    if body.destination_type in ("sagemaster_forex", "sagemaster_crypto") and not body.webhook_body_template:
+    # Marketplace template rules skip this — they only store the webhook URL
+    if not is_template and body.destination_type in ("sagemaster_forex", "sagemaster_crypto") and not body.webhook_body_template:
         raise InputValidationError(
             "Webhook body template is required for SageMaster destinations. "
             "Copy the JSON from your SageMaster Assists overview page > "
@@ -187,6 +196,7 @@ async def create_routing_rule(
         enabled_actions=normalize_enabled_actions(body.enabled_actions),
         keyword_blacklist=body.keyword_blacklist,
         is_active=True,
+        is_marketplace_template=is_template,
     )
     db.add(new_rule)
     await db.flush()  # populate default values (id, timestamps)

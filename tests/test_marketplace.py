@@ -734,3 +734,100 @@ class TestUnsubscribeFromProvider:
         assert result["provider_id"] == str(provider_id)
         # 3 adds: routing_rule + subscription + consent_log (fresh consent)
         assert resub_db.add.call_count == 3
+
+
+# ===========================================================================
+# _maybe_marketplace_fanout tests (workflow integration)
+# ===========================================================================
+
+
+class TestMaybeMarketplaceFanout:
+    """Tests for _maybe_marketplace_fanout helper in workflow.py."""
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {"MARKETPLACE_ENABLED": "false"})
+    async def test_disabled_skips_entirely(self):
+        """MARKETPLACE_ENABLED=false does nothing."""
+        from src.api.workflow import _maybe_marketplace_fanout
+
+        db = AsyncMock()
+        db.execute = AsyncMock()  # should never be called
+        await _maybe_marketplace_fanout(
+            raw_signal=MagicMock(channel_id="-123", message_id=1, reply_to_msg_id=None, raw_message="test", timestamp=None, user_id=_uuid()),
+            parsed=_sample_parsed_signal(),
+            dispatcher=AsyncMock(),
+            db=db,
+        )
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {"MARKETPLACE_ENABLED": "true"})
+    async def test_non_marketplace_channel_skips(self):
+        """Channel not in marketplace_providers does nothing."""
+        from src.api.workflow import _maybe_marketplace_fanout
+
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_FakeResult(value=None))
+        await _maybe_marketplace_fanout(
+            raw_signal=MagicMock(channel_id="-999", message_id=1, reply_to_msg_id=None, raw_message="test", timestamp=None, user_id=_uuid()),
+            parsed=_sample_parsed_signal(),
+            dispatcher=AsyncMock(),
+            db=db,
+        )
+        # Only one call: the provider lookup
+        db.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {"MARKETPLACE_ENABLED": "true"})
+    async def test_two_stage_enqueues_marketplace_jobs(self):
+        """Two-stage path enqueues DispatchJobs for each marketplace subscriber."""
+        from src.api.workflow import _maybe_marketplace_fanout
+
+        provider_id = _uuid()
+        rule_id = _uuid()
+        user_id = _uuid()
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _FakeResult(value=provider_id),  # provider exists
+            _FakeResult(items=[(rule_id, user_id)]),  # one subscriber
+        ])
+
+        dispatch_queue = AsyncMock()
+        dispatch_queue.enqueue_dispatch_job = AsyncMock()
+
+        await _maybe_marketplace_fanout(
+            raw_signal=MagicMock(channel_id="-123", message_id=42, reply_to_msg_id=None, raw_message="Buy EURUSD", timestamp=datetime.now(timezone.utc), user_id=_uuid()),
+            parsed=_sample_parsed_signal(),
+            dispatcher=AsyncMock(),
+            db=db,
+            dispatch_queue=dispatch_queue,
+        )
+
+        dispatch_queue.enqueue_dispatch_job.assert_awaited_once()
+        enqueued_job = dispatch_queue.enqueue_dispatch_job.call_args[0][0]
+        assert enqueued_job.source_type == "marketplace"
+        assert enqueued_job.routing_rule_id == rule_id
+
+    @pytest.mark.asyncio
+    @patch.dict("os.environ", {"MARKETPLACE_ENABLED": "true"})
+    @patch("src.core.marketplace.marketplace_fanout", new_callable=AsyncMock)
+    async def test_direct_path_calls_marketplace_fanout(self, mock_fanout):
+        """Direct dispatch path (no queue) calls marketplace_fanout."""
+        from src.api.workflow import _maybe_marketplace_fanout
+
+        mock_fanout.return_value = [{"status": "success"}]
+        provider_id = _uuid()
+
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=_FakeResult(value=provider_id))
+
+        await _maybe_marketplace_fanout(
+            raw_signal=MagicMock(channel_id="-123", message_id=42, reply_to_msg_id=None, raw_message="Buy EURUSD", timestamp=None, user_id=_uuid()),
+            parsed=_sample_parsed_signal(),
+            dispatcher=AsyncMock(),
+            db=db,
+            dispatch_queue=None,
+        )
+
+        mock_fanout.assert_awaited_once()

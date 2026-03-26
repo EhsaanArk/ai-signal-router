@@ -8,10 +8,9 @@ const FILTERS: { value: MarketplaceFilter; label: string }[] = [
 ];
 
 const SORTS: { value: MarketplaceSort; label: string }[] = [
-  { value: "win_rate", label: "Win Rate" },
-  { value: "pnl", label: "P&L" },
-  { value: "signals", label: "Signals" },
   { value: "subscribers", label: "Followers" },
+  { value: "signals", label: "Signals" },
+  { value: "win_rate", label: "Reliability" },
 ];
 
 interface MarketplaceFiltersProps {

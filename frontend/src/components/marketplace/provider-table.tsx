@@ -1,4 +1,4 @@
-import { BadgeCheck } from "lucide-react";
+import { BadgeCheck, Sparkles } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -7,10 +7,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MarketplaceProvider } from "@/types/marketplace";
-import { fmtPips, ASSET_SHORT } from "./format";
+import { ASSET_SHORT } from "./format";
 
 interface ProviderTableProps {
   providers: MarketplaceProvider[];
@@ -30,15 +35,13 @@ export function ProviderTable({
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent border-border/40">
-            <TableHead className="w-[220px] text-[11px] font-medium">Provider</TableHead>
+            <TableHead className="w-[240px] text-[11px] font-medium">Provider</TableHead>
             <TableHead className="w-[60px] text-[11px] font-medium text-center">Type</TableHead>
-            <TableHead className="w-[80px] text-[11px] font-medium text-right">Win Rate</TableHead>
-            <TableHead className="w-[100px] text-[11px] font-medium text-right">P&L (pips)</TableHead>
-            <TableHead className="w-[80px] text-[11px] font-medium text-right">Max DD</TableHead>
-            <TableHead className="w-[60px] text-[11px] font-medium text-right">Signals</TableHead>
+            <TableHead className="w-[90px] text-[11px] font-medium text-right">Reliability</TableHead>
+            <TableHead className="w-[70px] text-[11px] font-medium text-right">Signals</TableHead>
             <TableHead className="w-[70px] text-[11px] font-medium text-right">Followers</TableHead>
-            <TableHead className="w-[60px] text-[11px] font-medium text-right">Track</TableHead>
-            <TableHead className="w-[80px] text-[11px] font-medium text-right"></TableHead>
+            <TableHead className="w-[70px] text-[11px] font-medium text-right">Track</TableHead>
+            <TableHead className="w-[90px] text-[11px] font-medium text-right"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -46,27 +49,40 @@ export function ProviderTable({
             const isFollowing = subscribedIds.has(p.id);
             const wr = p.win_rate;
             const hasData = wr !== null;
+            const isVerified = p.track_record_days >= 30 && p.signal_count >= 20;
+            const isNew = !isVerified;
 
             return (
               <TableRow
                 key={p.id}
                 role="article"
-                aria-label={`${p.name} - ${hasData ? `${wr!.toFixed(1)}%` : "N/A"} win rate`}
+                aria-label={`${p.name} - ${hasData ? `${wr!.toFixed(1)}% reliability` : "new provider"}`}
                 className="border-border/30 hover:bg-accent/5 transition-colors"
               >
-                {/* Provider name */}
+                {/* Provider name + badge */}
                 <TableCell className="py-2.5">
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm font-medium truncate max-w-[180px]">
                       {p.name}
                     </span>
-                    {p.track_record_days >= 30 && p.signal_count >= 20 && (
-                      <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    {isVerified ? (
+                      <Tooltip delayDuration={0}>
+                        <TooltipTrigger asChild>
+                          <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          Verified: 30+ days tracked, 20+ signals
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span className="shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+                        New
+                      </span>
                     )}
                   </div>
                   {p.description && (
-                    <p className="text-[11px] text-muted-foreground truncate max-w-[200px] mt-0.5">
-                      {p.description.length > 60 ? `${p.description.slice(0, 60)}...` : p.description}
+                    <p className="text-[11px] text-muted-foreground line-clamp-1 max-w-[220px] mt-0.5">
+                      {p.description}
                     </p>
                   )}
                 </TableCell>
@@ -78,37 +94,22 @@ export function ProviderTable({
                   </span>
                 </TableCell>
 
-                {/* Win Rate */}
+                {/* Signal Reliability */}
                 <TableCell className="py-2.5 text-right">
-                  <span className={cn(
-                    "text-sm font-medium tabular-nums",
-                    !hasData ? "text-muted-foreground" :
-                    wr! >= 60 ? "text-emerald-400" :
-                    wr! >= 45 ? "text-foreground" : "text-rose-400",
-                  )}>
-                    {hasData ? `${wr!.toFixed(1)}%` : "—"}
-                  </span>
-                </TableCell>
-
-                {/* P&L */}
-                <TableCell className="py-2.5 text-right">
-                  <span className={cn(
-                    "text-sm font-medium tabular-nums",
-                    p.total_pnl_pips === null ? "text-muted-foreground" :
-                    p.total_pnl_pips >= 0 ? "text-emerald-400" : "text-rose-400",
-                  )}>
-                    {fmtPips(p.total_pnl_pips, true)}
-                  </span>
-                </TableCell>
-
-                {/* Max Drawdown */}
-                <TableCell className="py-2.5 text-right">
-                  <span className={cn(
-                    "text-sm tabular-nums",
-                    p.max_drawdown_pips === null ? "text-muted-foreground" : "text-rose-400",
-                  )}>
-                    {p.max_drawdown_pips !== null ? `-${Math.round(Math.abs(p.max_drawdown_pips))}p` : "—"}
-                  </span>
+                  <Tooltip delayDuration={0}>
+                    <TooltipTrigger asChild>
+                      <span className={cn(
+                        "text-sm font-medium tabular-nums",
+                        !hasData ? "text-muted-foreground" :
+                        isNew ? "text-muted-foreground" : "text-foreground",
+                      )}>
+                        {hasData ? `${wr!.toFixed(1)}%` : "—"}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      Signal reliability: % of signals successfully parsed and routed
+                    </TooltipContent>
+                  </Tooltip>
                 </TableCell>
 
                 {/* Signals */}
@@ -136,18 +137,18 @@ export function ProviderTable({
                 <TableCell className="py-2.5 text-right">
                   {isFollowing ? (
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      className="h-6 px-2 text-[10px] text-emerald-500 hover:text-rose-400 hover:bg-rose-500/5"
+                      className="h-7 px-3 text-xs text-emerald-500 border-emerald-500/20 hover:text-rose-400 hover:border-rose-500/20 hover:bg-rose-500/5"
                       onClick={() => onUnsubscribe(p.id)}
                     >
                       Following
                     </Button>
                   ) : (
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      className="h-6 px-2 text-[10px] text-primary hover:text-primary hover:bg-primary/5"
+                      className="h-7 px-3 text-xs text-primary border-primary/20 hover:bg-primary/5"
                       onClick={() => onSubscribe(p)}
                     >
                       Follow

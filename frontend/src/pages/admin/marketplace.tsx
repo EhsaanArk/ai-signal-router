@@ -70,7 +70,7 @@ import type {
   UpdateProviderRequest,
 } from "@/hooks/use-marketplace-admin";
 
-const ASSET_CLASSES = ["forex", "crypto", "indices", "commodities"] as const;
+const ASSET_CLASSES = ["forex", "crypto", "both"] as const;
 
 // ---------------------------------------------------------------------------
 // Stats Cards
