@@ -169,14 +169,28 @@ async def backfill_missed_signals(
                 if msg.reply_to:
                     reply_to_id = msg.reply_to.reply_to_msg_id
 
+                # Use the original Telegram message timestamp — not now().
+                # Using now() would make the signal look "fresh" to the
+                # workflow, bypassing staleness checks on downstream retry.
+                msg_ts = msg.date if msg.date else datetime.now(timezone.utc)
+                if msg_ts.tzinfo is None:
+                    msg_ts = msg_ts.replace(tzinfo=timezone.utc)
+
                 raw_signal = RawSignal(
                     user_id=user_id,
                     channel_id=channel_id,
                     raw_message=msg.text,
                     message_id=msg.id,
                     reply_to_msg_id=reply_to_id,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=msg_ts,
                 )
+
+                # Seed the listener's dedup cache so real-time
+                # MessageEdited events for these messages are skipped.
+                import hashlib as _hashlib
+                _cache_key = (channel_id, msg.id)
+                _text_hash = _hashlib.md5(msg.text.encode()).hexdigest()
+                listener._seen_messages[_cache_key] = _text_hash
 
                 try:
                     await queue_port.enqueue(raw_signal)
