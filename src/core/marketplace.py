@@ -24,7 +24,7 @@ from src.adapters.db.models import (
     SignalLogModel,
     UserModel,
 )
-from src.core.models import DispatchResult, ParsedSignal, RawSignal, RoutingRule, SubscriptionTier, normalize_enabled_actions
+from src.core.models import ParsedSignal, RawSignal, SubscriptionTier
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +90,7 @@ async def marketplace_fanout(
     )
     rule_rows = {r.id: r for r in result.scalars().all()}
 
-    # Build a synthetic RawSignal for _process_single_rule (needed for safety checks)
     from src.api.workflow import _process_single_rule
-    synthetic_raw = RawSignal(
-        user_id=subscriptions[0].user_id,  # placeholder — overridden per subscriber below
-        channel_id=channel_id,
-        raw_message=raw_message,
-        message_id=message_id,
-        reply_to_msg_id=reply_to_msg_id,
-    )
 
     semaphore = asyncio.Semaphore(10)  # max 10 concurrent dispatches
 
@@ -284,7 +276,6 @@ async def compute_all_provider_stats(db_session: AsyncSession) -> int:
     6 queries per provider. Returns the number of providers refreshed.
     """
     from sqlalchemy import case, literal_column
-    from sqlalchemy.orm import aliased
 
     # Get all active providers
     result = await db_session.execute(
@@ -298,7 +289,6 @@ async def compute_all_provider_stats(db_session: AsyncSession) -> int:
         return 0
 
     channel_ids = [p.telegram_channel_id for p in providers]
-    channel_to_provider = {p.telegram_channel_id: p.id for p in providers}
 
     # Query 1: Signal counts + success counts per channel (batched)
     signal_stats = await db_session.execute(

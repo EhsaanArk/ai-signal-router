@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.adapters.db.models import MarketplaceProviderModel, ParserConfigModel, RoutingRuleModel, SignalLogModel, UserModel
+from src.adapters.db.models import MarketplaceProviderModel, MarketplaceSubscriptionModel, ParserConfigModel, RoutingRuleModel, SignalLogModel
 from src.adapters.telemetry import get_tracer
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
@@ -211,7 +211,6 @@ async def _maybe_marketplace_fanout(
 
         if dispatch_queue is not None:
             # Two-stage: enqueue per-subscriber dispatch jobs via QStash
-            from src.adapters.db.models import MarketplaceSubscriptionModel
             subs_result = await db.execute(
                 select(MarketplaceSubscriptionModel.routing_rule_id, MarketplaceSubscriptionModel.user_id).where(
                     MarketplaceSubscriptionModel.provider_id == (

@@ -225,10 +225,8 @@ def create_app() -> FastAPI:
             async def _marketplace_stats_loop():
                 """Refresh marketplace provider stats every 15 minutes."""
                 import sentry_sdk as _sentry
-                from sqlalchemy import select as sa_select
                 from sqlalchemy.ext.asyncio import AsyncSession as SASession
                 from src.adapters.db.session import get_engine
-                from src.adapters.db.models import MarketplaceProviderModel
                 from src.core.marketplace import compute_all_provider_stats
 
                 while True:
