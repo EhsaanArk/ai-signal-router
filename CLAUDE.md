@@ -173,13 +173,13 @@ Telegram → Listener → QStash → API Workflow → OpenAI Parser → Mapper �
 
 ## QA Orchestrator — Automatic Test Maintenance
 
-The QA Orchestrator validates the signal pipeline end-to-end. **Every agent must update QA tests when their changes affect the pipeline.** Use `tests/qa_helpers.py` for all test creation — it provides factory functions so you don't need to understand the full test structure.
+The QA Orchestrator validates the signal pipeline end-to-end. **Every agent must update QA tests when their changes affect the pipeline.** Follow the existing patterns in `tests/test_webhook_contract.py` and `tests/conftest.py`.
 
 ### When to update (triggers)
 
 | You changed... | Update this... | How |
 |----------------|---------------|-----|
-| `src/core/models.py` (new action in `SignalAction`) | `tests/test_webhook_contract.py` | Add contract test using `from tests.qa_helpers import forex_rule, crypto_rule, assert_payload_contract` |
+| `src/core/models.py` (new action in `SignalAction`) | `tests/test_webhook_contract.py` | Add contract test — copy an existing test, use `_forex_rule()` / `_crypto_rule()` helpers in that file |
 | `src/core/models.py` (new field on `ParsedSignal`) | `tests/fixtures/expected_payloads.json` | Add field to relevant fixture entries |
 | `src/core/mapper.py` (new action mapping) | `tests/test_webhook_contract.py` | Add test for both forex AND crypto if applicable |
 | `src/core/mapper.py` (payload structure change) | `tests/test_webhook_contract.py` | Update existing contract tests to match new structure |
@@ -188,18 +188,16 @@ The QA Orchestrator validates the signal pipeline end-to-end. **Every agent must
 | `.github/workflows/post-deploy-*.yml` (new CI step) | Same workflow file | Include `if [ "$TOTAL" = "0" ]; then result=skipped` logic |
 | New API endpoint | `tests/e2e/test_api_regression.py` | Add E2E test hitting the new endpoint |
 
-### How to add tests (using qa_helpers.py)
+### How to add tests
 
-**Adding a webhook contract test** (most common):
+**Adding a webhook contract test** (most common — copy pattern from `test_webhook_contract.py`):
 ```python
-from tests.qa_helpers import forex_rule, crypto_rule, assert_payload_contract
-from src.core.mapper import build_webhook_payload
-from src.core.models import ParsedSignal
-
+# Use the private helpers already in test_webhook_contract.py: _forex_rule(), _crypto_rule()
 def test_my_new_action():
     signal = ParsedSignal(action="my_action", symbol="XAUUSD")
-    payload = build_webhook_payload(signal, forex_rule("V1"))
-    assert_payload_contract(payload, expected_type="my_action_type", forex=True, is_management=True)
+    payload = build_webhook_payload(signal, _forex_rule("V1"))
+    assert payload["type"] == "expected_action_type"
+    assert payload["assistId"] == _ASSIST_ID
 ```
 
 **Adding a parser fixture** (3 steps):
@@ -211,7 +209,7 @@ def test_my_new_action():
 
 | File | Purpose | When to update |
 |------|---------|---------------|
-| `tests/qa_helpers.py` | Reusable factories — `forex_rule()`, `crypto_rule()`, `assert_payload_contract()` | When adding new destination types or assertion patterns |
+| `tests/conftest.py` | Shared fixtures — `sample_parsed_signal`, `sample_routing_rule_v1/v2`, sample constants | When adding new fixture patterns used across multiple test files |
 | `tests/test_webhook_contract.py` | Validates `build_webhook_payload()` output matches SageMaster schemas | When mapper or models change |
 | `tests/test_parser_fixtures.py` | Validates fixture signals are correctly classified | When parser prompt or signal types change |
 | `tests/fixtures/raw_signals.txt` | 25+ raw signal examples (entry, management, non-signal) | When adding new signal formats |
