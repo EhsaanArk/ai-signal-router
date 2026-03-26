@@ -38,6 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const initRef = useRef(false);
+  const userRef = useRef<UserMe | null>(null);
 
   // Fetch app-specific user data from backend
   const fetchUser = useCallback(async (
@@ -92,12 +93,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (me) {
       setToken(accessToken);
       setUser(me);
+      userRef.current = me;
       setAuthError(null);
       return;
     }
 
     setToken(null);
     setUser(null);
+    userRef.current = null;
     setAuthError(errorMessage || PROFILE_LOAD_ERROR);
   }, [fetchUser]);
 
@@ -131,6 +134,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Defer to prevent sync render loops
       setTimeout(() => {
         if (session?.access_token) {
+          // Supabase fires multiple events on tab focus: TOKEN_REFRESHED,
+          // and sometimes SIGNED_IN when it re-detects the session from
+          // storage. Only do full hydration (loading spinner + /auth/me)
+          // when we don't already have a user — i.e. actual sign-in.
+          // Otherwise just silently update the token.
+          if (userRef.current) {
+            log("auth event while user exists:", event, "— silent token update");
+            setToken(session.access_token);
+            return;
+          }
+          log("auth event with no user:", event, "— full hydration");
           setIsLoading(true);
           hydrateSession(session.access_token).finally(() => setIsLoading(false));
         } else {
@@ -167,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("sgm_setup_complete");
     setToken(null);
     setUser(null);
+    userRef.current = null;
     setAuthError(null);
   }, []);
 

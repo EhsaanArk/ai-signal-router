@@ -118,7 +118,7 @@ jobs:
           TEST_USER_PASSWORD: ${{ secrets.STAGING_TEST_USER_PASSWORD }}
         run: |
           set +e
-          cd tests/e2e && pytest test_api_smoke.py test_api_regression.py -v --tb=short --junitxml=../../smoke-results.xml -o addopts="" -o asyncio_mode=auto 2>&1 | tee ../../smoke-output.txt && cd ../..
+          cd tests/e2e && python -m pytest test_api_smoke.py test_api_regression.py -v --tb=short --junitxml=../../smoke-results.xml -o addopts="" -o asyncio_mode=auto --rootdir=. -c /dev/null 2>&1 | tee ../../smoke-output.txt && cd ../..
           EXIT_CODE=$?
           set -e
 
@@ -175,7 +175,7 @@ jobs:
           TEST_USER_PASSWORD: ${{ secrets.STAGING_TEST_USER_PASSWORD }}
         run: |
           set +e
-          cd tests/e2e && pytest test_ui_flows.py test_ui_interactions.py -v --tb=short --junitxml=../../e2e-results.xml -o addopts="" -o asyncio_mode=auto 2>&1 | tee ../../e2e-output.txt && cd ../..
+          cd tests/e2e && python -m pytest test_ui_flows.py test_ui_interactions.py -v --tb=short --junitxml=../../e2e-results.xml -o addopts="" -o asyncio_mode=auto --rootdir=. -c /dev/null 2>&1 | tee ../../e2e-output.txt && cd ../..
           EXIT_CODE=$?
           set -e
 
@@ -202,12 +202,74 @@ jobs:
             test-screenshots/
 
   # ---------------------------------------------------------------------------
-  # Step 4: QA Guardian — Claude Code CLI
+  # Step 4: Pipeline smoke tests (real Telegram signals)
+  # ---------------------------------------------------------------------------
+  pipeline:
+    name: Pipeline smoke tests
+    runs-on: ubuntu-latest
+    needs: [health-check, api-smoke]
+    if: needs.health-check.outputs.health_status == 'pass'
+    outputs:
+      result: ${{ steps.pipeline.outputs.result }}
+      passed: ${{ steps.pipeline.outputs.passed }}
+      total: ${{ steps.pipeline.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install -r requirements-e2e.txt
+
+      - name: Run pipeline smoke tests
+        id: pipeline
+        env:
+          STAGING_API_URL: ${{ env.STAGING_API_URL }}
+          TEST_USER_EMAIL: ${{ secrets.STAGING_TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.STAGING_TEST_USER_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_TEST_CHAT_ID: "-1003819954354"
+          PIPELINE_TEST_ACCOUNT_EMAIL: "ehsaan.private@gmail.com"
+        run: |
+          set +e
+          cd tests/e2e
+          python3 -m pytest test_pipeline_smoke.py -v --tb=short --junitxml=../../pipeline-results.xml -o addopts="" -o asyncio_mode=auto --rootdir=. -c /dev/null 2>&1 | tee ../../pipeline-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          cd ../..
+          echo "Pipeline tests exit code: $EXIT_CODE"
+          set -e
+
+          PASSED="$(grep -c 'PASSED' pipeline-output.txt 2>/dev/null || printf '0')"
+          FAILED="$(grep -c 'FAILED' pipeline-output.txt 2>/dev/null || printf '0')"
+          TOTAL=$((PASSED + FAILED))
+
+          printf 'passed=%s\n' "$PASSED" >> "$GITHUB_OUTPUT"
+          printf 'total=%s\n' "$TOTAL" >> "$GITHUB_OUTPUT"
+
+          if [ "$EXIT_CODE" = "0" ]; then
+            printf 'result=pass\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'result=fail\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-test-results
+          path: |
+            pipeline-results.xml
+            pipeline-output.txt
+
+  # ---------------------------------------------------------------------------
+  # Step 5: QA Guardian — Claude Code CLI
   # ---------------------------------------------------------------------------
   qa-guardian:
     name: QA Guardian (Deploy Confidence Score)
     runs-on: ubuntu-latest
-    needs: [health-check, api-smoke, e2e]
+    needs: [health-check, api-smoke, e2e, pipeline]
     if: always()
     steps:
       - uses: actions/checkout@v4

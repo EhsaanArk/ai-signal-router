@@ -18,6 +18,7 @@ from jwt import InvalidTokenError
 from pydantic_settings import BaseSettings
 from slowapi import Limiter
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import UserModel
@@ -369,6 +370,60 @@ async def get_current_user(
                 background_tasks.add_task(
                     _send_welcome_bg, settings.RESEND_API_KEY, email, settings.FRONTEND_URL
                 )
+        except IntegrityError:
+            # Email already exists with a different UUID — this happens when a
+            # user registered via /register (local UUID) then logs in via
+            # Supabase (different UUID). Look up the existing row by email
+            # and return it directly, bypassing the normal user_row flow.
+            await db.rollback()
+            email = sb_user_data.user.email
+            result = await db.execute(
+                select(UserModel).where(UserModel.email == email)
+            )
+            user_row = result.scalar_one_or_none()
+            if user_row is None:
+                logger.error("Auto-create conflict but no row for email %s", email)
+                raise credentials_exception
+
+            logger.info(
+                "Supabase UUID %s matched existing user %s (email=%s) via email fallback",
+                user_id, user_row.id, user_row.email,
+            )
+
+            # Build User and return immediately — skip the normal flow below
+            # which may fail due to session state after rollback
+            user = User(
+                id=user_row.id,
+                email=user_row.email,
+                password_hash=user_row.password_hash,
+                subscription_tier=SubscriptionTier(user_row.subscription_tier),
+                is_admin=getattr(user_row, "is_admin", False),
+                is_disabled=getattr(user_row, "is_disabled", False),
+                email_verified=getattr(user_row, "email_verified", False),
+                accepted_tos_version=getattr(user_row, "accepted_tos_version", None),
+                accepted_risk_waiver=getattr(user_row, "accepted_risk_waiver", False),
+                created_at=user_row.created_at,
+            )
+            if user.is_disabled:
+                raise AuthorizationError("Account is disabled")
+            # Cache under Supabase UUID so next request hits cache
+            if cache:
+                try:
+                    cache_data = json.dumps({
+                        "id": str(user.id),
+                        "email": user.email,
+                        "subscription_tier": user.subscription_tier.value,
+                        "is_admin": user.is_admin,
+                        "is_disabled": user.is_disabled,
+                        "email_verified": user.email_verified,
+                        "accepted_tos_version": user.accepted_tos_version,
+                        "accepted_risk_waiver": user.accepted_risk_waiver,
+                        "created_at": user.created_at.isoformat() if user.created_at else "",
+                    })
+                    await cache.set(f"user:{user_id}", cache_data, ex=_USER_CACHE_TTL)
+                except Exception:
+                    pass
+            return user
         except Exception as exc:
             logger.error("Failed to auto-create user %s: %s", user_id, exc)
             raise credentials_exception from exc
