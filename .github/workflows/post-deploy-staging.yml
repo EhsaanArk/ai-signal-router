@@ -235,8 +235,11 @@ jobs:
           PIPELINE_TEST_ACCOUNT_EMAIL: "ehsaan.private@gmail.com"
         run: |
           set +e
-          cd tests/e2e && python -m pytest test_pipeline_smoke.py -v --tb=short --junitxml=../../pipeline-results.xml -o addopts="" -o asyncio_mode=auto --rootdir=. -c /dev/null 2>&1 | tee ../../pipeline-output.txt && cd ../..
-          EXIT_CODE=$?
+          cd tests/e2e
+          python3 -m pytest test_pipeline_smoke.py -v --tb=short --junitxml=../../pipeline-results.xml -o addopts="" -o asyncio_mode=auto --rootdir=. -c /dev/null 2>&1 | tee ../../pipeline-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          cd ../..
+          echo "Pipeline tests exit code: $EXIT_CODE"
           set -e
 
           PASSED="$(grep -c 'PASSED' pipeline-output.txt 2>/dev/null || printf '0')"
