@@ -21,8 +21,8 @@ from src.api.routes.auth import (  # noqa: F401
     pwd_context,
 )
 from src.api.routes.telegram import (  # noqa: F401
-    _create_telegram_bot_link_token,
-    _decode_telegram_bot_link_token,
+    _create_bot_link_token,
+    _resolve_bot_link_token,
 )
 from src.api.routes.routing_rules import (  # noqa: F401
     _check_tier_limit,

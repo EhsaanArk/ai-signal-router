@@ -155,42 +155,58 @@ class TestWebhookAuth:
 
 
 class TestAccountLinking:
-    """Test /start with deep-link tokens."""
+    """Test /start with Redis-based short link tokens."""
 
-    def test_valid_link_token_decoded(self):
-        """A valid JWT link token should decode to the correct user_id."""
-        from src.api.routes.telegram import _decode_telegram_bot_link_token
-        from src.api.deps import Settings
+    @pytest.mark.asyncio
+    async def test_valid_link_token_roundtrip(self):
+        """Create a token, then resolve it — should return the correct user_id."""
+        from src.api.routes.telegram import _create_bot_link_token, _resolve_bot_link_token
 
-        settings = Settings(TELEGRAM_BOT_LINK_SECRET=_LINK_SECRET)
-        token = _make_link_token()
-        result = _decode_telegram_bot_link_token(token, settings)
+        cache = _InMemoryCache()
+        token = await _create_bot_link_token(_TEST_USER_ID, cache)
+        assert len(token) <= 64, "Token must fit Telegram's 64-char deep-link limit"
+        result = await _resolve_bot_link_token(token, cache)
         assert result == _TEST_USER_ID
 
-    def test_expired_token_returns_none(self):
-        """An expired JWT link token should return None."""
-        from src.api.routes.telegram import _decode_telegram_bot_link_token
-        from src.api.deps import Settings
+    @pytest.mark.asyncio
+    async def test_token_is_one_time_use(self):
+        """After resolving once, the same token should return None (consumed)."""
+        from src.api.routes.telegram import _create_bot_link_token, _resolve_bot_link_token
 
-        settings = Settings(TELEGRAM_BOT_LINK_SECRET=_LINK_SECRET)
-        token = _make_link_token(expired=True)
-        result = _decode_telegram_bot_link_token(token, settings)
+        cache = _InMemoryCache()
+        token = await _create_bot_link_token(_TEST_USER_ID, cache)
+        first = await _resolve_bot_link_token(token, cache)
+        assert first == _TEST_USER_ID
+        second = await _resolve_bot_link_token(token, cache)
+        assert second is None
+
+    @pytest.mark.asyncio
+    async def test_unknown_token_returns_none(self):
+        """A token that was never created should return None."""
+        from src.api.routes.telegram import _resolve_bot_link_token
+
+        cache = _InMemoryCache()
+        result = await _resolve_bot_link_token("nonexistent_token", cache)
         assert result is None
 
-    def test_wrong_purpose_returns_none(self):
-        """A token with wrong purpose should return None."""
-        from src.api.routes.telegram import _decode_telegram_bot_link_token
-        from src.api.deps import Settings
 
-        settings = Settings(TELEGRAM_BOT_LINK_SECRET=_LINK_SECRET)
-        now = datetime.now(timezone.utc)
-        token = jwt.encode(
-            {"sub": str(_TEST_USER_ID), "purpose": "wrong", "iat": int(now.timestamp()), "exp": int((now + timedelta(minutes=30)).timestamp())},
-            _LINK_SECRET,
-            algorithm="HS256",
-        )
-        result = _decode_telegram_bot_link_token(token, settings)
-        assert result is None
+class _InMemoryCache:
+    """Minimal in-memory cache for testing (matches CachePort protocol)."""
+
+    def __init__(self):
+        self._store: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self._store.get(key)
+
+    async def set(self, key: str, value: str, ttl_seconds: int | None = None) -> None:
+        self._store[key] = value
+
+    async def delete(self, key: str) -> None:
+        self._store.pop(key, None)
+
+    async def getdel(self, key: str) -> str | None:
+        return self._store.pop(key, None)
 
 
 class TestBotHelpers:
