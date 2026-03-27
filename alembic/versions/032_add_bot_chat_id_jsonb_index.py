@@ -1,13 +1,13 @@
 """Add functional indexes on notification_preferences for bot lookups.
 
-Revision ID: 031
-Revises: 030
+Revision ID: 032
+Revises: 031
 """
 
 from alembic import op
 
-revision = "031"
-down_revision = "030"
+revision = "032"
+down_revision = "031"
 branch_labels = None
 depends_on = None
 
