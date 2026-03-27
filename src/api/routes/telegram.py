@@ -743,6 +743,7 @@ async def _handle_start(
                 ))
                 logger.info("Auto-created bot routing rule for user %s", user_id)
 
+    await db.commit()
     logger.info("Telegram bot linked for user %s, chat_id=%s", user_id, chat_id)
     await bot.send_message(
         chat_id,
@@ -796,6 +797,7 @@ async def _handle_unlink(chat_id: int, bot, db: AsyncSession) -> dict:
     prefs.pop("telegram_bot_chat_id", None)
     prefs.pop("telegram_user_id", None)
     user_row.notification_preferences = prefs
+    await db.commit()
 
     logger.info("Telegram bot unlinked for user %s", user_row.id)
     await bot.send_message(chat_id, "Account unlinked. You can re-link anytime from the dashboard.")
