@@ -78,18 +78,13 @@ const router = createBrowserRouter([
           ] : []),
           { path: "/admin/settings", element: <AdminRoute><AdminSettingsPage /></AdminRoute> },
           ...(marketplaceEnabled ? [
+            { path: "/marketplace", element: <MarketplacePage /> },
             { path: "/dashboard/subscriptions", element: <MarketplaceSubscriptionsPage /> },
           ] : []),
         ],
       },
     ],
   },
-  ...(marketplaceEnabled ? [{
-    element: <PublicLayout />,
-    children: [
-      { path: "/marketplace", element: <MarketplacePage /> },
-    ],
-  }] : []),
   { path: "*", element: <NotFound /> },
 ]);
 
