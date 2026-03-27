@@ -5,16 +5,16 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
-import jwt
-from jwt import InvalidTokenError
 from sqlalchemy import BigInteger, cast, func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 import sentry_sdk
 
@@ -68,8 +68,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
-_BOT_LINK_PURPOSE = "telegram_bot_link"
-_BOT_LINK_EXP_MINUTES = 30
+_BOT_LINK_PREFIX = "bot_link:"
+_BOT_LINK_TTL_SECONDS = 30 * 60  # 30 minutes
 
 
 # ============================================================================
@@ -468,39 +468,29 @@ async def list_channels(
 # ============================================================================
 
 
-def _create_telegram_bot_link_token(user_id: UUID, settings: Settings) -> str:
-    """Create a signed short-lived token for Telegram bot linking."""
-    if not settings.TELEGRAM_BOT_LINK_SECRET:
-        raise ExternalServiceError("Telegram bot link signing is not configured")
-    now = datetime.now(timezone.utc)
-    payload = {
-        "sub": str(user_id),
-        "purpose": _BOT_LINK_PURPOSE,
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=_BOT_LINK_EXP_MINUTES)).timestamp()),
-    }
-    return jwt.encode(
-        payload,
-        settings.TELEGRAM_BOT_LINK_SECRET,
-        algorithm="HS256",
-    )
+async def _create_bot_link_token(user_id: UUID, cache) -> str:
+    """Create a short random token for Telegram bot deep-link account linking.
+
+    Telegram limits the ?start= parameter to 64 characters (A-Z, a-z, 0-9, _, -).
+    We generate a 22-char URL-safe token and store the mapping in Redis with a TTL.
+    """
+    token = secrets.token_urlsafe(16)  # 22 chars, well under 64-char limit
+    cache_key = f"{_BOT_LINK_PREFIX}{token}"
+    await cache.set(cache_key, str(user_id), ttl_seconds=_BOT_LINK_TTL_SECONDS)
+    return token
 
 
-def _decode_telegram_bot_link_token(token: str, settings: Settings) -> UUID | None:
-    """Decode and validate a Telegram bot link token."""
-    if not settings.TELEGRAM_BOT_LINK_SECRET:
+async def _resolve_bot_link_token(token: str, cache) -> UUID | None:
+    """Look up and consume a bot link token (one-time use via atomic GETDEL)."""
+    cache_key = f"{_BOT_LINK_PREFIX}{token}"
+    value = await cache.getdel(cache_key)
+    if value is None:
+        logger.warning("Telegram bot /start: token not found or expired")
         return None
     try:
-        payload = jwt.decode(
-            token,
-            settings.TELEGRAM_BOT_LINK_SECRET,
-            algorithms=["HS256"],
-            options={"require": ["sub", "purpose", "iat", "exp"]},
-        )
-        if payload.get("purpose") != _BOT_LINK_PURPOSE:
-            return None
-        return UUID(str(payload["sub"]))
-    except (InvalidTokenError, ValueError, TypeError):
+        return UUID(value)
+    except (ValueError, TypeError) as exc:
+        logger.warning("Telegram bot /start: invalid user_id in token — %s", exc)
         return None
 
 
@@ -527,15 +517,17 @@ async def _resolve_bot_username(bot_token: str) -> str:
 async def get_telegram_bot_link(
     current_user: Annotated[User, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
+    cache=Depends(get_cache),
 ) -> TelegramBotLinkResponse:
     """Return a deep link to start the SGM notification bot.
 
-    The link encodes the user's ID so the bot webhook can associate the
-    Telegram ``chat_id`` with their account.
+    Generates a short random token (≤64 chars for Telegram deep-link limit),
+    stores user_id mapping in Redis with 30-min TTL, and returns
+    https://t.me/<bot>?start=<token>.
     """
     if not settings.TELEGRAM_BOT_TOKEN:
         raise ExternalServiceError("Telegram bot notifications are not configured")
-    token = _create_telegram_bot_link_token(current_user.id, settings)
+    token = await _create_bot_link_token(current_user.id, cache)
     bot_username = await _resolve_bot_username(settings.TELEGRAM_BOT_TOKEN)
     return TelegramBotLinkResponse(
         bot_link=f"https://t.me/{bot_username}?start={token}",
@@ -639,7 +631,8 @@ async def telegram_bot_webhook(
 
     # --- Command routing ---
     if text.startswith("/start"):
-        return await _handle_start(text, chat_id, tg_user, bot, db, settings)
+        cache = request.app.state.cache
+        return await _handle_start(text, chat_id, tg_user, bot, db, settings, cache)
 
     if text.strip() == "/help":
         await bot.send_message(chat_id, _HELP_TEXT)
@@ -674,7 +667,7 @@ async def telegram_bot_webhook(
 
 
 async def _handle_start(
-    text: str, chat_id: int, tg_user, bot, db: AsyncSession, settings: Settings,
+    text: str, chat_id: int, tg_user, bot, db: AsyncSession, settings: Settings, cache,
 ) -> dict:
     """Handle /start with optional deep-link token for account linking."""
     parts = text.split(maxsplit=1)
@@ -683,7 +676,7 @@ async def _handle_start(
         return {"ok": True}
 
     token_part = parts[1].strip()
-    user_id = _decode_telegram_bot_link_token(token_part, settings)
+    user_id = await _resolve_bot_link_token(token_part, cache)
     if user_id is None:
         await bot.send_message(chat_id, "This link has expired or is invalid. Please generate a new one from the dashboard.")
         return {"ok": True}
@@ -705,10 +698,11 @@ async def _handle_start(
             )
             return {"ok": True}
 
-    prefs = user_row.notification_preferences or {}
+    prefs = dict(user_row.notification_preferences or {})
     prefs["telegram_bot_chat_id"] = chat_id
     prefs["telegram_user_id"] = tg_user.id if tg_user else None
     user_row.notification_preferences = prefs
+    flag_modified(user_row, "notification_preferences")
 
     # Auto-create bot routing rule if user has existing rules but none for bot_dm_
     if tg_user:
@@ -801,10 +795,11 @@ async def _handle_unlink(chat_id: int, bot, db: AsyncSession) -> dict:
         await bot.send_message(chat_id, "No linked account found.")
         return {"ok": True}
 
-    prefs = user_row.notification_preferences or {}
+    prefs = dict(user_row.notification_preferences or {})
     prefs.pop("telegram_bot_chat_id", None)
     prefs.pop("telegram_user_id", None)
     user_row.notification_preferences = prefs
+    flag_modified(user_row, "notification_preferences")
     await db.commit()
 
     logger.info("Telegram bot unlinked for user %s", user_row.id)
