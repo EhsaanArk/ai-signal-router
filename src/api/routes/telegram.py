@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 import jwt
 from jwt import InvalidTokenError
-from sqlalchemy import func, select, text as sa_text
+from sqlalchemy import BigInteger, cast, func, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sentry_sdk
@@ -545,12 +545,12 @@ async def get_telegram_bot_link(
 async def _get_user_by_bot_chat_id(db: AsyncSession, chat_id: int) -> UserModel | None:
     """Look up a user by their linked Telegram bot chat_id (JSONB query).
 
-    Telegram chat_id values are 64-bit integers — use as_bigint() to avoid
-    int32 overflow on CAST which causes a 500 for any chat_id > 2^31.
+    Telegram chat_id values are 64-bit integers — cast to BigInteger to avoid
+    int32 overflow which causes a 500 for any chat_id > 2^31.
     """
     result = await db.execute(
         select(UserModel).where(
-            UserModel.notification_preferences["telegram_bot_chat_id"].as_bigint() == chat_id
+            cast(UserModel.notification_preferences["telegram_bot_chat_id"], BigInteger) == chat_id
         )
     )
     return result.scalar_one_or_none()
@@ -559,12 +559,12 @@ async def _get_user_by_bot_chat_id(db: AsyncSession, chat_id: int) -> UserModel 
 async def _get_user_by_tg_user_id(db: AsyncSession, tg_user_id: int) -> UserModel | None:
     """Look up a user by their linked Telegram user ID (JSONB query).
 
-    Telegram user IDs are 64-bit integers — use as_bigint() to avoid
-    int32 overflow on CAST which causes a 500 for any user_id > 2^31.
+    Telegram user IDs are 64-bit integers — cast to BigInteger to avoid
+    int32 overflow which causes a 500 for any user_id > 2^31.
     """
     result = await db.execute(
         select(UserModel).where(
-            UserModel.notification_preferences["telegram_user_id"].as_bigint() == tg_user_id
+            cast(UserModel.notification_preferences["telegram_user_id"], BigInteger) == tg_user_id
         )
     )
     return result.scalar_one_or_none()
