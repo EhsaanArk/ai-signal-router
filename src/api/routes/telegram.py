@@ -543,20 +543,28 @@ async def get_telegram_bot_link(
 
 
 async def _get_user_by_bot_chat_id(db: AsyncSession, chat_id: int) -> UserModel | None:
-    """Look up a user by their linked Telegram bot chat_id (JSONB query)."""
+    """Look up a user by their linked Telegram bot chat_id (JSONB query).
+
+    Telegram chat_id values are 64-bit integers — use as_bigint() to avoid
+    int32 overflow on CAST which causes a 500 for any chat_id > 2^31.
+    """
     result = await db.execute(
         select(UserModel).where(
-            UserModel.notification_preferences["telegram_bot_chat_id"].as_integer() == chat_id
+            UserModel.notification_preferences["telegram_bot_chat_id"].as_bigint() == chat_id
         )
     )
     return result.scalar_one_or_none()
 
 
 async def _get_user_by_tg_user_id(db: AsyncSession, tg_user_id: int) -> UserModel | None:
-    """Look up a user by their linked Telegram user ID (JSONB query)."""
+    """Look up a user by their linked Telegram user ID (JSONB query).
+
+    Telegram user IDs are 64-bit integers — use as_bigint() to avoid
+    int32 overflow on CAST which causes a 500 for any user_id > 2^31.
+    """
     result = await db.execute(
         select(UserModel).where(
-            UserModel.notification_preferences["telegram_user_id"].as_integer() == tg_user_id
+            UserModel.notification_preferences["telegram_user_id"].as_bigint() == tg_user_id
         )
     )
     return result.scalar_one_or_none()

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4.0] - 2026-03-27
+
+### Fixed
+- Telegram bot commands (/start, /status, /unlink) crash with 500 for users with chat_id > 2^31 (int32 overflow on JSONB CAST)
+- Changed `.as_integer()` to `.as_bigint()` for both `telegram_bot_chat_id` and `telegram_user_id` JSONB queries
+
 ## [0.1.3.0] - 2026-03-26
 
 ### Added
