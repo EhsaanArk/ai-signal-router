@@ -9,6 +9,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -34,6 +45,10 @@ export function AdminUsersPage() {
   const [page, setPage] = useState(0);
   const updateUser = useAdminUpdateUser();
 
+  // Disable dialog state
+  const [disableDialogUser, setDisableDialogUser] = useState<{ id: string; email: string } | null>(null);
+  const [disconnectTelegram, setDisconnectTelegram] = useState(true);
+
   // Debounce search
   const [timer, setTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   function handleSearch(value: string) {
@@ -57,13 +72,33 @@ export function AdminUsersPage() {
     }
   }
 
-  async function handleToggleDisabled(userId: string, disabled: boolean) {
-    try {
-      await updateUser.mutateAsync({ userId, data: { is_disabled: disabled } });
-      toast.success(disabled ? "User disabled" : "User enabled");
-    } catch {
-      toast.error("Failed to update status");
+  function handleToggleDisabled(userId: string, disabled: boolean, email: string) {
+    if (disabled) {
+      setDisableDialogUser({ id: userId, email });
+      setDisconnectTelegram(true);
+    } else {
+      updateUser.mutateAsync({ userId, data: { is_disabled: false } })
+        .then(() => toast.success("User enabled"))
+        .catch(() => toast.error("Failed to enable user"));
     }
+  }
+
+  async function handleConfirmDisable() {
+    if (!disableDialogUser) return;
+    try {
+      await updateUser.mutateAsync({
+        userId: disableDialogUser.id,
+        data: { is_disabled: true, disconnect_telegram: disconnectTelegram },
+      });
+      toast.success(
+        disconnectTelegram
+          ? "User disabled and Telegram disconnected"
+          : "User disabled",
+      );
+    } catch {
+      toast.error("Failed to disable user");
+    }
+    setDisableDialogUser(null);
   }
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
@@ -149,7 +184,7 @@ export function AdminUsersPage() {
                   <TableCell onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                     <Switch
                       checked={!user.is_disabled}
-                      onCheckedChange={(v) => handleToggleDisabled(user.id, !v)}
+                      onCheckedChange={(v) => handleToggleDisabled(user.id, !v, user.email)}
                     />
                   </TableCell>
                   <TableCell className="text-xs text-center font-tabular">{user.rule_count}</TableCell>
@@ -183,6 +218,35 @@ export function AdminUsersPage() {
           </div>
         </div>
       )}
+
+      {/* Disable user confirmation dialog */}
+      <AlertDialog open={!!disableDialogUser} onOpenChange={(open) => { if (!open) setDisableDialogUser(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disable User</AlertDialogTitle>
+            <AlertDialogDescription>
+              Disable <span className="font-medium">{disableDialogUser?.email}</span>?
+              They will be banned from logging in.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex items-center gap-2 py-2">
+            <Checkbox
+              id="disconnect-tg"
+              checked={disconnectTelegram}
+              onCheckedChange={(v) => setDisconnectTelegram(!!v)}
+            />
+            <label htmlFor="disconnect-tg" className="text-sm cursor-pointer">
+              Also disconnect Telegram and unlink bot
+            </label>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={handleConfirmDisable}>
+              Disable User
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

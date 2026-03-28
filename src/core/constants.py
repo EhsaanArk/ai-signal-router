@@ -25,5 +25,11 @@ DNS_RESOLVER_POOL_MAX_WORKERS: int = 4
 # -- Terms of Service ------------------------------------------------
 CURRENT_TOS_VERSION: str = "2026-03-22"  # Update when ToS/Privacy changes
 
+# -- Beta lockdown ----------------------------------------------------
+ACCOUNT_DISABLED_MSG: str = (
+    "Thanks for being part of the beta program! "
+    "We are working towards the big launch — stay tuned!"
+)
+
 # -- Legacy -----------------------------------------------------------
 LEGACY_TOKEN_SCAN_LIMIT: int = 500
