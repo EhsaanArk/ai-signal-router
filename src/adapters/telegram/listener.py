@@ -330,8 +330,6 @@ if __name__ == "__main__":
     # Initialise Sentry for the listener process
     sentry_dsn = os.environ.get("SENTRY_DSN", "")
     if sentry_dsn:
-        import sentry_sdk
-
         local_mode_env = os.environ.get("LOCAL_MODE", "false").lower() == "true"
         sentry_env = os.environ.get(
             "SENTRY_ENVIRONMENT",
@@ -385,10 +383,9 @@ if __name__ == "__main__":
 
         # -- Resolve session mode -----------------------------------------------
         from src.adapters.db.session import get_engine
-        from src.adapters.db.models import TelegramSessionModel, RoutingRuleModel
+        from src.adapters.db.models import RoutingRuleModel
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession as SASession
-        from src.core.security import decrypt_session_auto
 
         engine = get_engine()
 
@@ -519,12 +516,6 @@ if __name__ == "__main__":
             # by the previous container (if any).  This detects session loss
             # caused by AuthKeyDuplicatedError during rolling deploys.
             if redis_url:
-                from src.adapters.redis.client import RedisCacheAdapter
-                import redis.asyncio as aioredis
-                from src.adapters.telegram.deploy_snapshot import (
-                    run_post_startup_check,
-                )
-
                 _check_redis = aioredis.from_url(redis_url, decode_responses=True)
                 _check_cache = RedisCacheAdapter(_check_redis)
                 try:

@@ -85,6 +85,19 @@ export function useAdminMarketplaceStats() {
   });
 }
 
+export interface AvailableChannel {
+  channel_id: string;
+  channel_name: string;
+}
+
+export function useAvailableChannels(enabled = true) {
+  return useQuery({
+    queryKey: ["admin-marketplace-available-channels"],
+    queryFn: () => adminFetch<AvailableChannel[]>("/admin/marketplace/available-channels"),
+    enabled,
+  });
+}
+
 export function useCreateProvider() {
   const queryClient = useQueryClient();
   return useMutation({

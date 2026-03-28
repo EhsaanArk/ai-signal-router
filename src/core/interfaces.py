@@ -111,6 +111,10 @@ class CachePort(Protocol):
         """Remove *key* from the cache."""
         ...
 
+    async def getdel(self, key: str) -> str | None:
+        """Atomically return and delete the cached value (Redis 6.2+ GETDEL)."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Session storage (encrypted Telegram session strings)

@@ -13,6 +13,7 @@ from src.adapters.db.models import (
     MarketplaceProviderModel,
     MarketplaceSubscriptionModel,
     RoutingRuleModel,
+    UserModel,
 )
 from src.api.deps import (
     get_admin_user,
@@ -97,6 +98,7 @@ class MySubscriptionItem(BaseModel):
     provider_name: str
     provider_asset_class: str
     routing_rule_id: UUID | None
+    destination_label: str | None = None
     is_active: bool
     created_at: str
 
@@ -291,10 +293,14 @@ async def my_subscriptions(
 ) -> list[MySubscriptionItem]:
     """List the current user's active marketplace subscriptions."""
     result = await db.execute(
-        select(MarketplaceSubscriptionModel, MarketplaceProviderModel)
+        select(MarketplaceSubscriptionModel, MarketplaceProviderModel, RoutingRuleModel.destination_label)
         .join(
             MarketplaceProviderModel,
             MarketplaceSubscriptionModel.provider_id == MarketplaceProviderModel.id,
+        )
+        .outerjoin(
+            RoutingRuleModel,
+            MarketplaceSubscriptionModel.routing_rule_id == RoutingRuleModel.id,
         )
         .where(
             MarketplaceSubscriptionModel.user_id == user.id,
@@ -311,16 +317,56 @@ async def my_subscriptions(
             provider_name=provider.name,
             provider_asset_class=provider.asset_class,
             routing_rule_id=sub.routing_rule_id,
+            destination_label=dest_label,
             is_active=sub.is_active,
             created_at=sub.created_at.isoformat() if sub.created_at else "",
         )
-        for sub, provider in rows
+        for sub, provider, dest_label in rows
     ]
 
 
 # ===========================================================================
 # Admin endpoints
 # ===========================================================================
+
+
+@marketplace_router.get("/api/admin/marketplace/available-channels")
+@limiter.limit("30/minute")
+async def admin_available_channels(
+    request: Request,
+    admin: Annotated[User, Depends(get_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[dict]:
+    """List Telegram channels from admin routing rules that aren't already marketplace providers."""
+    # Only show channels the admin account is connected to — if the admin
+    # hasn't joined a channel, the Listener can't receive signals from it.
+    admin_ids = select(UserModel.id).where(UserModel.is_admin.is_(True)).scalar_subquery()
+    channels_result = await db.execute(
+        select(
+            RoutingRuleModel.source_channel_id,
+            func.max(RoutingRuleModel.source_channel_name).label("name"),
+        )
+        .where(
+            RoutingRuleModel.user_id.in_(admin_ids),
+            RoutingRuleModel.is_active.is_(True),
+            RoutingRuleModel.is_marketplace_template.is_(False),
+            RoutingRuleModel.source_channel_id != "marketplace-template",
+        )
+        .group_by(RoutingRuleModel.source_channel_id)
+    )
+    all_channels = channels_result.all()
+
+    # Get already-registered provider channel IDs
+    existing_result = await db.execute(
+        select(MarketplaceProviderModel.telegram_channel_id)
+    )
+    existing_ids = {row[0] for row in existing_result.all()}
+
+    return [
+        {"channel_id": ch.source_channel_id, "channel_name": ch.name or ch.source_channel_id}
+        for ch in all_channels
+        if ch.source_channel_id not in existing_ids
+    ]
 
 
 @marketplace_router.post("/api/admin/marketplace/providers")

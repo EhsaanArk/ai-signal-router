@@ -27,7 +27,8 @@ import { getTierDisplayName, TIER_COMPARISON } from "@/lib/tier";
 import { cn } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { Switch } from "@/components/ui/switch";
-import { useNotificationPreferences, useUpdateNotificationPreferences, useTelegramBotLink } from "@/hooks/use-notifications";
+import { useNotificationPreferences, useUpdateNotificationPreferences } from "@/hooks/use-notifications";
+import { useBotLinking } from "@/hooks/use-bot-linking";
 import { toast } from "sonner";
 import type { MessageResponse } from "@/types/api";
 
@@ -280,13 +281,9 @@ function ChangePasswordCard() {
 }
 
 function NotificationsCard() {
-  const { user } = useAuth();
   const { data: prefs, isLoading } = useNotificationPreferences();
   const updatePrefs = useUpdateNotificationPreferences();
-  const { data: botLink, isLoading: botLinkLoading } = useTelegramBotLink();
-
-  const isFreeTier = user?.subscription_tier === "free";
-  const hasTelegramLinked = !!prefs?.telegram_bot_chat_id;
+  const { state: botState, isLinked: hasTelegramLinked, justLinked, connect, cancel } = useBotLinking();
 
   type NotifKey = "email_on_success" | "email_on_failure" | "email_on_disconnect" | "telegram_on_success" | "telegram_on_failure";
 
@@ -357,37 +354,59 @@ function NotificationsCard() {
         <div className="flex items-center gap-2 mb-1">
           <MessageCircle className="h-3 w-3 text-muted-foreground" />
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Telegram Bot</span>
-          {isFreeTier && (
-            <span className="text-[9px] bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded">Starter+</span>
-          )}
         </div>
 
-        {isFreeTier ? (
-          <p className="text-[10px] text-muted-foreground">
-            Telegram notifications coming soon to paid plans.
-          </p>
-        ) : !hasTelegramLinked ? (
+        {!hasTelegramLinked ? (
           <div className="space-y-2">
-            <p className="text-[10px] text-muted-foreground">
-              Connect the SageMaster notification bot to receive signal alerts in Telegram.
-            </p>
-            {botLink && !botLinkLoading && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                asChild
-              >
-                <a href={botLink.bot_link} target="_blank" rel="noopener noreferrer">
+            {botState === "waiting" ? (
+              <>
+                <div className="flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/5 p-2.5">
+                  <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                  <p className="text-[11px] text-blue-600 dark:text-blue-400">
+                    Waiting for you to press <strong>START</strong> in Telegram...
+                  </p>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Open the Telegram bot that just opened and press START. This page will update automatically.
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-[10px] text-muted-foreground"
+                  onClick={cancel}
+                >
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] text-muted-foreground">
+                  Connect the Sage Radar bot to receive signal alerts in Telegram.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={connect}
+                  disabled={botState === "connecting"}
+                >
                   <MessageCircle className="mr-1.5 h-3 w-3" />
-                  Connect Telegram Bot
+                  {botState === "connecting" ? "Generating link..." : "Connect Telegram Bot"}
                   <ExternalLink className="ml-1.5 h-2.5 w-2.5" />
-                </a>
-              </Button>
+                </Button>
+              </>
             )}
           </div>
         ) : (
           <>
+            {justLinked && (
+              <div className="flex items-center gap-2 rounded-md border border-green-500/20 bg-green-500/5 p-2.5 mb-2">
+                <div className="h-2 w-2 rounded-full bg-green-500" />
+                <p className="text-[11px] text-green-600 dark:text-green-400">
+                  Telegram bot linked! You can now receive signal notifications.
+                </p>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div>
                 <Label htmlFor="tg-notif-failure" className="text-xs">Telegram alert on failure</Label>

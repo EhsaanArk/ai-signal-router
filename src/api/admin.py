@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import case, exists, func, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
@@ -21,7 +21,7 @@ from src.adapters.db.models import (
     TelegramSessionModel,
     UserModel,
 )
-from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings, limiter
+from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings
 from src.core.exceptions import InputValidationError, ResourceNotFoundError
 from src.core.models import User
 
@@ -1283,8 +1283,6 @@ async def replay_signal(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ReplayResponse:
     """Re-parse a historical signal with the current parser config."""
-    import uuid as _uuid
-
     from src.adapters.openai import OpenAISignalParser
     from src.core.models import RawSignal
 

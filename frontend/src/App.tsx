@@ -16,6 +16,7 @@ const PrivacyPage = lazyRetry(() => import("./pages/privacy"));
 const OAuthCallbackPage = lazyRetry(() => import("./pages/oauth-callback"));
 const AcceptTermsPage = lazyRetry(() => import("./pages/accept-terms"));
 const DashboardPage = lazyRetry(() => import("./pages/dashboard"));
+const ConnectorsPage = lazyRetry(() => import("./pages/connectors"));
 const TelegramPage = lazyRetry(() => import("./pages/telegram"));
 const RoutingRulesPage = lazyRetry(() => import("./pages/routing-rules"));
 const RoutingRulesNewPage = lazyRetry(() => import("./pages/routing-rules-new"));
@@ -33,7 +34,6 @@ const AdminSettingsPage = lazyRetry(() => import("./pages/admin/settings"));
 const MarketplacePage = lazyRetry(() => import("./pages/marketplace"));
 const MarketplaceSubscriptionsPage = lazyRetry(() => import("./pages/marketplace-subscriptions"));
 const AdminMarketplacePage = lazyRetry(() => import("./pages/admin/marketplace"));
-const PublicLayout = lazyRetry(() => import("./components/layout/public-layout"));
 
 const marketplaceEnabled = import.meta.env.VITE_MARKETPLACE_ENABLED === "true";
 
@@ -61,6 +61,7 @@ const router = createBrowserRouter([
         element: <DashboardLayout />,
         children: [
           { path: "/", element: <DashboardPage /> },
+          { path: "/connectors", element: <ConnectorsPage /> },
           { path: "/telegram", element: <TelegramPage /> },
           { path: "/routing-rules", element: <RoutingRulesPage /> },
           { path: "/routing-rules/new", element: <RoutingRulesNewPage /> },
@@ -78,18 +79,13 @@ const router = createBrowserRouter([
           ] : []),
           { path: "/admin/settings", element: <AdminRoute><AdminSettingsPage /></AdminRoute> },
           ...(marketplaceEnabled ? [
+            { path: "/marketplace", element: <MarketplacePage /> },
             { path: "/dashboard/subscriptions", element: <MarketplaceSubscriptionsPage /> },
           ] : []),
         ],
       },
     ],
   },
-  ...(marketplaceEnabled ? [{
-    element: <PublicLayout />,
-    children: [
-      { path: "/marketplace", element: <MarketplacePage /> },
-    ],
-  }] : []),
   { path: "*", element: <NotFound /> },
 ]);
 

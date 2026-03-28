@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   Sheet,
   SheetContent,
@@ -79,7 +80,7 @@ export function SubscribeSheet({
       setSelectedRuleId(newRule.id);
       setShowInlineForm(false);
     } catch {
-      // Error handled by mutation error state
+      toast.error("Failed to create destination. Check the URL and try again.");
     }
   }
 
@@ -88,7 +89,7 @@ export function SubscribeSheet({
       <SheetContent side="bottom" className="rounded-t-xl max-h-[80vh] sm:max-w-lg sm:mx-auto">
         <SheetHeader>
           <SheetTitle className="text-lg font-bold">
-            Subscribe to{" "}
+            Follow{" "}
             <span className="text-primary">{provider?.name ?? "Provider"}</span>
           </SheetTitle>
           <SheetDescription>
@@ -170,11 +171,6 @@ export function SubscribeSheet({
                     )}
                   </Button>
                 </div>
-                {createRule.isError && (
-                  <p className="text-[10px] text-rose-400">
-                    Failed to create destination. Check the URL and try again.
-                  </p>
-                )}
               </div>
             ) : (
               <>
@@ -209,34 +205,38 @@ export function SubscribeSheet({
             </p>
           </div>
 
-          {/* Disclaimer */}
-          <ul className="space-y-2 text-xs text-muted-foreground list-disc pl-4">
-            <li>
-              Signals from this provider will be routed to your configured
-              destinations. You are responsible for any trades placed.
-            </li>
-            <li>
-              Past performance is not indicative of future results.
-              Statistics shown are computed by Sage Intelligence and may not
-              reflect real-time accuracy.
-            </li>
-            <li>
-              You can unsubscribe at any time. Existing open positions will
-              not be affected by unsubscribing.
-            </li>
-          </ul>
+          {/* Disclaimer — shown only after destination is selected */}
+          {selectedRuleId && (
+            <>
+              <ul className="space-y-2 text-xs text-muted-foreground list-disc pl-4">
+                <li>
+                  Signals from this provider will be routed to your configured
+                  destinations. You are responsible for any trades placed.
+                </li>
+                <li>
+                  Past performance is not indicative of future results.
+                  Statistics shown are computed by Sage Intelligence and may not
+                  reflect real-time accuracy.
+                </li>
+                <li>
+                  You can unsubscribe at any time. Existing open positions will
+                  not be affected by unsubscribing.
+                </li>
+              </ul>
 
-          <label className="flex items-start gap-2 cursor-pointer pt-2">
-            <Checkbox
-              checked={accepted}
-              onCheckedChange={(v) => setAccepted(v === true)}
-              className="mt-0.5"
-            />
-            <span className="text-xs leading-relaxed">
-              I understand and accept the risks of subscribing to third-party
-              signal providers.
-            </span>
-          </label>
+              <label className="flex items-start gap-2 cursor-pointer pt-2">
+                <Checkbox
+                  checked={accepted}
+                  onCheckedChange={(v) => setAccepted(v === true)}
+                  className="mt-0.5"
+                />
+                <span className="text-xs leading-relaxed">
+                  I understand and accept the risks of following third-party
+                  signal providers.
+                </span>
+              </label>
+            </>
+          )}
         </div>
 
         <SheetFooter className="flex-row gap-2 px-4 pb-6 sm:pb-4">
@@ -255,7 +255,7 @@ export function SubscribeSheet({
             disabled={!accepted || !selectedRuleId || isLoading}
             onClick={() => provider && onConfirm(provider.id, selectedRuleId)}
           >
-            {isLoading ? "Subscribing..." : "Confirm"}
+            {isLoading ? "Following..." : "Follow"}
           </Button>
         </SheetFooter>
       </SheetContent>

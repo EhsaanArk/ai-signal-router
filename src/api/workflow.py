@@ -101,7 +101,7 @@ def _build_routing_rule(rule_row: RoutingRuleModel) -> RoutingRule:
 async def _process_single_rule(rule_row: RoutingRuleModel, raw_signal: RawSignal, parsed: ParsedSignal, dispatcher: WebhookDispatcher) -> tuple[DispatchResult, dict]:
     from src.core.mapper import _signal_action, apply_symbol_mapping, check_asset_class_mismatch, check_template_symbol_mismatch
     rule = _build_routing_rule(rule_row)
-    base_log = dict(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, routing_rule_id=rule.id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), source_type="telegram")
+    base_log = dict(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, routing_rule_id=rule.id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), source_type=raw_signal.source_type)
     if rule.keyword_blacklist:
         raw_lower = raw_signal.raw_message.lower()
         matched_kw = next((kw for kw in rule.keyword_blacklist if kw.lower() in raw_lower), None)
@@ -295,14 +295,14 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
         except Exception as exc:
             span.record_exception(exc)
             logger.error("Signal parsing failed: %s", exc)
-            db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, status="failed", error_message=f"Parse error: {exc}", source_type="telegram"))
+            db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, status="failed", error_message=f"Parse error: {exc}", source_type=raw_signal.source_type))
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Failed to parse signal: {exc}") from exc
     if not parsed.is_valid_signal:
-        db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), status="ignored", error_message=parsed.ignore_reason, source_type="telegram"))
+        db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), status="ignored", error_message=parsed.ignore_reason, source_type=raw_signal.source_type))
         return [DispatchResult(routing_rule_id=None, status="ignored", error_message=parsed.ignore_reason)]
     if settings.TWO_STAGE_DISPATCH:
         dispatch_queue = request.app.state.dispatch_queue
-        meta = RawSignalMeta(user_id=raw_signal.user_id, channel_id=raw_signal.channel_id, message_id=raw_signal.message_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, timestamp=raw_signal.timestamp)
+        meta = RawSignalMeta(user_id=raw_signal.user_id, channel_id=raw_signal.channel_id, message_id=raw_signal.message_id, reply_to_msg_id=raw_signal.reply_to_msg_id, raw_message=raw_signal.raw_message, source_type=raw_signal.source_type, timestamp=raw_signal.timestamp)
         queued_results: list[DispatchResult] = []
         for rule_row in rules:
             job = DispatchJob(parsed_signal=parsed, routing_rule_id=rule_row.id, raw_signal_meta=meta)
@@ -322,7 +322,7 @@ async def process_signal(raw_signal: RawSignal, request: Request, db: Annotated[
             sentry_sdk.capture_exception(outcome)
             dr = DispatchResult(routing_rule_id=rules[i].id, status="failed", error_message=str(outcome))
             results.append(dr)
-            db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, routing_rule_id=rules[i].id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), status="failed", error_message=str(outcome), source_type="telegram"))
+            db.add(SignalLogModel(user_id=raw_signal.user_id, message_id=raw_signal.message_id, channel_id=raw_signal.channel_id, reply_to_msg_id=raw_signal.reply_to_msg_id, routing_rule_id=rules[i].id, raw_message=raw_signal.raw_message, parsed_data=parsed.model_dump(), status="failed", error_message=str(outcome), source_type=raw_signal.source_type))
         else:
             dispatch_result, log_kwargs = outcome
             results.append(dispatch_result)
@@ -358,7 +358,7 @@ async def dispatch_signal(job: DispatchJob, request: Request, db: Annotated[Asyn
     rule_row = (await db.execute(select(RoutingRuleModel).where(RoutingRuleModel.id == job.routing_rule_id))).scalar_one_or_none()
     if rule_row is None or not rule_row.is_active:
         return DispatchResult(routing_rule_id=job.routing_rule_id, status="ignored", error_message="Rule no longer active")
-    raw_signal = RawSignal(user_id=meta.user_id, channel_id=meta.channel_id, raw_message=meta.raw_message, message_id=meta.message_id, reply_to_msg_id=meta.reply_to_msg_id, timestamp=meta.timestamp)
+    raw_signal = RawSignal(user_id=meta.user_id, channel_id=meta.channel_id, raw_message=meta.raw_message, message_id=meta.message_id, reply_to_msg_id=meta.reply_to_msg_id, source_type=meta.source_type, timestamp=meta.timestamp)
     dispatch_result, log_kwargs = await _process_single_rule(rule_row, raw_signal, job.parsed_signal, dispatcher)
     log_kwargs["source_type"] = job.source_type
     db.add(SignalLogModel(**log_kwargs))

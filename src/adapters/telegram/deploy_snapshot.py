@@ -51,8 +51,8 @@ def build_snapshot(
         Map of user_id → set of channel IDs.
     """
     connected = sum(
-        1 for l in listeners.values()
-        if getattr(l, "is_connected", False)
+        1 for lis in listeners.values()
+        if getattr(lis, "is_connected", False)
     )
     total_channels = sum(len(ch) for ch in monitored_channels.values())
 

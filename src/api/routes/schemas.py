@@ -236,10 +236,44 @@ class TelegramBotLinkResponse(BaseModel):
     bot_link: str
 
 
+class TelegramUser(BaseModel):
+    """Telegram user object from Bot API updates."""
+    id: int
+    first_name: str = ""
+    username: str | None = None
+
+
+class TelegramChat(BaseModel):
+    """Telegram chat object from Bot API updates."""
+    id: int
+    type: str = "private"
+
+
+class TelegramMessage(BaseModel):
+    """Telegram message object from Bot API updates."""
+    message_id: int
+    chat: TelegramChat
+    from_user: TelegramUser | None = Field(None, alias="from")
+    text: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class TelegramCallbackQuery(BaseModel):
+    """Telegram callback query from inline keyboard button press."""
+    id: str
+    from_user: TelegramUser = Field(..., alias="from")
+    data: str | None = None
+    message: TelegramMessage | None = None
+
+    model_config = {"populate_by_name": True}
+
+
 class TelegramBotUpdate(BaseModel):
-    """Minimal Telegram Bot update payload for /start command."""
+    """Typed Telegram Bot API update payload."""
     update_id: int
-    message: dict | None = None
+    message: TelegramMessage | None = None
+    callback_query: TelegramCallbackQuery | None = None
 
 
 # --- Parse Preview ----------------------------------------------------------

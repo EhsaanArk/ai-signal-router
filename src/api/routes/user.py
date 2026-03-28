@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from src.adapters.db.models import SignalLogModel, UserModel
 from src.api.deps import (
@@ -176,9 +177,10 @@ async def update_notification_preferences(
     )
     user_row = result.scalar_one()
 
-    current_prefs = user_row.notification_preferences or {}
+    current_prefs = dict(user_row.notification_preferences or {})
     updates = body.model_dump(exclude_none=True)
     current_prefs.update(updates)
     user_row.notification_preferences = current_prefs
+    flag_modified(user_row, "notification_preferences")
 
     return NotificationPreferencesResponse(**current_prefs)
