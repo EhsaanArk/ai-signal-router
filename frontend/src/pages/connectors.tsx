@@ -25,10 +25,9 @@ function BotCard() {
     return (
       <Card>
         <CardContent className="p-6 space-y-4">
-          <Skeleton className="h-10 w-10 rounded-lg" />
+          <Skeleton className="h-8 w-8" />
           <Skeleton className="h-5 w-32" />
           <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-3/4" />
           <Skeleton className="h-8 w-40" />
         </CardContent>
       </Card>
@@ -36,33 +35,31 @@ function BotCard() {
   }
 
   return (
-    <Card className="relative overflow-hidden">
+    <Card className="relative overflow-hidden border-primary/30 bg-primary/[0.02] dark:bg-primary/[0.04]">
+      {/* Recommended indicator */}
+      <div className="absolute top-0 left-0 right-0 h-0.5 bg-primary" />
       <CardHeader className="pb-2 pt-5 px-5">
         <div className="flex items-center justify-between">
-          <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-            <Bot className="h-5 w-5 text-blue-500" />
-          </div>
-          <span className="text-[9px] font-semibold bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded-full uppercase tracking-wider">
-            New
+          <Bot className="h-7 w-7 text-primary" />
+          <span className="text-[9px] font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded-full uppercase tracking-wider">
+            Recommended
           </span>
         </div>
         <CardTitle className="text-sm font-semibold mt-3">Telegram Bot</CardTitle>
-        <p className="text-[11px] text-muted-foreground">Vibe Trading</p>
+        <p className="text-[11px] text-muted-foreground">Vibe trade from Telegram</p>
       </CardHeader>
       <CardContent className="px-5 pb-5 space-y-3">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Send your own trade ideas as messages to our Telegram bot. Sage Intelligence parses your intent, shows a preview, and routes to your broker on confirm.
+          Message the bot with your trade idea. Sage Intelligence parses it, shows a preview, and routes to your broker on confirm.
         </p>
 
         <ul className="space-y-1.5">
           {[
             'Natural language — "buy gold long SL 2340"',
-            "AI-powered confirmation before dispatch",
-            "No Telegram account connection needed",
-            "Works from any Telegram client",
+            "AI confirmation before every dispatch",
           ].map((item) => (
             <li key={item} className="flex items-start gap-2 text-[11px] text-muted-foreground">
-              <span className="text-green-500 mt-0.5">✓</span>
+              <span className="text-primary mt-0.5 text-xs">+</span>
               {item}
             </li>
           ))}
@@ -89,19 +86,19 @@ function BotCard() {
               )}
             </div>
             <p className="text-[10px] text-muted-foreground">
-              Manage notification preferences in <a href="/settings" className="underline">Settings</a>.
+              Manage notifications in <a href="/settings" className="underline">Settings</a>.
             </p>
           </div>
         ) : state === "waiting" ? (
           <div className="space-y-2 pt-1">
-            <div className="flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/5 p-2.5">
-              <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-              <p className="text-[11px] text-blue-600 dark:text-blue-400">
+            <div className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 p-2.5">
+              <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+              <p className="text-[11px] text-primary">
                 Waiting for you to press <strong>START</strong> in Telegram...
               </p>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              Open the Telegram bot that just opened and press START. This page will update automatically.
+              Open the bot and press START. This page updates automatically.
             </p>
             <Button
               variant="ghost"
@@ -121,7 +118,6 @@ function BotCard() {
               </p>
             </div>
             <Button variant="outline" size="sm" className="h-7 text-xs" onClick={connect}>
-              <Bot className="mr-1.5 h-3 w-3" />
               Retry
             </Button>
           </div>
@@ -134,7 +130,6 @@ function BotCard() {
               </p>
             </div>
             <Button variant="outline" size="sm" className="h-7 text-xs" onClick={connect}>
-              <Bot className="mr-1.5 h-3 w-3" />
               Retry
             </Button>
           </div>
@@ -145,9 +140,8 @@ function BotCard() {
               <span className="text-[11px] text-muted-foreground">Not connected</span>
             </div>
             <Button
-              variant="default"
               size="sm"
-              className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700"
+              className="h-8 text-xs"
               onClick={connect}
             >
               <MessageCircle className="mr-1.5 h-3 w-3" />
@@ -169,10 +163,9 @@ function MtprotoCard() {
     return (
       <Card>
         <CardContent className="p-6 space-y-4">
-          <Skeleton className="h-10 w-10 rounded-lg" />
+          <Skeleton className="h-8 w-8" />
           <Skeleton className="h-5 w-32" />
           <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-3/4" />
           <Skeleton className="h-8 w-40" />
         </CardContent>
       </Card>
@@ -185,30 +178,26 @@ function MtprotoCard() {
     <Card className="relative overflow-hidden">
       <CardHeader className="pb-2 pt-5 px-5">
         <div className="flex items-center justify-between">
-          <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-            <Radio className="h-5 w-5 text-emerald-500" />
-          </div>
-          <span className="text-[9px] font-semibold bg-zinc-500/10 text-zinc-400 px-2 py-0.5 rounded-full uppercase tracking-wider">
-            Signal Copying
+          <Radio className="h-7 w-7 text-muted-foreground" />
+          <span className="text-[9px] font-semibold bg-muted text-muted-foreground px-2 py-0.5 rounded-full uppercase tracking-wider">
+            Advanced
           </span>
         </div>
         <CardTitle className="text-sm font-semibold mt-3">Direct Telegram</CardTitle>
-        <p className="text-[11px] text-muted-foreground">Auto-Copy from Channels</p>
+        <p className="text-[11px] text-muted-foreground">Auto-copy signals from channels</p>
       </CardHeader>
       <CardContent className="px-5 pb-5 space-y-3">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Connect your personal Telegram account to monitor signal channels. Signals are automatically parsed and routed to your broker in real-time.
+          Connect your Telegram account to monitor signal channels. Signals are parsed and routed to your broker automatically.
         </p>
 
         <ul className="space-y-1.5">
           {[
-            "Monitor unlimited Telegram channels",
-            "Automatic signal detection and parsing",
-            "Multi-destination routing with symbol mapping",
-            "Requires phone number verification",
+            "Monitor unlimited channels, multi-destination routing",
+            "Requires Telegram phone number verification",
           ].map((item) => (
             <li key={item} className="flex items-start gap-2 text-[11px] text-muted-foreground">
-              <span className="text-green-500 mt-0.5">✓</span>
+              <span className="text-muted-foreground/60 mt-0.5 text-xs">+</span>
               {item}
             </li>
           ))}
@@ -219,7 +208,7 @@ function MtprotoCard() {
           <div className="space-y-2 pt-1">
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 rounded-full bg-amber-500" />
-              <span className="text-[11px] text-amber-600 dark:text-amber-400">Connection status unavailable</span>
+              <span className="text-[11px] text-amber-600 dark:text-amber-400">Status unavailable</span>
             </div>
             <Button
               variant="outline"
@@ -227,7 +216,6 @@ function MtprotoCard() {
               className="h-8 text-xs"
               onClick={() => navigate("/telegram")}
             >
-              <Radio className="mr-1.5 h-3 w-3" />
               Manage Connection
             </Button>
           </div>
@@ -263,7 +251,6 @@ function MtprotoCard() {
               className="h-8 text-xs"
               onClick={() => navigate("/telegram")}
             >
-              <Radio className="mr-1.5 h-3 w-3" />
               Connect Telegram Account →
             </Button>
           </div>
@@ -281,7 +268,7 @@ export default function ConnectorsPage() {
       <div>
         <h1 className="text-lg font-semibold">Connectors</h1>
         <p className="text-sm text-muted-foreground">
-          Choose how you want to trade with Sage Radar AI
+          Two ways to trade — pick one or use both
         </p>
       </div>
 
