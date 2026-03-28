@@ -33,7 +33,6 @@ const AdminSettingsPage = lazyRetry(() => import("./pages/admin/settings"));
 const MarketplacePage = lazyRetry(() => import("./pages/marketplace"));
 const MarketplaceSubscriptionsPage = lazyRetry(() => import("./pages/marketplace-subscriptions"));
 const AdminMarketplacePage = lazyRetry(() => import("./pages/admin/marketplace"));
-const PublicLayout = lazyRetry(() => import("./components/layout/public-layout"));
 
 const marketplaceEnabled = import.meta.env.VITE_MARKETPLACE_ENABLED === "true";
 
