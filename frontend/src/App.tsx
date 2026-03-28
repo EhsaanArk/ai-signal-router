@@ -16,7 +16,6 @@ const PrivacyPage = lazyRetry(() => import("./pages/privacy"));
 const OAuthCallbackPage = lazyRetry(() => import("./pages/oauth-callback"));
 const AcceptTermsPage = lazyRetry(() => import("./pages/accept-terms"));
 const DashboardPage = lazyRetry(() => import("./pages/dashboard"));
-const ConnectorsPage = lazyRetry(() => import("./pages/connectors"));
 const TelegramPage = lazyRetry(() => import("./pages/telegram"));
 const RoutingRulesPage = lazyRetry(() => import("./pages/routing-rules"));
 const RoutingRulesNewPage = lazyRetry(() => import("./pages/routing-rules-new"));
@@ -61,7 +60,6 @@ const router = createBrowserRouter([
         element: <DashboardLayout />,
         children: [
           { path: "/", element: <DashboardPage /> },
-          { path: "/connectors", element: <ConnectorsPage /> },
           { path: "/telegram", element: <TelegramPage /> },
           { path: "/routing-rules", element: <RoutingRulesPage /> },
           { path: "/routing-rules/new", element: <RoutingRulesNewPage /> },
