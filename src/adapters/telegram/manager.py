@@ -291,6 +291,7 @@ class MultiUserListenerManager:
             except AuthKeyDuplicatedError as retry_exc:
                 await self._handle_auth_key_duplicated(
                     user_id, listener, "startup_flood_retry",
+                    lock_held=True,
                 )
                 _capture_user_exception(retry_exc, user_id)
                 return False
@@ -310,6 +311,7 @@ class MultiUserListenerManager:
             # session is permanently deactivated.
             await self._handle_auth_key_duplicated(
                 user_id, listener, "startup",
+                lock_held=True,
             )
             _capture_user_exception(exc, user_id)
             return False
@@ -468,6 +470,7 @@ class MultiUserListenerManager:
 
     async def _handle_auth_key_duplicated(
         self, user_id: UUID, listener: TelegramListener, context: str,
+        *, lock_held: bool = False,
     ) -> None:
         """Handle transient AuthKeyDuplicatedError with retry + escalation.
 
@@ -475,6 +478,13 @@ class MultiUserListenerManager:
         Telegram's side, then does a full restart from DB.  After
         ``MAX_AUTH_DUP_RETRIES`` consecutive failures the session is
         treated as truly broken and deactivated.
+
+        Parameters
+        ----------
+        lock_held:
+            True when the caller already holds the per-user lock (e.g.
+            startup path inside ``_start_listener_for_user``).  False
+            when called from the heartbeat where no lock is held.
         """
         dup_count = self._auth_dup_retries.get(user_id, 0) + 1
         self._auth_dup_retries[user_id] = dup_count
@@ -488,7 +498,10 @@ class MultiUserListenerManager:
             await self._deactivate_and_notify(
                 user_id, "auth_key_duplicated_permanent",
             )
-            await self._stop_listener_for_user(user_id)
+            if lock_held:
+                await self._stop_listener_for_user_inner(user_id)
+            else:
+                await self._stop_listener_for_user(user_id)
             self._auth_dup_retries.pop(user_id, None)
         else:
             logger.warning(
@@ -510,7 +523,10 @@ class MultiUserListenerManager:
             except Exception:
                 pass
             await asyncio.sleep(3)
-            await self._restart_listener_for_user_inner(user_id)
+            if lock_held:
+                await self._restart_listener_for_user_inner(user_id)
+            else:
+                await self._restart_listener_for_user(user_id)
 
     # ------------------------------------------------------------------
     # Internal: refresh loop (sessions, channels, heartbeat)
