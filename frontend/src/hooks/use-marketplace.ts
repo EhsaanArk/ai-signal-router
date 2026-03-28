@@ -20,6 +20,7 @@ interface MySubscriptionItem {
   provider_name: string;
   provider_asset_class: string;
   routing_rule_id: string | null;
+  destination_label: string | null;
   is_active: boolean;
   created_at: string;
 }
