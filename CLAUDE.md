@@ -115,7 +115,7 @@ For urgent production fixes:
 - Always run tests and linter before committing
 - PRs from `staging` → `main` should summarise all included changes
 - **NEVER merge PRs to `main` without explicit user approval** — GitHub branch protection enforces this (1 review required). Agents may CREATE staging→main PRs but must STOP and ask the user to review and approve. This is a hard rule — violating it risks deploying untested code to production where real money is at stake.
-- **After a staging→main merge**: merge `main` back into `staging` to keep histories in sync (`git checkout staging && git merge origin/main && git push`). Squash merges create new commit SHAs that cause divergence if this step is skipped.
+- **Do NOT merge `main` back into `staging`** after a staging→main merge — it is unnecessary and risks polluting staging history.
 
 ### Multi-Agent Collaboration
 When multiple Claude Code agents are working on this repo simultaneously:
