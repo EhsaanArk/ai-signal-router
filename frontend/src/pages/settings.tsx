@@ -287,7 +287,6 @@ function NotificationsCard() {
   const updatePrefs = useUpdateNotificationPreferences();
   const { isLoading: botLinkLoading, refetch: refetchBotLink } = useTelegramBotLink();
 
-  const isFreeTier = user?.subscription_tier === "free";
   const hasTelegramLinked = !!prefs?.telegram_bot_chat_id;
 
   // Stop polling and show success when link is detected
@@ -387,16 +386,9 @@ function NotificationsCard() {
         <div className="flex items-center gap-2 mb-1">
           <MessageCircle className="h-3 w-3 text-muted-foreground" />
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Telegram Bot</span>
-          {isFreeTier && (
-            <span className="text-[9px] bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded">Starter+</span>
-          )}
         </div>
 
-        {isFreeTier ? (
-          <p className="text-[10px] text-muted-foreground">
-            Telegram notifications coming soon to paid plans.
-          </p>
-        ) : !hasTelegramLinked ? (
+        {!hasTelegramLinked ? (
           <div className="space-y-2">
             {waitingForLink ? (
               <>
