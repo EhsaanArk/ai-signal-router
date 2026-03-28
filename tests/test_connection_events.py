@@ -133,7 +133,7 @@ class TestHandleAuthKeyDuplicated:
         user_id = uuid.uuid4()
         manager._listeners[user_id] = mock_listener
 
-        with patch.object(manager, "_restart_listener_for_user_inner", new_callable=AsyncMock) as restart:
+        with patch.object(manager, "_restart_listener_for_user", new_callable=AsyncMock) as restart:
             await manager._handle_auth_key_duplicated(
                 user_id, mock_listener, "reconnect",
             )
@@ -160,6 +160,38 @@ class TestHandleAuthKeyDuplicated:
         stop.assert_awaited_once_with(user_id)
         # Counter should be cleaned up
         assert user_id not in manager._auth_dup_retries
+
+    @pytest.mark.asyncio
+    async def test_lock_held_restart_uses_inner(self, manager, mock_listener):
+        """When lock_held=True (startup path), should call _inner variant."""
+        user_id = uuid.uuid4()
+        manager._listeners[user_id] = mock_listener
+
+        with patch.object(manager, "_restart_listener_for_user_inner", new_callable=AsyncMock) as restart_inner, \
+             patch.object(manager, "_restart_listener_for_user", new_callable=AsyncMock) as restart_outer:
+            await manager._handle_auth_key_duplicated(
+                user_id, mock_listener, "startup", lock_held=True,
+            )
+
+        restart_inner.assert_awaited_once_with(user_id)
+        restart_outer.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_lock_held_escalation_uses_inner_stop(self, manager, mock_listener):
+        """When lock_held=True and retries exhausted, should call _stop_inner."""
+        user_id = uuid.uuid4()
+        manager._listeners[user_id] = mock_listener
+        manager._auth_dup_retries[user_id] = MAX_AUTH_DUP_RETRIES
+
+        with patch.object(manager, "_deactivate_and_notify", new_callable=AsyncMock), \
+             patch.object(manager, "_stop_listener_for_user_inner", new_callable=AsyncMock) as stop_inner, \
+             patch.object(manager, "_stop_listener_for_user", new_callable=AsyncMock) as stop_outer:
+            await manager._handle_auth_key_duplicated(
+                user_id, mock_listener, "startup", lock_held=True,
+            )
+
+        stop_inner.assert_awaited_once_with(user_id)
+        stop_outer.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_counter_resets_on_successful_start(self, manager):
