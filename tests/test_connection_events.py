@@ -133,7 +133,7 @@ class TestHandleAuthKeyDuplicated:
         user_id = uuid.uuid4()
         manager._listeners[user_id] = mock_listener
 
-        with patch.object(manager, "_restart_listener_for_user", new_callable=AsyncMock) as restart:
+        with patch.object(manager, "_restart_listener_for_user_inner", new_callable=AsyncMock) as restart:
             await manager._handle_auth_key_duplicated(
                 user_id, mock_listener, "reconnect",
             )

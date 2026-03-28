@@ -777,8 +777,11 @@ class TestExpiredSessionDeactivation:
         manager._repo.deactivate_session.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @patch("src.adapters.telegram.manager.asyncio.sleep", new_callable=AsyncMock)
     @patch("src.adapters.telegram.manager.TelegramListener")
-    async def test_auth_key_duplicated_error_does_not_deactivate(self, MockListener):
+    async def test_auth_key_duplicated_error_does_not_deactivate(
+        self, MockListener, mock_sleep,
+    ):
         """AuthKeyDuplicatedError is transient — should NOT deactivate.
         It increments startup_failures for backoff retry, not permanent kill."""
         from telethon.errors import AuthKeyDuplicatedError
