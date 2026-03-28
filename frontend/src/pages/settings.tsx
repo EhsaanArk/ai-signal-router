@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AlertTriangle, Bell, Download, LogOut, Mail, Calendar, Shield, MessageCircle, ExternalLink, Trash2 } from "lucide-react";
 import {
   Card,
@@ -27,8 +27,7 @@ import { getTierDisplayName, TIER_COMPARISON } from "@/lib/tier";
 import { cn } from "@/lib/utils";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { Switch } from "@/components/ui/switch";
-import { useNotificationPreferences, useUpdateNotificationPreferences } from "@/hooks/use-notifications";
-import { useBotLinking } from "@/hooks/use-bot-linking";
+import { useNotificationPreferences, useUpdateNotificationPreferences, useTelegramBotLink } from "@/hooks/use-notifications";
 import { toast } from "sonner";
 import type { MessageResponse } from "@/types/api";
 
@@ -281,9 +280,38 @@ function ChangePasswordCard() {
 }
 
 function NotificationsCard() {
-  const { data: prefs, isLoading } = useNotificationPreferences();
+  const [waitingForLink, setWaitingForLink] = useState(false);
+  const [justLinked, setJustLinked] = useState(false);
+  const { data: prefs, isLoading } = useNotificationPreferences(waitingForLink);
   const updatePrefs = useUpdateNotificationPreferences();
-  const { state: botState, isLinked: hasTelegramLinked, justLinked, connect, cancel } = useBotLinking();
+  const { isLoading: botLinkLoading, refetch: refetchBotLink } = useTelegramBotLink();
+
+  const hasTelegramLinked = !!prefs?.telegram_bot_chat_id;
+
+  useEffect(() => {
+    if (waitingForLink && hasTelegramLinked) {
+      setWaitingForLink(false);
+      setJustLinked(true);
+      toast.success("Telegram bot linked successfully!");
+    }
+  }, [waitingForLink, hasTelegramLinked]);
+
+  useEffect(() => {
+    if (!waitingForLink) return;
+    const timer = setTimeout(() => {
+      setWaitingForLink(false);
+      toast.error("Link timed out. Please try again.");
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [waitingForLink]);
+
+  async function handleConnectClick() {
+    const result = await refetchBotLink();
+    if (result.data?.bot_link) {
+      window.open(result.data.bot_link, "_blank");
+      setWaitingForLink(true);
+    }
+  }
 
   type NotifKey = "email_on_success" | "email_on_failure" | "email_on_disconnect" | "telegram_on_success" | "telegram_on_failure";
 
@@ -358,7 +386,7 @@ function NotificationsCard() {
 
         {!hasTelegramLinked ? (
           <div className="space-y-2">
-            {botState === "waiting" ? (
+            {waitingForLink ? (
               <>
                 <div className="flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/5 p-2.5">
                   <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
@@ -373,7 +401,7 @@ function NotificationsCard() {
                   variant="ghost"
                   size="sm"
                   className="h-6 text-[10px] text-muted-foreground"
-                  onClick={cancel}
+                  onClick={() => setWaitingForLink(false)}
                 >
                   Cancel
                 </Button>
@@ -387,11 +415,11 @@ function NotificationsCard() {
                   variant="outline"
                   size="sm"
                   className="h-7 text-xs"
-                  onClick={connect}
-                  disabled={botState === "connecting"}
+                  onClick={handleConnectClick}
+                  disabled={botLinkLoading}
                 >
                   <MessageCircle className="mr-1.5 h-3 w-3" />
-                  {botState === "connecting" ? "Generating link..." : "Connect Telegram Bot"}
+                  {botLinkLoading ? "Generating link..." : "Connect Telegram Bot"}
                   <ExternalLink className="ml-1.5 h-2.5 w-2.5" />
                 </Button>
               </>

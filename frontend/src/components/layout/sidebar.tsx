@@ -7,7 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   LayoutDashboard,
-
+  MessageSquare,
   Radio,
   Route,
   ScrollText,
@@ -29,7 +29,6 @@ import { cn } from "@/lib/utils";
 /** Map route paths to their dynamic import functions for prefetching on hover */
 const routePrefetchMap: Record<string, () => Promise<unknown>> = {
   "/": () => import("../../pages/dashboard"),
-  "/connectors": () => import("../../pages/connectors"),
   "/telegram": () => import("../../pages/telegram"),
   "/routing-rules": () => import("../../pages/routing-rules"),
   "/logs": () => import("../../pages/logs"),
@@ -54,7 +53,7 @@ const marketplaceEnabled = import.meta.env.VITE_MARKETPLACE_ENABLED === "true";
 
 const baseNavItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/connectors", label: "Connectors", icon: Radio },
+  { path: "/telegram", label: "Telegram", icon: MessageSquare },
   { path: "/routing-rules", label: "Signal Routes", icon: Route },
 ];
 
