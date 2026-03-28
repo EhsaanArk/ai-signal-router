@@ -192,7 +192,7 @@ class MultiUserListenerManager:
         if self._listeners:
             logger.info("Stopping %d listener(s)...", len(self._listeners))
             await asyncio.gather(
-                *[l.stop() for l in self._listeners.values()],
+                *[lis.stop() for lis in self._listeners.values()],
                 return_exceptions=True,
             )
             self._listeners.clear()
@@ -209,8 +209,8 @@ class MultiUserListenerManager:
         return {
             "total_listeners": len(self._listeners),
             "connected_listeners": sum(
-                1 for l in self._listeners.values()
-                if l.is_connected
+                1 for lis in self._listeners.values()
+                if lis.is_connected
             ),
             "total_monitored_channels": sum(
                 len(ch) for ch in self._monitored_channels.values()

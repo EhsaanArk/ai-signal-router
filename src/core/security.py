@@ -17,7 +17,9 @@ import socket
 from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet
+
+from src.core.constants import DNS_RESOLVER_POOL_MAX_WORKERS, DNS_TIMEOUT_SECONDS
 
 _NONCE_SIZE = 12  # 96-bit nonce recommended for AES-GCM
 _ALLOWED_WEBHOOK_SCHEMES = {"http", "https"}
@@ -33,7 +35,6 @@ _BLOCKED_METADATA_IPS = {
     ipaddress.ip_address("169.254.169.254"),
     ipaddress.ip_address("100.100.100.200"),
 }
-from src.core.constants import DNS_RESOLVER_POOL_MAX_WORKERS, DNS_TIMEOUT_SECONDS
 
 _DNS_TIMEOUT_SECONDS = DNS_TIMEOUT_SECONDS
 _DNS_RESOLVER_POOL = ThreadPoolExecutor(

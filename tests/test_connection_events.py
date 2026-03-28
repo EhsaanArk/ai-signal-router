@@ -105,6 +105,7 @@ def manager():
     mgr._failure_counts = {}
     mgr._startup_failures = {}
     mgr._auth_dup_retries = {}
+    mgr._user_locks = {}
     mgr._heartbeat_count = 0
     mgr._refresh_task = None
     mgr._running = False

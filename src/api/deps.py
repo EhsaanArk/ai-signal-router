@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt import InvalidTokenError
@@ -29,6 +29,7 @@ from src.core.exceptions import AuthenticationError, AuthorizationError
 from src.core.models import SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Rate limiter

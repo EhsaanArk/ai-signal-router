@@ -4,15 +4,14 @@ import asyncio
 import hmac
 import json
 import logging
-import os
 import secrets
 import uuid as _uuid
-from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import BigInteger, cast, func, select, text as sa_text
+from sqlalchemy import BigInteger, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -26,13 +25,11 @@ from src.adapters.db.models import (
 )
 from src.adapters.openai import OpenAISignalParser
 from src.adapters.telegram.notifier import TelegramNotifier, _escape_md
-from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import (
     Settings,
     get_cache,
     get_current_user,
     get_db,
-    get_dispatcher,
     get_session_store,
     get_settings,
 )
@@ -47,9 +44,7 @@ from src.core.models import (
     DispatchResult,
     ParsedSignal,
     RawSignal,
-    RoutingRule,
     User,
-    normalize_enabled_actions,
 )
 
 from src.api.routes.schemas import (
@@ -63,6 +58,9 @@ from src.api.routes.schemas import (
     VerifyCodeRequest,
     VerifyCodeResponse,
 )
+
+if TYPE_CHECKING:
+    from src.adapters.telegram import TelegramAuth
 
 logger = logging.getLogger(__name__)
 
