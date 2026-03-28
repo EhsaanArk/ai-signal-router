@@ -38,7 +38,7 @@ export function useAdminUpdateUser() {
       data,
     }: {
       userId: string;
-      data: { subscription_tier?: string; is_disabled?: boolean };
+      data: { subscription_tier?: string; is_disabled?: boolean; disconnect_telegram?: boolean };
     }) =>
       apiFetch<AdminUserSummary>(`/admin/users/${userId}`, {
         method: "PATCH",
