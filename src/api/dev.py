@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.webhook import WebhookDispatcher
 from src.api.deps import Settings, get_db, get_dispatcher, get_settings
-from src.core.models import DispatchResult, ParsedSignal, RawSignal
+from src.core.models import DispatchResult, RawSignal
 
 logger = logging.getLogger(__name__)
 
