@@ -105,6 +105,29 @@ async def test_app():
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[get_settings] = override_get_settings
 
+    # Provide a mock Redis cache on app.state for bot webhook tests
+    _cache_store: dict[str, str] = {}
+
+    mock_cache = AsyncMock()
+
+    async def _mock_set(key, value, ttl_seconds=None):
+        _cache_store[key] = value
+
+    async def _mock_get(key):
+        return _cache_store.get(key)
+
+    async def _mock_getdel(key):
+        return _cache_store.pop(key, None)
+
+    async def _mock_delete(key):
+        _cache_store.pop(key, None)
+
+    mock_cache.set = _mock_set
+    mock_cache.get = _mock_get
+    mock_cache.getdel = _mock_getdel
+    mock_cache.delete = _mock_delete
+    app.state.cache = mock_cache
+
     async with async_session_factory() as session:
         session.add(
             UserModel(
@@ -236,6 +259,7 @@ async def test_telegram_bot_invalid_token(client):
             "message": {
                 "text": "/start invalid-garbage",
                 "chat": {"id": 111},
+                "message_id": 2,
             },
         },
         headers={"X-Telegram-Bot-Api-Secret-Token": BOT_WEBHOOK_SECRET},

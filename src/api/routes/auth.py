@@ -592,15 +592,15 @@ async def export_account_data(
     )
     logs = [
         {
-            "id": str(l.id),
-            "raw_message": l.raw_message,
-            "parsed_data": l.parsed_data,
-            "webhook_payload": l.webhook_payload,
-            "status": l.status,
-            "error_message": l.error_message,
-            "processed_at": l.processed_at.isoformat() if l.processed_at else None,
+            "id": str(log.id),
+            "raw_message": log.raw_message,
+            "parsed_data": log.parsed_data,
+            "webhook_payload": log.webhook_payload,
+            "status": log.status,
+            "error_message": log.error_message,
+            "processed_at": log.processed_at.isoformat() if log.processed_at else None,
         }
-        for l in logs_result.scalars().all()
+        for log in logs_result.scalars().all()
     ]
 
     # Telegram session metadata (not the encrypted session itself)

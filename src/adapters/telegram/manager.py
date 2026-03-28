@@ -192,7 +192,7 @@ class MultiUserListenerManager:
         if self._listeners:
             logger.info("Stopping %d listener(s)...", len(self._listeners))
             await asyncio.gather(
-                *[l.stop() for l in self._listeners.values()],
+                *[lis.stop() for lis in self._listeners.values()],
                 return_exceptions=True,
             )
             self._listeners.clear()
@@ -209,8 +209,8 @@ class MultiUserListenerManager:
         return {
             "total_listeners": len(self._listeners),
             "connected_listeners": sum(
-                1 for l in self._listeners.values()
-                if l.is_connected
+                1 for lis in self._listeners.values()
+                if lis.is_connected
             ),
             "total_monitored_channels": sum(
                 len(ch) for ch in self._monitored_channels.values()
@@ -399,22 +399,26 @@ class MultiUserListenerManager:
         racing in between and creating a duplicate listener.
         """
         async with self._get_user_lock(user_id):
-            logger.warning("Restarting listener for user %s", user_id)
-            await self._stop_listener_for_user_inner(user_id)
+            await self._restart_listener_for_user_inner(user_id)
 
-            try:
-                session_string = await self._repo.load_session_for_user(user_id)
-                if session_string is None:
-                    logger.warning(
-                        "No active session for user %s after restart attempt", user_id,
-                    )
-                    return
-                await self._start_listener_for_user_inner(
-                    user_id, session_string,
+    async def _restart_listener_for_user_inner(self, user_id: UUID) -> None:
+        """Inner restart logic — caller must already hold the per-user lock."""
+        logger.warning("Restarting listener for user %s", user_id)
+        await self._stop_listener_for_user_inner(user_id)
+
+        try:
+            session_string = await self._repo.load_session_for_user(user_id)
+            if session_string is None:
+                logger.warning(
+                    "No active session for user %s after restart attempt", user_id,
                 )
-            except Exception as exc:
-                logger.error("Restart failed for user %s: %s", user_id, exc)
-                _capture_user_exception(exc, user_id)
+                return
+            await self._start_listener_for_user_inner(
+                user_id, session_string,
+            )
+        except Exception as exc:
+            logger.error("Restart failed for user %s: %s", user_id, exc)
+            _capture_user_exception(exc, user_id)
 
     # ------------------------------------------------------------------
     # Internal: notifications
@@ -506,7 +510,7 @@ class MultiUserListenerManager:
             except Exception:
                 pass
             await asyncio.sleep(3)
-            await self._restart_listener_for_user(user_id)
+            await self._restart_listener_for_user_inner(user_id)
 
     # ------------------------------------------------------------------
     # Internal: refresh loop (sessions, channels, heartbeat)
