@@ -2,11 +2,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import type { NotificationPreferences, TelegramBotLinkResponse } from "@/types/api";
 
-export function useNotificationPreferences() {
+export function useNotificationPreferences(polling?: boolean) {
   return useQuery({
     queryKey: ["notification-preferences"],
     queryFn: () =>
       apiFetch<NotificationPreferences>("/settings/notifications"),
+    refetchInterval: polling ? 3000 : false,
   });
 }
 

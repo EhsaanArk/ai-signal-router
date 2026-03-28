@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AlertTriangle, Bell, Download, LogOut, Mail, Calendar, Shield, MessageCircle, ExternalLink, Trash2 } from "lucide-react";
 import {
   Card,
@@ -281,12 +281,33 @@ function ChangePasswordCard() {
 
 function NotificationsCard() {
   const { user } = useAuth();
-  const { data: prefs, isLoading } = useNotificationPreferences();
+  const [waitingForLink, setWaitingForLink] = useState(false);
+  const [justLinked, setJustLinked] = useState(false);
+  const { data: prefs, isLoading } = useNotificationPreferences(waitingForLink);
   const updatePrefs = useUpdateNotificationPreferences();
-  const { data: botLink, isLoading: botLinkLoading } = useTelegramBotLink();
+  const { isLoading: botLinkLoading, refetch: refetchBotLink } = useTelegramBotLink();
 
   const isFreeTier = user?.subscription_tier === "free";
   const hasTelegramLinked = !!prefs?.telegram_bot_chat_id;
+
+  // Stop polling and show success when link is detected
+  useEffect(() => {
+    if (waitingForLink && hasTelegramLinked) {
+      setWaitingForLink(false);
+      setJustLinked(true);
+      toast.success("Telegram bot linked successfully!");
+    }
+  }, [waitingForLink, hasTelegramLinked]);
+
+  // 5-minute timeout for polling
+  useEffect(() => {
+    if (!waitingForLink) return;
+    const timer = setTimeout(() => {
+      setWaitingForLink(false);
+      toast.error("Link timed out. Please try again.");
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [waitingForLink]);
 
   type NotifKey = "email_on_success" | "email_on_failure" | "email_on_disconnect" | "telegram_on_success" | "telegram_on_failure";
 
@@ -295,6 +316,15 @@ function NotificationsCard() {
       await updatePrefs.mutateAsync({ [key]: value });
     } catch {
       toast.error("Failed to update notification preferences");
+    }
+  }
+
+  async function handleConnectClick() {
+    // Generate a fresh link each time
+    const result = await refetchBotLink();
+    if (result.data?.bot_link) {
+      window.open(result.data.bot_link, "_blank");
+      setWaitingForLink(true);
     }
   }
 
@@ -368,26 +398,55 @@ function NotificationsCard() {
           </p>
         ) : !hasTelegramLinked ? (
           <div className="space-y-2">
-            <p className="text-[10px] text-muted-foreground">
-              Connect the SageMaster notification bot to receive signal alerts in Telegram.
-            </p>
-            {botLink && !botLinkLoading && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                asChild
-              >
-                <a href={botLink.bot_link} target="_blank" rel="noopener noreferrer">
+            {waitingForLink ? (
+              <>
+                <div className="flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/5 p-2.5">
+                  <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                  <p className="text-[11px] text-blue-600 dark:text-blue-400">
+                    Waiting for you to press <strong>START</strong> in Telegram...
+                  </p>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Open the Telegram bot that just opened and press START. This page will update automatically.
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-[10px] text-muted-foreground"
+                  onClick={() => setWaitingForLink(false)}
+                >
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] text-muted-foreground">
+                  Connect the Sage Radar bot to receive signal alerts in Telegram.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={handleConnectClick}
+                  disabled={botLinkLoading}
+                >
                   <MessageCircle className="mr-1.5 h-3 w-3" />
-                  Connect Telegram Bot
+                  {botLinkLoading ? "Generating link..." : "Connect Telegram Bot"}
                   <ExternalLink className="ml-1.5 h-2.5 w-2.5" />
-                </a>
-              </Button>
+                </Button>
+              </>
             )}
           </div>
         ) : (
           <>
+            {justLinked && (
+              <div className="flex items-center gap-2 rounded-md border border-green-500/20 bg-green-500/5 p-2.5 mb-2">
+                <div className="h-2 w-2 rounded-full bg-green-500" />
+                <p className="text-[11px] text-green-600 dark:text-green-400">
+                  Telegram bot linked! You can now receive signal notifications.
+                </p>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div>
                 <Label htmlFor="tg-notif-failure" className="text-xs">Telegram alert on failure</Label>
