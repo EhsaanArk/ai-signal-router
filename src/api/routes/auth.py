@@ -30,6 +30,7 @@ from src.api.deps import (
     get_settings,
     limiter,
 )
+from src.core.constants import ACCOUNT_DISABLED_MSG as _ACCOUNT_DISABLED_MSG
 from src.core.constants import CURRENT_TOS_VERSION, LEGACY_TOKEN_SCAN_LIMIT
 from src.core.exceptions import (
     AuthenticationError,
@@ -37,6 +38,7 @@ from src.core.exceptions import (
     ConflictError,
     ExternalServiceError,
     InputValidationError,
+    RegistrationDisabledError,
 )
 from src.core.models import User
 from src.core.security import sha256_hex
@@ -169,7 +171,7 @@ async def login(
         raise AuthenticationError("Incorrect email or password")
 
     if getattr(user_row, "is_disabled", False):
-        raise AuthorizationError("Account is disabled")
+        raise AuthorizationError(_ACCOUNT_DISABLED_MSG)
 
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
@@ -197,7 +199,7 @@ async def login_json(
         raise AuthenticationError("Incorrect email or password")
 
     if getattr(user_row, "is_disabled", False):
-        raise AuthorizationError("Account is disabled")
+        raise AuthorizationError(_ACCOUNT_DISABLED_MSG)
 
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
@@ -271,6 +273,12 @@ async def register(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> LoginResponse:
     """Register a new user and return a JWT."""
+    if settings.REGISTRATION_DISABLED:
+        raise RegistrationDisabledError(
+            "Registration is currently closed. "
+            "We are working towards the big launch — stay tuned!"
+        )
+
     # Require terms acceptance
     if not body.terms_accepted:
         raise InputValidationError("You must accept the Terms of Service and Privacy Policy")

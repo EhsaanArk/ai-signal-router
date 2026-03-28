@@ -660,6 +660,9 @@ async def telegram_bot_webhook(
         )
         return {"ok": True}
 
+    if getattr(user_row, "is_disabled", False):
+        return {"ok": True}
+
     await _handle_signal_message(text, chat_id, tg_user.id, user_row, bot, db, settings, request)
     return {"ok": True}
 
