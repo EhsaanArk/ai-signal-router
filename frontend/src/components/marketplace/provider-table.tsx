@@ -1,4 +1,4 @@
-import { BadgeCheck } from "lucide-react";
+import { BadgeCheck, Sparkles } from "lucide-react";
 import {
   Table,
   TableBody,
