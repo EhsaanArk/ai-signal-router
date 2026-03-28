@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4.2] - 2026-03-28
+
+### Fixed
+- Race condition in `_handle_auth_key_duplicated`: heartbeat path called `_restart_listener_for_user_inner` without the per-user lock, allowing concurrent operations to create duplicate Telegram listeners
+- Latent deadlock in escalation path: `_stop_listener_for_user` (lock-acquiring) was called from startup context where the lock was already held
+
 ## [0.1.4.1] - 2026-03-27
 
 ### Changed
