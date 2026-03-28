@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5.0] - 2026-03-28
+
+### Added
+- Beta lockdown: `REGISTRATION_DISABLED` env var blocks new user registration and Supabase auto-creation
+- `RegistrationDisabledError` exception for clean 403 responses when registration is closed
+- `ACCOUNT_DISABLED_MSG` constant in `src/core/constants.py` for DRY beta farewell message
+- Admin can now disconnect Telegram and unlink bot when disabling a user (optional checkbox, default on)
+- Self-disable and last-admin guards prevent admin lockout
+- Bot webhook `is_disabled` check prevents disabled users from routing signals via bot DMs
+- Confirmation dialog with Telegram disconnect checkbox in admin user management UI
+- Login page shows `authError` from auth context (surfaces beta farewell message)
+- "Existing users only" hint under Google OAuth button
+- 5 new tests: disable+disconnect, disable-without-disconnect, self-disable guard, last-admin guard, registration blocked
+
+### Changed
+- Registration page replaced with "Registration is Currently Closed" static message
+- Login page "Register" link replaced with beta notice text
+
 ## [0.1.4.2] - 2026-03-28
 
 ### Fixed
