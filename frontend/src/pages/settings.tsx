@@ -299,6 +299,16 @@ function NotificationsCard() {
     }
   }, [waitingForLink, hasTelegramLinked]);
 
+  // 5-minute timeout for polling
+  useEffect(() => {
+    if (!waitingForLink) return;
+    const timer = setTimeout(() => {
+      setWaitingForLink(false);
+      toast.error("Link timed out. Please try again.");
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [waitingForLink]);
+
   type NotifKey = "email_on_success" | "email_on_failure" | "email_on_disconnect" | "telegram_on_success" | "telegram_on_failure";
 
   async function handleToggle(key: NotifKey, value: boolean) {
