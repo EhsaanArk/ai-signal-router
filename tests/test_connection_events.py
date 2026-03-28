@@ -105,6 +105,7 @@ def manager():
     mgr._failure_counts = {}
     mgr._startup_failures = {}
     mgr._auth_dup_retries = {}
+    mgr._user_locks = {}
     mgr._heartbeat_count = 0
     mgr._refresh_task = None
     mgr._running = False
@@ -132,7 +133,7 @@ class TestHandleAuthKeyDuplicated:
         user_id = uuid.uuid4()
         manager._listeners[user_id] = mock_listener
 
-        with patch.object(manager, "_restart_listener_for_user", new_callable=AsyncMock) as restart:
+        with patch.object(manager, "_restart_listener_for_user_inner", new_callable=AsyncMock) as restart:
             await manager._handle_auth_key_duplicated(
                 user_id, mock_listener, "reconnect",
             )

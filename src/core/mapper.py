@@ -12,6 +12,14 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from src.core.models import (
+    CRYPTO_ACTION_TYPE,
+    ParsedSignal,
+    RoutingRule,
+    SignalAction,
+    SubscriptionTier,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,14 +42,6 @@ def _replace_placeholders(template: dict, signal: "ParsedSignal") -> dict:
                 value = value.replace(placeholder, replacement)
         result[key] = value
     return result
-
-from src.core.models import (
-    CRYPTO_ACTION_TYPE,
-    ParsedSignal,
-    RoutingRule,
-    SignalAction,
-    SubscriptionTier,
-)
 
 
 # Fields that should be stripped from the template for management actions

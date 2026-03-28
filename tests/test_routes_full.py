@@ -330,7 +330,7 @@ class TestTelegramSendCode:
         mock_auth = AsyncMock()
         mock_auth.send_code.return_value = {"phone_code_hash": "abc123hash"}
 
-        with patch("src.api.routes._get_telegram_auth", return_value=mock_auth):
+        with patch("src.api.routes.telegram._get_telegram_auth", return_value=mock_auth):
             resp = await authed_client.post(
                 "/api/v1/telegram/send-code",
                 json={"phone_number": "+15551234567"},
@@ -369,7 +369,7 @@ class TestTelegramVerifyCode:
         mock_auth = AsyncMock()
         mock_auth.verify_code.return_value = "fake-session-string"
 
-        with patch("src.api.routes._get_telegram_auth", return_value=mock_auth):
+        with patch("src.api.routes.telegram._get_telegram_auth", return_value=mock_auth):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 resp = await ac.post(
@@ -971,7 +971,7 @@ class TestPhoneUniqueness:
         # Mock the Telegram auth to return a session string and encryption
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            with patch("src.api.routes._get_telegram_auth") as mock_get_auth, \
+            with patch("src.api.routes.telegram._get_telegram_auth") as mock_get_auth, \
                  patch("src.core.security.encrypt_session", return_value="encrypted"):
                 mock_auth = AsyncMock()
                 mock_auth.verify_code = AsyncMock(return_value="fake_session_string")
@@ -1017,7 +1017,7 @@ class TestLoginReturnsUser:
     async def test_register_includes_user_profile(self, client: AsyncClient):
         resp = await client.post(
             "/api/v1/auth/register",
-            json={"email": "newuser@example.com", "password": "newpass123"},
+            json={"email": "newuser@example.com", "password": "newpass123", "terms_accepted": True},
         )
         assert resp.status_code == 201
         data = resp.json()

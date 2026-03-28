@@ -133,7 +133,7 @@ class TelegramAuth:
             # Telethon raises SessionPasswordNeededError when 2FA is enabled.
             # Re-import here to avoid a hard dependency on internal errors at
             # module level.
-            from telethon.errors import SessionPasswordNeededError
+            from telethon.errors import SessionPasswordNeededError  # noqa: F401
 
             if password is None:
                 raise

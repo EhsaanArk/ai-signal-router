@@ -7,7 +7,6 @@ on:
         description: "PR number to comment results on (optional)"
         required: false
         type: string
-  deployment_status:
   push:
     branches: [staging]
 
@@ -326,6 +325,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [health-check, api-smoke, e2e, pipeline, sentry-check]
     if: always()
+    outputs:
+      score: ${{ steps.guardian.outputs.score }}
+      verdict: ${{ steps.guardian.outputs.verdict }}
+      summary: ${{ steps.guardian.outputs.summary }}
     steps:
       - uses: actions/checkout@v4
 

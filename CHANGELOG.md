@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4.1] - 2026-03-27
+
+### Changed
+- CI pre-merge checks now use `dorny/paths-filter` to skip backend tests when only frontend files change and vice versa
+- Backend filter covers: `src/`, `tests/`, `requirements*.txt`, `pyproject.toml`, `alembic/`, `Dockerfile`, `docker-compose*.yml`, `.github/workflows/ci.yml`
+- Frontend filter covers: `frontend/**`
+
+### Fixed
+- Removed `deployment_status` trigger from staging post-deploy workflow (was firing on ALL branch deploys including production)
+- Added missing `outputs` declaration on QA Guardian job so the downstream PR comment job can read score, verdict, and summary
+
 ## [0.1.4.0] - 2026-03-27
 
 ### Fixed

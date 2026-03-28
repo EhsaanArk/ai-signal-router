@@ -147,11 +147,20 @@ def get_tracer(name: str = __name__):
         from contextlib import contextmanager
 
         class _NoOpSpan:
-            def set_attribute(self, *a, **kw): ...
-            def set_status(self, *a, **kw): ...
-            def record_exception(self, *a, **kw): ...
-            def __enter__(self): return self
-            def __exit__(self, *a): ...
+            def set_attribute(self, *a, **kw):
+                pass
+
+            def set_status(self, *a, **kw):
+                pass
+
+            def record_exception(self, *a, **kw):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         class _NoOpTracer:
             @contextmanager
