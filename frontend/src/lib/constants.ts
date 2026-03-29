@@ -8,6 +8,10 @@ export const TIER_LIMITS: Record<string, number> = {
   elite: 15,
 };
 
+/** Friendly message shown to disabled (banned) beta users instead of Supabase's raw "User is banned". */
+export const BETA_DISABLED_MSG =
+  "Thanks for being part of the beta program! We are working towards the big launch — stay tuned!";
+
 export const TIER_DISPLAY_NAMES: Record<string, string> = {
   free: "Free",
   starter: "Starter",
