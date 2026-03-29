@@ -62,12 +62,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let detail = "";
       if (rawBody) {
         try {
-          const parsed = JSON.parse(rawBody) as { detail?: unknown };
-          detail = typeof parsed.detail === "string" ? parsed.detail : rawBody.slice(0, 160);
+          const parsed = JSON.parse(rawBody) as { detail?: unknown; error?: { message?: unknown } };
+          const errMsg = parsed.error && typeof parsed.error.message === "string" ? parsed.error.message : null;
+          detail = errMsg || (typeof parsed.detail === "string" ? parsed.detail : rawBody.slice(0, 160));
         } catch {
           detail = rawBody.slice(0, 160);
         }
       }
+
+      // Show friendly beta message for disabled accounts instead of generic error
+      if (res.status === 403 && /beta|banned|disabled/i.test(detail)) {
+        await supabase.auth.signOut();
+        return { user: null, errorMessage: detail };
+      }
+
       const statusText = detail ? `${res.status}: ${detail}` : `${res.status}`;
       log("fetchUser: failed with status", statusText);
 

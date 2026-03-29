@@ -20,8 +20,7 @@ export function OAuthCallbackPage() {
     const params = new URLSearchParams(window.location.search);
     const errorParam = params.get("error_description");
     if (errorParam) {
-      const isBanned = /banned/i.test(errorParam);
-      setError(isBanned ? BETA_DISABLED_MSG : errorParam);
+      setError(/banned/i.test(errorParam) ? BETA_DISABLED_MSG : errorParam);
     }
   }, []);
 
