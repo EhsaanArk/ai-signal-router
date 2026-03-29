@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/auth-context";
 import { LoadingSpinner } from "@/components/shared/loading-spinner";
+import { BETA_DISABLED_MSG } from "@/lib/constants";
 
 /**
  * Handles OAuth callback from Supabase (Google sign-in).
@@ -19,7 +20,7 @@ export function OAuthCallbackPage() {
     const params = new URLSearchParams(window.location.search);
     const errorParam = params.get("error_description");
     if (errorParam) {
-      setError(errorParam);
+      setError(/banned/i.test(errorParam) ? BETA_DISABLED_MSG : errorParam);
     }
   }, []);
 
