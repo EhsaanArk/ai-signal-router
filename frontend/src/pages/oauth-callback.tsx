@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/auth-context";
 import { LoadingSpinner } from "@/components/shared/loading-spinner";
+import { BETA_DISABLED_MSG } from "@/lib/constants";
 
 /**
  * Handles OAuth callback from Supabase (Google sign-in).
@@ -19,7 +20,8 @@ export function OAuthCallbackPage() {
     const params = new URLSearchParams(window.location.search);
     const errorParam = params.get("error_description");
     if (errorParam) {
-      setError(errorParam);
+      const isBanned = /banned/i.test(errorParam);
+      setError(isBanned ? BETA_DISABLED_MSG : errorParam);
     }
   }, []);
 
@@ -45,7 +47,9 @@ export function OAuthCallbackPage() {
     return (
       <div className="dark flex min-h-screen items-center justify-center bg-background p-4">
         <div className="text-center space-y-4">
-          <p className="text-sm text-destructive">Authentication failed</p>
+          <p className="text-sm text-destructive">
+            {error === BETA_DISABLED_MSG ? "Account Disabled" : "Authentication failed"}
+          </p>
           <p className="text-xs text-muted-foreground">{error}</p>
           <button
             onClick={() => navigate("/login", { replace: true })}
