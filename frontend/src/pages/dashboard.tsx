@@ -190,29 +190,18 @@ export function DashboardPage() {
       {/* Empty state for users with no routes */}
       {!rulesLoading && (rules?.length ?? 0) === 0 && (
         <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center py-10 space-y-4">
-            <p className="text-sm font-medium">Get started with Sage Radar AI</p>
+          <CardContent className="flex flex-col items-center py-10 space-y-3">
+            <p className="text-sm font-medium">Create your first signal route to get started</p>
             <p className="text-xs text-muted-foreground text-center max-w-sm">
-              Choose your trading style — vibe trade via Telegram bot or auto-copy signals from channels.
+              Connect a Telegram channel to a SageMaster webhook and start routing trading signals automatically.
             </p>
-            <div className="flex flex-wrap gap-3 justify-center">
-              <Button
-                size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700"
-                onClick={() => navigate("/connectors")}
-              >
-                <Radio className="mr-1.5 h-3.5 w-3.5" />
-                Vibe Trade via Bot
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate(isConnected ? "/routing-rules/new" : "/connectors")}
-              >
-                {isConnected ? "Create Route" : "Connect & Copy Signals"}
-                <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-              </Button>
-            </div>
+            <Button
+              size="sm"
+              onClick={() => navigate(isConnected ? "/routing-rules/new" : "/telegram")}
+            >
+              {isConnected ? "Create Route" : "Connect Telegram & Create Route"}
+              <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+            </Button>
           </CardContent>
         </Card>
       )}
