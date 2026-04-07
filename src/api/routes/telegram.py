@@ -216,8 +216,9 @@ async def telegram_verify_code(
     except Exception:
         logger.warning("Failed to cache session — continuing without cache")
 
-    # Invalidate telegram status cache
+    # Invalidate telegram status and channels cache
     await cache.delete(f"tg_status:{current_user.id}")
+    await cache.delete(f"channels:{current_user.id}")
 
     # Send "Telegram connected" milestone email (non-blocking)
     if settings.RESEND_API_KEY:
@@ -331,6 +332,7 @@ async def telegram_disconnect(
     except Exception:
         logger.warning("Failed to remove cached session")
     await cache.delete(f"tg_status:{current_user.id}")
+    await cache.delete(f"channels:{current_user.id}")
 
     return MessageResponse(message="Telegram account disconnected successfully.")
 
