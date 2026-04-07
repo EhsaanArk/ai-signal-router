@@ -144,7 +144,7 @@ async def test_health_check(client: AsyncClient):
 async def test_register_success(client: AsyncClient):
     resp = await client.post(
         "/api/v1/auth/register",
-        json={"email": "newuser@example.com", "password": "securepass123"},
+        json={"email": "newuser@example.com", "password": "securepass123", "terms_accepted": True},
     )
     assert resp.status_code == 201
     data = resp.json()
@@ -155,7 +155,7 @@ async def test_register_success(client: AsyncClient):
 async def test_register_duplicate_email(client: AsyncClient):
     resp = await client.post(
         "/api/v1/auth/register",
-        json={"email": "test@example.com", "password": "anything"},
+        json={"email": "test@example.com", "password": "anything", "terms_accepted": True},
     )
     assert resp.status_code == 409
 

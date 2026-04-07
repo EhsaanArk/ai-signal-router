@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import case, exists, func, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.adapters.db.models import (
@@ -21,7 +21,9 @@ from src.adapters.db.models import (
     TelegramSessionModel,
     UserModel,
 )
-from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_settings, limiter
+from sqlalchemy.orm.attributes import flag_modified
+
+from src.api.deps import Settings, get_admin_user, get_cache, get_db, get_session_store, get_settings
 from src.core.exceptions import InputValidationError, ResourceNotFoundError
 from src.core.models import User
 
@@ -98,6 +100,7 @@ class AdminUserDetail(BaseModel):
 class AdminUserUpdate(BaseModel):
     subscription_tier: str | None = None
     is_disabled: bool | None = None
+    disconnect_telegram: bool | None = None
 
 
 class PaginatedAdminSignals(BaseModel):
@@ -310,6 +313,7 @@ async def admin_update_user(
     request: Request,
     _admin: Annotated[User, Depends(get_admin_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    session_store=Depends(get_session_store),
 ) -> AdminUserSummary:
     """Update a user's tier or disabled status."""
     user_row = (await db.execute(select(UserModel).where(UserModel.id == user_id))).scalar_one_or_none()
@@ -325,6 +329,21 @@ async def admin_update_user(
         user_row.subscription_tier = body.subscription_tier
 
     if body.is_disabled is not None:
+        if body.is_disabled:
+            # Guard: cannot disable yourself
+            if user_id == _admin.id:
+                raise InputValidationError("Cannot disable your own admin account")
+            # Guard: cannot disable the last active admin
+            if getattr(user_row, "is_admin", False):
+                active_admin_count = (await db.execute(
+                    select(func.count()).select_from(UserModel).where(
+                        UserModel.is_admin.is_(True),
+                        UserModel.is_disabled.is_(False),
+                    )
+                )).scalar_one()
+                if active_admin_count <= 1:
+                    raise InputValidationError("Cannot disable the last active admin")
+
         user_row.is_disabled = body.is_disabled
 
         # Sync disable/enable to Supabase Auth
@@ -344,6 +363,37 @@ async def admin_update_user(
                     logger.info("Supabase user %s unbanned", user_id)
             except Exception as exc:
                 logger.error("Supabase ban sync failed for %s: %s", user_id, exc)
+
+        # Optionally disconnect Telegram + unlink bot when disabling
+        if body.is_disabled and body.disconnect_telegram:
+            # Deactivate all active Telegram MTProto sessions
+            tg_sessions = (await db.execute(
+                select(TelegramSessionModel).where(
+                    TelegramSessionModel.user_id == user_id,
+                    TelegramSessionModel.is_active.is_(True),
+                )
+            )).scalars().all()
+            for sess in tg_sessions:
+                sess.is_active = False
+                sess.disconnected_reason = "admin_disabled"
+                sess.disconnected_at = datetime.now(timezone.utc)
+
+            # Clear session store + status cache
+            cache = request.app.state.cache
+            try:
+                await session_store.delete_session(user_id)
+            except Exception:
+                logger.warning("Failed to remove cached session for user %s", user_id)
+            await cache.delete(f"tg_status:{user_id}")
+
+            # Unlink Telegram bot
+            prefs = dict(user_row.notification_preferences or {})
+            prefs.pop("telegram_bot_chat_id", None)
+            prefs.pop("telegram_user_id", None)
+            user_row.notification_preferences = prefs
+            flag_modified(user_row, "notification_preferences")
+
+            logger.info("Admin disconnected Telegram + unlinked bot for user %s", user_id)
 
     await db.flush()
     await db.refresh(user_row)
@@ -1283,8 +1333,6 @@ async def replay_signal(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ReplayResponse:
     """Re-parse a historical signal with the current parser config."""
-    import uuid as _uuid
-
     from src.adapters.openai import OpenAISignalParser
     from src.core.models import RawSignal
 

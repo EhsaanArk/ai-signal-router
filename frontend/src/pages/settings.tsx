@@ -280,7 +280,6 @@ function ChangePasswordCard() {
 }
 
 function NotificationsCard() {
-  const { user } = useAuth();
   const [waitingForLink, setWaitingForLink] = useState(false);
   const [justLinked, setJustLinked] = useState(false);
   const { data: prefs, isLoading } = useNotificationPreferences(waitingForLink);
@@ -289,7 +288,6 @@ function NotificationsCard() {
 
   const hasTelegramLinked = !!prefs?.telegram_bot_chat_id;
 
-  // Stop polling and show success when link is detected
   useEffect(() => {
     if (waitingForLink && hasTelegramLinked) {
       setWaitingForLink(false);
@@ -298,7 +296,6 @@ function NotificationsCard() {
     }
   }, [waitingForLink, hasTelegramLinked]);
 
-  // 5-minute timeout for polling
   useEffect(() => {
     if (!waitingForLink) return;
     const timer = setTimeout(() => {
@@ -308,6 +305,14 @@ function NotificationsCard() {
     return () => clearTimeout(timer);
   }, [waitingForLink]);
 
+  async function handleConnectClick() {
+    const result = await refetchBotLink();
+    if (result.data?.bot_link) {
+      window.open(result.data.bot_link, "_blank");
+      setWaitingForLink(true);
+    }
+  }
+
   type NotifKey = "email_on_success" | "email_on_failure" | "email_on_disconnect" | "telegram_on_success" | "telegram_on_failure";
 
   async function handleToggle(key: NotifKey, value: boolean) {
@@ -315,15 +320,6 @@ function NotificationsCard() {
       await updatePrefs.mutateAsync({ [key]: value });
     } catch {
       toast.error("Failed to update notification preferences");
-    }
-  }
-
-  async function handleConnectClick() {
-    // Generate a fresh link each time
-    const result = await refetchBotLink();
-    if (result.data?.bot_link) {
-      window.open(result.data.bot_link, "_blank");
-      setWaitingForLink(true);
     }
   }
 

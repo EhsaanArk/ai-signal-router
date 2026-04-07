@@ -41,7 +41,7 @@ function GoogleIcon() {
 
 export function LoginPage() {
   usePageTitle("Sign In");
-  const { login, token, user } = useAuth();
+  const { login, token, user, authError } = useAuth();
   const [loading, setLoading] = useState(false);
   const [magicLinkLoading, setMagicLinkLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -137,6 +137,7 @@ export function LoginPage() {
         <GoogleIcon />
         <span className="ml-2">{googleLoading ? "Redirecting..." : "Continue with Google"}</span>
       </Button>
+      <p className="text-center text-[10px] text-muted-foreground/60">Existing users only</p>
 
       <div className="relative my-4">
         <Separator />
@@ -148,9 +149,9 @@ export function LoginPage() {
       {/* Single email + password form, magic link shares the email field */}
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          {formError && (
+          {(formError || authError) && (
             <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {formError}
+              {formError || authError}
             </div>
           )}
           <FormField
@@ -212,11 +213,8 @@ export function LoginPage() {
         </form>
       </Form>
 
-      <p className="mt-4 text-center text-sm text-muted-foreground">
-        Don't have an account?{" "}
-        <Link to="/register" className="text-primary hover:underline">
-          Register
-        </Link>
+      <p className="mt-4 text-center text-xs text-muted-foreground/60">
+        Registration is currently closed. We are working towards the big launch — stay tuned!
       </p>
     </AuthLayout>
   );

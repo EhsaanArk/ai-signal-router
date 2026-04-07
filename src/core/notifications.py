@@ -33,4 +33,5 @@ class NotificationPort(Protocol):
         user_email: str,
         signal_symbol: str,
         results: list[DispatchResult],
-    ) -> None: ...
+    ) -> None:
+        ...

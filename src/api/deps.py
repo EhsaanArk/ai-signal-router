@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt import InvalidTokenError
@@ -24,11 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.adapters.db.models import UserModel
 from src.adapters.db.session import get_async_session_factory
 from src.core.constants import ACCESS_TOKEN_EXPIRE_DAYS as _ACCESS_TOKEN_EXPIRE_DAYS
+from src.core.constants import ACCOUNT_DISABLED_MSG as _ACCOUNT_DISABLED_MSG
 from src.core.constants import USER_CACHE_TTL_SECONDS
 from src.core.exceptions import AuthenticationError, AuthorizationError
 from src.core.models import SubscriptionTier, User
 
 logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Rate limiter
@@ -155,6 +157,9 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_WEBHOOK_SECRET: str = ""
     TELEGRAM_BOT_LINK_SECRET: str = ""
     TRUSTED_PROXY_IPS: str = ""
+
+    # Registration lockdown (beta wind-down)
+    REGISTRATION_DISABLED: bool = False
 
     # Vibe Trading Bot feature flag
     BOT_ENABLED: bool = False
@@ -343,7 +348,7 @@ async def get_current_user(
                     created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
                 )
                 if user.is_disabled:
-                    raise AuthorizationError("Account is disabled")
+                    raise AuthorizationError(_ACCOUNT_DISABLED_MSG)
                 return user
         except (json.JSONDecodeError, KeyError, ValueError):
             logger.debug("User cache parse error for %s, falling back to DB", user_id)
@@ -357,7 +362,7 @@ async def get_current_user(
     user_row = result.scalar_one_or_none()
 
     # Auto-create user on first Supabase-authenticated API call
-    if user_row is None and sb is not None:
+    if user_row is None and sb is not None and not settings.REGISTRATION_DISABLED:
         try:
             sb_user_data = sb.auth.admin.get_user_by_id(str(user_id))
             email = sb_user_data.user.email or ""
@@ -427,7 +432,7 @@ async def get_current_user(
                 created_at=user_row.created_at,
             )
             if user.is_disabled:
-                raise AuthorizationError("Account is disabled")
+                raise AuthorizationError(_ACCOUNT_DISABLED_MSG)
             # Cache under Supabase UUID so next request hits cache
             if cache:
                 try:
@@ -451,10 +456,15 @@ async def get_current_user(
             raise credentials_exception from exc
 
     if user_row is None:
+        if settings.REGISTRATION_DISABLED:
+            raise AuthorizationError(
+                "Registration is currently closed. "
+                "We are working towards the big launch — stay tuned!"
+            )
         raise credentials_exception
 
     if getattr(user_row, "is_disabled", False):
-        raise AuthorizationError("Account is disabled")
+        raise AuthorizationError(_ACCOUNT_DISABLED_MSG)
 
     user = User(
         id=user_row.id,

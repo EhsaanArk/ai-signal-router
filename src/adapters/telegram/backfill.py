@@ -89,6 +89,10 @@ async def backfill_missed_signals(
     cutoff = datetime.now(timezone.utc).timestamp() - max_age
 
     for channel_id in channels:
+        # Skip synthetic bot DM channels — they aren't real Telegram channels
+        if channel_id.startswith("bot_dm_"):
+            continue
+
         try:
             # 1. Find the last processed message_id for this channel+user
             last_seen_id = await repo.get_last_message_id(user_id, channel_id)

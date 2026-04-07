@@ -2,12 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.4.1] - 2026-04-07
+## [0.1.5.1] - 2026-04-07
 
 ### Fixed
 - Stale Telegram channels shown for ~10 minutes after disconnecting and reconnecting with a different phone number (channel cache not invalidated on disconnect/reconnect)
 - Frontend channel list not refreshed after Telegram disconnect or reconnect (React Query cache not invalidated)
 - 409 Conflict error messages not displayed to users (frontend read `data.detail` but backend returns `data.error.message`)
+
+## [0.1.5.0] - 2026-03-28
+
+### Added
+- Beta lockdown: `REGISTRATION_DISABLED` env var blocks new user registration and Supabase auto-creation
+- `RegistrationDisabledError` exception for clean 403 responses when registration is closed
+- `ACCOUNT_DISABLED_MSG` constant in `src/core/constants.py` for DRY beta farewell message
+- Admin can now disconnect Telegram and unlink bot when disabling a user (optional checkbox, default on)
+- Self-disable and last-admin guards prevent admin lockout
+- Bot webhook `is_disabled` check prevents disabled users from routing signals via bot DMs
+- Confirmation dialog with Telegram disconnect checkbox in admin user management UI
+- Login page shows `authError` from auth context (surfaces beta farewell message)
+- "Existing users only" hint under Google OAuth button
+- 5 new tests: disable+disconnect, disable-without-disconnect, self-disable guard, last-admin guard, registration blocked
+
+### Changed
+- Registration page replaced with "Registration is Currently Closed" static message
+- Login page "Register" link replaced with beta notice text
+
+## [0.1.4.2] - 2026-03-28
+
+### Fixed
+- Race condition in `_handle_auth_key_duplicated`: heartbeat path called `_restart_listener_for_user_inner` without the per-user lock, allowing concurrent operations to create duplicate Telegram listeners
+- Latent deadlock in escalation path: `_stop_listener_for_user` (lock-acquiring) was called from startup context where the lock was already held
+
+## [0.1.4.1] - 2026-03-27
+
+### Changed
+- CI pre-merge checks now use `dorny/paths-filter` to skip backend tests when only frontend files change and vice versa
+- Backend filter covers: `src/`, `tests/`, `requirements*.txt`, `pyproject.toml`, `alembic/`, `Dockerfile`, `docker-compose*.yml`, `.github/workflows/ci.yml`
+- Frontend filter covers: `frontend/**`
+
+### Fixed
+- Removed `deployment_status` trigger from staging post-deploy workflow (was firing on ALL branch deploys including production)
+- Added missing `outputs` declaration on QA Guardian job so the downstream PR comment job can read score, verdict, and summary
 
 ## [0.1.4.0] - 2026-03-27
 

@@ -30,6 +30,7 @@ from src.api.deps import (
     get_settings,
     limiter,
 )
+from src.core.constants import ACCOUNT_DISABLED_MSG as _ACCOUNT_DISABLED_MSG
 from src.core.constants import CURRENT_TOS_VERSION, LEGACY_TOKEN_SCAN_LIMIT
 from src.core.exceptions import (
     AuthenticationError,
@@ -37,6 +38,7 @@ from src.core.exceptions import (
     ConflictError,
     ExternalServiceError,
     InputValidationError,
+    RegistrationDisabledError,
 )
 from src.core.models import User
 from src.core.security import sha256_hex
@@ -169,7 +171,7 @@ async def login(
         raise AuthenticationError("Incorrect email or password")
 
     if getattr(user_row, "is_disabled", False):
-        raise AuthorizationError("Account is disabled")
+        raise AuthorizationError(_ACCOUNT_DISABLED_MSG)
 
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
@@ -197,7 +199,7 @@ async def login_json(
         raise AuthenticationError("Incorrect email or password")
 
     if getattr(user_row, "is_disabled", False):
-        raise AuthorizationError("Account is disabled")
+        raise AuthorizationError(_ACCOUNT_DISABLED_MSG)
 
     token = create_access_token(
         data={"sub": str(user_row.id)}, settings=settings
@@ -271,6 +273,12 @@ async def register(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> LoginResponse:
     """Register a new user and return a JWT."""
+    if settings.REGISTRATION_DISABLED:
+        raise RegistrationDisabledError(
+            "Registration is currently closed. "
+            "We are working towards the big launch — stay tuned!"
+        )
+
     # Require terms acceptance
     if not body.terms_accepted:
         raise InputValidationError("You must accept the Terms of Service and Privacy Policy")
@@ -592,15 +600,15 @@ async def export_account_data(
     )
     logs = [
         {
-            "id": str(l.id),
-            "raw_message": l.raw_message,
-            "parsed_data": l.parsed_data,
-            "webhook_payload": l.webhook_payload,
-            "status": l.status,
-            "error_message": l.error_message,
-            "processed_at": l.processed_at.isoformat() if l.processed_at else None,
+            "id": str(log.id),
+            "raw_message": log.raw_message,
+            "parsed_data": log.parsed_data,
+            "webhook_payload": log.webhook_payload,
+            "status": log.status,
+            "error_message": log.error_message,
+            "processed_at": log.processed_at.isoformat() if log.processed_at else None,
         }
-        for l in logs_result.scalars().all()
+        for log in logs_result.scalars().all()
     ]
 
     # Telegram session metadata (not the encrypted session itself)

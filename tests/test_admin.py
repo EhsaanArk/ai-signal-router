@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 
-from src.adapters.db.models import Base, GlobalSettingModel, RoutingRuleModel, SignalLogModel, UserModel
+from src.adapters.db.models import Base, GlobalSettingModel, RoutingRuleModel, SignalLogModel, TelegramSessionModel, UserModel
 from src.api.deps import Settings, get_current_user, get_db, get_settings
 from src.core.models import SubscriptionTier, User
 from src.main import create_app
@@ -508,3 +508,191 @@ async def test_update_setting_rejects_unknown_key(admin_client):
         json={"settings": {"nonexistent_key": "123"}},
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Beta lockdown tests
+# ---------------------------------------------------------------------------
+
+
+async def test_admin_disable_with_disconnect_telegram(admin_app):
+    """Disabling with disconnect_telegram deactivates TG sessions and unlinks bot."""
+    app, factory = admin_app
+
+    # Seed a Telegram session and bot link for the normal user
+    async with factory() as session:
+        session.add(TelegramSessionModel(
+            user_id=NORMAL_USER_ID,
+            phone_number="+1234567890",
+            session_string_encrypted="encrypted_data",
+            is_active=True,
+        ))
+        user_row = (await session.execute(
+            select(UserModel).where(UserModel.id == NORMAL_USER_ID)
+        )).scalar_one()
+        user_row.notification_preferences = {
+            "telegram_bot_chat_id": 12345,
+            "telegram_user_id": 67890,
+        }
+        await session.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: ADMIN_USER
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.patch(
+            f"/api/v1/admin/users/{NORMAL_USER_ID}",
+            json={"is_disabled": True, "disconnect_telegram": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["is_disabled"] is True
+        assert resp.json()["telegram_connected"] is False
+
+    # Verify DB state
+    async with factory() as session:
+        tg = (await session.execute(
+            select(TelegramSessionModel).where(
+                TelegramSessionModel.user_id == NORMAL_USER_ID,
+            )
+        )).scalar_one()
+        assert tg.is_active is False
+        assert tg.disconnected_reason == "admin_disabled"
+
+        user_row = (await session.execute(
+            select(UserModel).where(UserModel.id == NORMAL_USER_ID)
+        )).scalar_one()
+        prefs = user_row.notification_preferences or {}
+        assert "telegram_bot_chat_id" not in prefs
+        assert "telegram_user_id" not in prefs
+
+
+async def test_admin_disable_without_disconnect_telegram(admin_app):
+    """Disabling without disconnect_telegram keeps TG sessions active."""
+    app, factory = admin_app
+
+    # Seed a Telegram session for the normal user
+    async with factory() as session:
+        session.add(TelegramSessionModel(
+            user_id=NORMAL_USER_ID,
+            phone_number="+1234567890",
+            session_string_encrypted="encrypted_data",
+            is_active=True,
+        ))
+        user_row = (await session.execute(
+            select(UserModel).where(UserModel.id == NORMAL_USER_ID)
+        )).scalar_one()
+        user_row.notification_preferences = {
+            "telegram_bot_chat_id": 12345,
+            "telegram_user_id": 67890,
+        }
+        await session.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: ADMIN_USER
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.patch(
+            f"/api/v1/admin/users/{NORMAL_USER_ID}",
+            json={"is_disabled": True, "disconnect_telegram": False},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["is_disabled"] is True
+
+    # TG session should still be active and bot linked
+    async with factory() as session:
+        tg = (await session.execute(
+            select(TelegramSessionModel).where(
+                TelegramSessionModel.user_id == NORMAL_USER_ID,
+            )
+        )).scalar_one()
+        assert tg.is_active is True
+
+        user_row = (await session.execute(
+            select(UserModel).where(UserModel.id == NORMAL_USER_ID)
+        )).scalar_one()
+        prefs = user_row.notification_preferences or {}
+        assert prefs.get("telegram_bot_chat_id") == 12345
+
+
+async def test_admin_cannot_disable_self(admin_app):
+    """Admin cannot disable their own account."""
+    app, _ = admin_app
+    app.dependency_overrides[get_current_user] = lambda: ADMIN_USER
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.patch(
+            f"/api/v1/admin/users/{ADMIN_USER_ID}",
+            json={"is_disabled": True},
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        msg = body.get("error", {}).get("message", "") or body.get("detail", "")
+        assert "own admin account" in msg.lower()
+
+
+async def test_admin_cannot_disable_last_admin(admin_app):
+    """Cannot disable the last active admin."""
+    app, factory = admin_app
+
+    # Create a second admin, then disable them first
+    second_admin_id = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    async with factory() as session:
+        session.add(UserModel(
+            id=second_admin_id, email="admin2@test.com",
+            password_hash="$2b$12$fake", subscription_tier="pro",
+            is_admin=True,
+        ))
+        await session.commit()
+
+    # Use second admin as the caller
+    second_admin = User(
+        id=second_admin_id,
+        email="admin2@test.com",
+        password_hash="$2b$12$fake",
+        subscription_tier=SubscriptionTier.pro,
+        is_admin=True,
+    )
+    app.dependency_overrides[get_current_user] = lambda: second_admin
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Disable first admin (should work, 2 admins remain)
+        resp = await client.patch(
+            f"/api/v1/admin/users/{ADMIN_USER_ID}",
+            json={"is_disabled": True},
+        )
+        assert resp.status_code == 200
+
+        # Now try to disable second admin (self-disable guard triggers)
+        resp = await client.patch(
+            f"/api/v1/admin/users/{second_admin_id}",
+            json={"is_disabled": True},
+        )
+        assert resp.status_code == 422
+
+
+async def test_registration_blocked_when_disabled(admin_app):
+    """Registration endpoint returns 403 when REGISTRATION_DISABLED=true."""
+    app, _ = admin_app
+
+    # Override settings with REGISTRATION_DISABLED=true
+    from src.api.deps import get_settings
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        DATABASE_URL=TEST_DB_URL, JWT_SECRET_KEY="test",
+        LOCAL_MODE=False, REGISTRATION_DISABLED=True,
+    )
+
+    # Remove auth override so register endpoint doesn't need auth
+    app.dependency_overrides.pop(get_current_user, None)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "new@test.com",
+                "password": "password123",
+                "terms_accepted": True,
+            },
+        )
+        assert resp.status_code == 403
+        body = resp.json()
+        msg = body.get("error", {}).get("message", "") or body.get("detail", "")
+        assert "closed" in msg.lower()

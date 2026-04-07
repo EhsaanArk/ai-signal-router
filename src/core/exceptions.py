@@ -41,6 +41,13 @@ class TierLimitError(AuthorizationError):
         super().__init__(message)
 
 
+class RegistrationDisabledError(AuthorizationError):
+    """New user registration is temporarily closed (HTTP 403)."""
+
+    def __init__(self, message: str = "Registration is currently closed") -> None:
+        super().__init__(message)
+
+
 # -- Resource errors (404 / 409) -----------------------------------------
 
 

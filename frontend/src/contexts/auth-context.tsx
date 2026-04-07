@@ -10,7 +10,7 @@ import {
 } from "react";
 import { supabase } from "@/lib/supabase";
 import type { UserMe } from "@/types/api";
-import { API_BASE_URL } from "@/lib/constants";
+import { API_BASE_URL, BETA_DISABLED_MSG } from "@/lib/constants";
 
 interface AuthContextValue {
   user: UserMe | null;
@@ -165,7 +165,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     log("login:", email);
     setAuthError(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
+    if (error) {
+      const msg = /banned/i.test(error.message) ? BETA_DISABLED_MSG : error.message;
+      throw new Error(msg);
+    }
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
