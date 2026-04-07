@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4.1] - 2026-04-07
+
+### Fixed
+- Stale Telegram channels shown for ~10 minutes after disconnecting and reconnecting with a different phone number (channel cache not invalidated on disconnect/reconnect)
+- Frontend channel list not refreshed after Telegram disconnect or reconnect (React Query cache not invalidated)
+- 409 Conflict error messages not displayed to users (frontend read `data.detail` but backend returns `data.error.message`)
+
 ## [0.1.4.0] - 2026-03-27
 
 ### Fixed
