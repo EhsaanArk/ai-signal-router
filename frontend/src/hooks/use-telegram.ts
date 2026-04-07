@@ -41,6 +41,7 @@ export function useVerifyCode() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["telegram-status"] });
+      queryClient.invalidateQueries({ queryKey: ["channels"] });
     },
   });
 }
@@ -54,6 +55,7 @@ export function useDisconnectTelegram() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["telegram-status"] });
+      queryClient.invalidateQueries({ queryKey: ["channels"] });
     },
   });
 }
